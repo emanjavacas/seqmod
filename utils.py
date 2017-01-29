@@ -41,9 +41,6 @@ def repackage_bidi(h_or_c):
                  .view(layers_2 // 2, bs, hid_dim * 2)
 
 
-
-
-
 EOS = '<EOS>'
 PAD = '<PAD>'
 
@@ -121,3 +118,36 @@ class Dataset(object):
 
     def __len__(self):
         return self.num_batches
+
+
+if __name__ == '__main__':
+    import argparse
+    import string
+    parser = argparse.ArgumentParser()
+    parser.add_argument('train_file')
+    parser.add_argument('test_file')
+    parser.add_argument('--vocab', default=list(string.ascii_letters))
+    parser.add_argument('--min_len', default=5)
+    parser.add_argument('--max_len', default=20)
+    parser.add_argument('--train_set_len', default=10000)
+
+    args = parser.parse_args()
+    sample_fn = reverse
+
+    def export_random_set(filename, generator):
+        with open(filename + '.src.txt', 'a+') as src:
+            with open(filename + '.tgt.txt', 'a+') as tgt:
+                for s, t in generator:
+                    src.write(' '.join(list(s)) + '\n')
+                    tgt.write(' '.join(list(t)) + '\n')
+
+    train_data = generate_set(args.train_set_len, args.vocab,
+                              min_len=args.min_len, max_len=args.max_len,
+                              sample_fn=sample_fn)
+
+    test_data = generate_set(args.train_set_len // 10, args.vocab,
+                             min_len=args.min_len, max_len=args.max_len,
+                             sample_fn=sample_fn)
+
+    export_random_set(args.train_file, train_data)
+    export_random_set(args.test_file, test_data)

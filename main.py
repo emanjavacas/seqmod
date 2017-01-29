@@ -30,7 +30,7 @@ char2int = {c: i for i, c in enumerate(vocab)}
 num_layers = (1, 1)
 enc_num_layers, dec_num_layers = num_layers
 emb_dim = 4
-hid_dim = (124, 124)
+hid_dim = (64, 64)
 enc_hid_dim, dec_hid_dim = hid_dim
 att_dim = 64
 
@@ -55,8 +55,8 @@ train_src, train_tgt = prepare_data(train_set, char2int)
 train_data = u.Dataset(train_src, train_tgt, bs, pad=char2int[u.PAD])
 
 model = EncoderDecoder(
-    num_layers, emb_dim, hid_dim, att_dim, char2int, int2char,
-    dropout=0.0, add_prev=True, project_init=True)
+    num_layers, emb_dim, hid_dim, att_dim, char2int,
+    dropout=0.0, add_prev=True, project_init=False)
 
 
 def grad_norm(model):
@@ -84,12 +84,14 @@ def train(model, train_data, epochs, char2int, pad,
         batch_order = torch.randperm(len(train_data))
         for num_batch, b in enumerate(batch_order):
             model.zero_grad()   # zeroes gradient buffers
-            src, tgt = train_data[b]
-            tgt = tgt[1:]       # remove <EOS>
-            outs, (h_n, c_n) = model(src, tgt)
+            outs, (h_n, c_n) = model(train_data[b])
+            tgts = train_data[b][1][1:]
+            outs = Variable(
+                outs.data, requires_grad=not do_val, volatile=do_val)
             logs = model.project(outs.view(-1, outs.size(2)))
-            loss = criterion(logs, tgt.view(-1))
-            loss.div(src.size(1)).backward()  # average over batch
+            loss = criterion(logs, tgts.view(-1))
+            loss.div(tgts.size(1)).backward()  # average over batch
+            outs.backward(outs.grad.data)
             optimizer.step()
             epoch_loss += loss.data[0]
             assert(isinstance(loss.data[0], float))
