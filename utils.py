@@ -3,6 +3,11 @@ from random import choice, randrange
 import torch
 
 
+EOS = '<EOS>'
+PAD = '<PAD>'
+
+
+# pytorch utils
 def tile(t, times):
     """
     Repeat a tensor across an added first dimension a number of times
@@ -41,11 +46,7 @@ def repackage_bidi(h_or_c):
                  .view(layers_2 // 2, bs, hid_dim * 2)
 
 
-EOS = '<EOS>'
-PAD = '<PAD>'
-
-
-# generator functions
+# string generator functions
 def identity(string):
     return string, string
 
@@ -54,12 +55,20 @@ def reverse(string):
     return string, string[::-1]
 
 
-def ntuple(string, n=3):
+def ntuple(string, n=1):
     return string, ''.join([char * n for char in string])
 
 
 def double(string):
     return ntuple(string, n=2)
+
+
+def triple(string):
+    return ntuple(string, n=3)
+
+
+def quadruple(string):
+    return ntuple(string, n=4)
 
 
 def reversedouble(string):
@@ -71,6 +80,25 @@ def skipchar(string, skip=1):
     return string, ''.join([string[i::splitby] for i in range(splitby)])
 
 
+def skip2(string):
+    return skipchar(string, skip=2)
+
+
+def skip3(string):
+    return skipchar(string, skip=3)
+
+
+def skip1reverse(string):
+    skip = skipchar(string, skip=1)[1]
+    return reverse(skip)
+
+
+def skip2reverse(string):
+    skip = skipchar(string, skip=2)[1]
+    return reverse(skip)
+
+
+# dataset
 def generate_str(min_len, max_len, vocab, reserved=[EOS, PAD]):
     randlen = randrange(min_len, max_len)
     return ''.join([choice(vocab[:-len(reserved)]) for _ in range(randlen)])
@@ -118,6 +146,14 @@ class Dataset(object):
 
     def __len__(self):
         return self.num_batches
+
+
+def prepare_data(data_generator, char2int, batch_size, align_right=True):
+    eos, pad = char2int[EOS], char2int[PAD]
+    src, tgt = zip(*list(data_generator))
+    src = [[char2int[x] for x in seq] for seq in src]
+    tgt = [[eos] + [char2int[x] for x in seq] + [eos] for seq in tgt]
+    return Dataset(src, tgt, batch_size, pad, align_right=align_right)
 
 
 if __name__ == '__main__':
