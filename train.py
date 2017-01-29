@@ -55,7 +55,7 @@ def validate_model(model, criterion, val_data, pad):
     return total_loss / total_words
 
 
-def train_epoch(epoch, criterion, checkpoint):
+def train_epoch(epoch, train_data, criterion, checkpoint):
     start = time.time()
     epoch_loss, report_loss = 0, 0
     epoch_words, report_words = 0, 0
@@ -88,24 +88,29 @@ def train_epoch(epoch, criterion, checkpoint):
 
 
 def train_model(model, train_data, valid_data, src_dict, optim, epochs,
-                init_range=0.05, checkpoint=50):
-    model.train()
-    model.init_params(init_range=init_range)
-
+                init_range=0.05, checkpoint=50, gpu=False):
     pad = char2int[u.PAD]
     criterion = make_criterion(len(src_dict), pad)
 
+    if gpu:
+        print("cuda")
+        criterion.cuda()
+        model.cuda()
+
+    model.init_params(init_range=init_range)
+    model.train()
+
     for epoch in range(1, epochs + 1):
         # train for one epoch on the training set
-        train_loss = train_epoch(epoch, criterion, checkpoint)
+        train_loss = train_epoch(epoch, train_data, criterion, checkpoint)
         print('Train perplexity: %g' % math.exp(min(train_loss, 100)))
         # evaluate on the validation set
-        valid_loss = validate_model(model, criterion, valid_data, pad)
-        valid_ppl = math.exp(min(valid_loss, 100))
-        print('Validation perplexity: %g' % valid_ppl)
+        val_loss = validate_model(model, criterion, valid_data, pad)
+        val_ppl = math.exp(min(val_loss, 100))
+        print('Validation perplexity: %g' % val_ppl)
         # maybe update the learning rate
-        if optim == 'sgd':
-            optim.updateLearningRate(valid_loss, epoch)
+        if optim == 'SGD':
+            optim.update_learning_rate(val_loss, epoch)
 
 
 if __name__ == '__main__':
@@ -132,6 +137,7 @@ if __name__ == '__main__':
     parser.add_argument('-d', '--learning_rate_decay', default=0.5, type=float)
     parser.add_argument('-s', '--start_decay_at', default=8, type=int)
     parser.add_argument('-g', '--max_grad_norm', default=5., type=float)
+    parser.add_argument('-G', '--gpu', action='store_true')
     args = parser.parse_args()
 
     vocab = args.vocab
@@ -148,8 +154,8 @@ if __name__ == '__main__':
     val_set = u.generate_set(
         args.val_len, vocab, sample_fn=getattr(u, args.sample_fn),
         min_len=args.min_input_len, max_len=args.max_input_len)
-    train_data = u.prepare_data(train_set, char2int, args.batch_size)
-    val_data = u.prepare_data(val_set, char2int, args.batch_size)
+    train_data = u.prepare_data(train_set, char2int, args.batch_size, args.gpu)
+    val_data = u.prepare_data(val_set, char2int, args.batch_size, args.gpu)
 
     print(' * vocabulary size. %d' % len(vocab))
     print(' * number of training sentences. %d' % len(train_data))
@@ -169,4 +175,6 @@ if __name__ == '__main__':
     print('* number of parameters: %d' % n_params)
 
     print(model)
-    train_model(model, train_data, val_data, char2int, optim, args.epochs)
+    train_model(
+        model, train_data, val_data, char2int, optim, args.epochs,
+        gpu=args.gpu)

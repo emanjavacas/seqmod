@@ -110,9 +110,11 @@ def generate_set(size, vocab, min_len=1, max_len=15, sample_fn=reverse):
 
 
 class Dataset(object):
-    def __init__(self, src_data, tgt_data, batch_size, pad, align_right=True):
+    def __init__(self, src_data, tgt_data, batch_size, pad,
+                 align_right=True, gpu=False):
         self.pad = pad
         self.align_right = align_right
+        self.gpu = gpu
         self.src = sorted(src_data, key=lambda l: len(l))
         if tgt_data:
             self.tgt = sorted(tgt_data, key=lambda l: len(l))
@@ -131,6 +133,8 @@ class Dataset(object):
             offset = max_length - seq_length if self.align_right else 0
             out[i].narrow(0, offset, seq_length).copy_(seq)
         out = out.t().contiguous()
+        if self.gpu:
+            out.cuda()
         return torch.autograd.Variable(out)
 
     def __getitem__(self, idx):
