@@ -368,7 +368,7 @@ class EncoderDecoder(nn.Module):
     def project(self, dec_t):
         return self.generator(dec_t)
 
-    def forward(self, batch, return_weights=False):
+    def forward(self, inp, tgt, return_weights=False):
         """
         Parameters:
         -----------
@@ -385,7 +385,6 @@ class EncoderDecoder(nn.Module):
             c_t: torch.Tensor (batch x dec_hid_dim)
         att_ws: (batch x seq_len), batched context vector output by att network
         """
-        inp, tgt = batch[0], batch[1][:-1]
         embedded_inp = self.src_embedding(inp)
         if self.bilingual:
             embedded_tgt = self.tgt_embedding(tgt)

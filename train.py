@@ -44,13 +44,12 @@ def validate_model(model, criterion, val_data, pad):
     total_loss, total_words = 0, 0
     model.eval()
     for b in range(len(val_data)):
-        batch = val_data[b]
-        outs, _ = model(batch)  # FIXME volatile
-        targets = batch[1][1:]  # exclude <s> from targets
+        source, targets = val_data[b]
+        outs, _ = model(source, targets[:-1])
+        targets = targets[1:]
         loss, _ = batch_loss(model, outs, targets, criterion, do_val=True)
         total_loss += loss
         total_words += targets.data.ne(pad).sum()
-
     model.train()
     return total_loss / total_words
 
@@ -62,10 +61,10 @@ def train_epoch(epoch, train_data, criterion, checkpoint):
     batch_order = torch.randperm(len(train_data))
 
     for b, idx in enumerate(batch_order):
-        batch = train_data[idx]
+        source, targets = train_data[idx]
         model.zero_grad()       # empty gradients at begin of batch
-        outs, _ = model(batch)
-        targets = batch[1][1:]  # exclude initial <eos> from targets
+        outs, _ = model(source, targets[:-1])  # exclude last <eos> from train
+        targets = targets[1:]   # exclude initial <eos> from targets from test
         loss, grad_output = batch_loss(model, outs, targets, criterion)
         outs.backward(grad_output)
         optim.step()
@@ -133,6 +132,7 @@ if __name__ == '__main__':
     parser.add_argument('-o', '--optim', default='SGD', type=str)
     parser.add_argument('-P', '--plot', action='store_true')
     parser.add_argument('-r', '--learning_rate', default=1., type=float)
+    parser.add_argument('-D', '--dropout', default=0.0, type=float)
     parser.add_argument('-d', '--learning_rate_decay', default=0.5, type=float)
     parser.add_argument('-s', '--start_decay_at', default=8, type=int)
     parser.add_argument('-g', '--max_grad_norm', default=5., type=float)
@@ -165,9 +165,8 @@ if __name__ == '__main__':
     print('Building model...')
 
     model = EncoderDecoder(
-        (args.layers, args.layers), args.emb_dim,
-        (args.hid_dim, args.hid_dim), args.att_dim,
-        char2int, att_type=args.att_type)
+        (args.layers, args.layers), args.emb_dim, (args.hid_dim, args.hid_dim),
+        args.att_dim, char2int, att_type=args.att_type, dropout=args.dropout)
     optim = Optimizer(
         model.parameters(), args.optim, args.learning_rate, args.max_grad_norm,
         lr_decay=args.learning_rate_decay, start_decay_at=args.start_decay_at)
