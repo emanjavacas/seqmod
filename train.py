@@ -93,7 +93,6 @@ def train_model(model, train_data, valid_data, src_dict, optim, epochs,
     criterion = make_criterion(len(src_dict), pad)
 
     if gpu:
-        print("cuda")
         criterion.cuda()
         model.cuda()
 
@@ -154,8 +153,10 @@ if __name__ == '__main__':
     val_set = u.generate_set(
         args.val_len, vocab, sample_fn=getattr(u, args.sample_fn),
         min_len=args.min_input_len, max_len=args.max_input_len)
-    train_data = u.prepare_data(train_set, char2int, args.batch_size, args.gpu)
-    val_data = u.prepare_data(val_set, char2int, args.batch_size, args.gpu)
+    train_data = u.prepare_data(
+        train_set, char2int, args.batch_size, gpu=args.gpu)
+    val_data = u.prepare_data(
+        val_set, char2int, args.batch_size, gpu=args.gpu)
 
     print(' * vocabulary size. %d' % len(vocab))
     print(' * number of training sentences. %d' % len(train_data))
