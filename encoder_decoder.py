@@ -54,47 +54,36 @@ class Encoder(nn.Module):
 
 
 class GlobalAttention(nn.Module):
-    def __init__(self, att_dim, enc_hid_dim, dec_hid_dim):
+    def __init__(self, dim):
         super(GlobalAttention, self).__init__()
-        self.linear_in = nn.Linear(enc_hid_dim, att_dim, bias=False)
-        self.sm = nn.Softmax()
-        self.linear_out = nn.Linear(att_dim + dec_hid_dim, att_dim, bias=False)
-        self.tanh = nn.Tanh()
-        self.mask = None
+        self.linear_in = nn.Linear(dim, dim, bias=False)
+        self.softmax = nn.Softmax()
+        self.linear_out = nn.Linear(dim * 2, dim, bias=False)
 
-    def apply_mask(self, mask):
-        self.mask = mask
-
-    def forward(self, inp, context):
+    def forward(self, dec_output, enc_outputs):
         """
-        inp: batch x dim
-        context: batch x source_seq_len x dim
+        dec_output: (batch x hid_dim)
+        enc_outputs: (seq_len x batch x hid_dim == att_dim)
         """
-        target = self.linear_in(inp).unsqueeze(2)  # batch x dim x 1
-
-        # Get attention
-        attn = torch.bmm(context, target).squeeze(2)  # batch x sourceL
-        if self.mask is not None:
-            attn.data.masked_fill_(self.mask, -math.inf)
-        attn = self.sm(attn)
-        attn3 = attn.view(attn.size(0), 1, attn.size(1))  # batch x 1 x sourceL
-
-        weightedContext = torch.bmm(attn3, context).squeeze(1)  # batch x dim
-        contextCombined = torch.cat((weightedContext, inp), 1)
-
-        contextOutput = self.tanh(self.linear_out(contextCombined))
-
-        return contextOutput, attn
+        # (batch x att_dim x 1)
+        dec_att = self.linear_in(dec_output).unsqueeze(2)
+        # (batch x seq_len x att_dim) * (batch x att_dim x 1) -> (batch x seq_len)
+        weights = torch.bmm(enc_outputs.t(), dec_att).squeeze(2)
+        weights = self.softmax(weights)
+        # (batch x 1 x seq_len) * (batch x seq_len x att_dim) -> (batch x att_dim)
+        weighted = weights.unsqueeze(1).bmm(enc_outputs.t()).squeeze(1)
+        # (batch x att_dim * 2)
+        combined = torch.cat([weighted, dec_output], 1)
+        output = nn.functional.tanh(self.linear_out(combined))
+        return output, weights
 
 
 class BahdanauAttention(nn.Module):
     def __init__(self, att_dim, enc_hid_dim, dec_hid_dim):
         super(BahdanauAttention, self).__init__()
         self.att_dim = att_dim
-        # self.enc2att = nn.Linear(enc_hid_dim, att_dim, bias=False)
-        # self.dec2att = nn.Linear(dec_hid_dim, att_dim, bias=False)
-        self.enc2att = nn.Parameter(torch.Tensor(enc_hid_dim, att_dim))
-        self.dec2att = nn.Parameter(torch.Tensor(dec_hid_dim, att_dim))
+        self.enc2att = nn.Linear(enc_hid_dim, att_dim, bias=False)
+        self.dec2att = nn.Linear(dec_hid_dim, att_dim, bias=False)
         self.att_v = nn.Parameter(torch.Tensor(att_dim))
         self.softmax = nn.Softmax()
 
@@ -112,12 +101,7 @@ class BahdanauAttention(nn.Module):
         enc_att: torch.Tensor (seq_len x batch x att_dim),
             Projection of encoder output onto attention space
         """
-        bs = enc_outputs.size(1)
-        # replicate enc2att over batch dimension (batch x hid_dim x att_dim)
-        enc2att = u.tile(self.enc2att, bs)
-        # batch-first multiply & back to batch-second (seq_len x batch att_dim)
-        enc_att = enc_outputs.t().bmm(enc2att).t()
-        return enc_att
+        return torch.cat([self.enc2att(i).unsqueeze(0) for i in enc_outputs])
 
     def forward(self, dec_output, enc_outputs, enc_att):
         """
@@ -142,7 +126,7 @@ class BahdanauAttention(nn.Module):
         # tanh(dec_output_att + enc_output_att) -> (seq_len x batch x att_dim)
         seq_len, batch, hid_dim = enc_att.size()
         # project current decoder output onto attention (batch_size x att_dim)
-        dec_att = dec_output.mm(self.dec2att)
+        dec_att = self.dec2att(dec_output)
         # elemwise addition of dec_out over enc_att
         # dec_enc_att: (batch x seq_len x att_dim)
         dec_enc_att = nn.functional.tanh(enc_att + u.tile(dec_att, seq_len))
@@ -158,7 +142,8 @@ class BahdanauAttention(nn.Module):
 
 class Decoder(nn.Module):
     def __init__(self, emb_dim, enc_hid_dim, hid_dim, num_layers, cell,
-                 att_dim, dropout=0.0, add_prev=False, project_init=False):
+                 att_dim, att_type='Global', dropout=0.0,
+                 add_prev=False, project_init=False):
         """
         Parameters:
         -----------
@@ -188,9 +173,19 @@ class Decoder(nn.Module):
         if self.has_dropout:
             self.dropout = nn.Dropout(dropout)
         # attention network
-        self.attn = BahdanauAttention(att_dim, in_dim, hid_dim)
+        self.att_type = att_type
+        if att_type == 'Bahdanau':
+            self.attn = BahdanauAttention(att_dim, in_dim, hid_dim)
+        elif att_type == 'Global':
+            assert att_dim == in_dim == hid_dim, \
+                "For global, Encoder, Decoder & Attention must have same size"
+            self.attn = GlobalAttention(hid_dim)
+        else:
+            raise ValueError("unknown attention network [%s]" % att_type)
         # init state matrix (Bahdanau)
         if self.project_init:
+            assert self.att_type != "Global", \
+                "GlobalAttention doesn't support project_init yet"
             # normally dec_hid_dim == enc_hid_dim, but if not we project
             self.W_h = nn.Parameter(torch.Tensor(
                 enc_hid_dim * enc_num_layers, hid_dim * dec_num_layers))
@@ -295,7 +290,8 @@ class Decoder(nn.Module):
             att_weights = []
         # init hidden at first decoder lstm layer
         hidden = self.init_hidden_for(enc_hidden)
-        enc_att = self.attn.project_enc_output(enc_output)
+        if self.att_type == 'Bahdanau':
+            enc_att = self.attn.project_enc_output(enc_output)
         # first target is just <EOS>
         for y_prev in targets.chunk(targets.size(0)):
             # drop first dim of y_prev (1 x batch X emb_dim)
@@ -306,7 +302,10 @@ class Decoder(nn.Module):
             else:
                 dec_inp = y_prev
             output, hidden = self.rnn_step(dec_inp, hidden)
-            output, att_weight = self.attn(output, enc_output, enc_att)
+            if self.att_type == 'Bahdanau':
+                output, att_weight = self.attn(output, enc_output, enc_att)
+            else:
+                output, att_weight = self.attn(output, enc_output)
             if self.has_dropout:
                 output = self.dropout(output)
             outputs.append(output)
@@ -325,8 +324,8 @@ class EncoderDecoder(nn.Module):
                  emb_dim,
                  hid_dim,
                  att_dim,
-                 char2int,
-                 int2char,
+                 src_dict,
+                 tgt_dict=None,
                  cell='LSTM',
                  pad=u.PAD,
                  bidi=True,
@@ -338,13 +337,16 @@ class EncoderDecoder(nn.Module):
         enc_num_layers, dec_num_layers = num_layers
         self.cell = cell
         self.add_prev = add_prev
-        self.char2int = char2int
-        self.int2char = int2char
-        vocab_size = len(char2int)
+        self.bilingual = bool(tgt_dict)
+        src_vocab_size = len(src_dict)
+        tgt_vocab_size = len(tgt_dict) if tgt_dict else None
 
         # embedding layer
-        self.embedding = nn.Embedding(
-            vocab_size, emb_dim, padding_idx=char2int[pad])
+        self.src_embedding = nn.Embedding(
+            src_vocab_size, emb_dim, padding_idx=pad)
+        if tgt_vocab_size:
+            self.tgt_embedding = nn.Embedding(
+                tgt_vocab_size, emb_dim, padding_idx=tgt_dict[pad])
         # encoder
         self.encoder = Encoder(
             emb_dim, enc_hid_dim, enc_num_layers,
@@ -354,19 +356,21 @@ class EncoderDecoder(nn.Module):
             emb_dim, enc_hid_dim, dec_hid_dim, num_layers, cell, att_dim,
             dropout=dropout, add_prev=add_prev, project_init=project_init)
         # output projection
-        self.out_proj = nn.Sequential(
-            nn.Linear(dec_hid_dim, vocab_size),
+        self.generator = nn.Sequential(
+            nn.Linear(dec_hid_dim, tgt_vocab_size or src_vocab_size),
             nn.LogSoftmax())
 
         self.init_weights()
 
     def init_weights(self, init_range=0.05):
-        self.embedding.weight.data.uniform_(-init_range, init_range)
+        self.src_embedding.weight.data.uniform_(-init_range, init_range)
+        if self.bilingual:
+            self.tgt_embedding.weight.data.uniform_(-init_range, init_range)
 
     def project(self, dec_t):
-        return self.out_proj(dec_t)
+        return self.generator(dec_t)
 
-    def forward(self, inp, tgt, return_weights=False):
+    def forward(self, batch, return_weights=False):
         """
         Parameters:
         -----------
@@ -383,8 +387,12 @@ class EncoderDecoder(nn.Module):
             c_t: torch.Tensor (batch x dec_hid_dim)
         att_ws: (batch x seq_len), batched context vector output by att network
         """
-        embedded_inp = self.embedding(inp)
-        embedded_tgt = self.embedding(tgt)  # monolingual model
+        inp, tgt = batch[0], batch[1][:-1]
+        embedded_inp = self.src_embedding(inp)
+        if self.bilingual:
+            embedded_tgt = self.tgt_embedding(tgt)
+        else:
+            embedded_tgt = self.src_embedding(tgt)
         enc_output, hidden = self.encoder(embedded_inp)
         # repackage_hidden in case of bidirectional encoder
         if self.encoder.bidi:
