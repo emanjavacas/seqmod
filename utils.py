@@ -134,7 +134,7 @@ class Dataset(object):
             out[i].narrow(0, offset, seq_length).copy_(seq)
         out = out.t().contiguous()
         if self.gpu:
-            out.cuda()
+            out = out.cuda()
         return torch.autograd.Variable(out)
 
     def __getitem__(self, idx):

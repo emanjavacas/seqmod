@@ -63,7 +63,7 @@ def train_epoch(epoch, train_data, criterion, checkpoint):
 
     for b, idx in enumerate(batch_order):
         batch = train_data[idx]
-        model.zero_grad()
+        model.zero_grad()       # empty gradients at begin of batch
         outs, _ = model(batch)
         targets = batch[1][1:]  # exclude initial <eos> from targets
         loss, grad_output = batch_loss(model, outs, targets, criterion)
