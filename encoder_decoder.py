@@ -327,10 +327,10 @@ class EncoderDecoder(nn.Module):
                  src_dict,
                  tgt_dict=None,
                  cell='LSTM',
-                 pad=u.PAD,
+                 att_type='Bahdanau',
+                 dropout=0.0,
                  bidi=True,
                  add_prev=True,
-                 dropout=0.0,
                  project_init=False):
         super(EncoderDecoder, self).__init__()
         enc_hid_dim, dec_hid_dim = hid_dim
@@ -341,12 +341,12 @@ class EncoderDecoder(nn.Module):
         src_vocab_size = len(src_dict)
         tgt_vocab_size = len(tgt_dict) if tgt_dict else None
 
-        # embedding layer
+        # embedding layer(s)
         self.src_embedding = nn.Embedding(
-            src_vocab_size, emb_dim, padding_idx=pad)
+            src_vocab_size, emb_dim, padding_idx=src_dict[u.PAD])
         if tgt_vocab_size:
             self.tgt_embedding = nn.Embedding(
-                tgt_vocab_size, emb_dim, padding_idx=tgt_dict[pad])
+                tgt_vocab_size, emb_dim, padding_idx=tgt_dict[u.PAD])
         # encoder
         self.encoder = Encoder(
             emb_dim, enc_hid_dim, enc_num_layers,
@@ -354,18 +354,16 @@ class EncoderDecoder(nn.Module):
         # decoder
         self.decoder = Decoder(
             emb_dim, enc_hid_dim, dec_hid_dim, num_layers, cell, att_dim,
-            dropout=dropout, add_prev=add_prev, project_init=project_init)
+            dropout=dropout, add_prev=add_prev, project_init=project_init,
+            att_type=att_type)
         # output projection
         self.generator = nn.Sequential(
             nn.Linear(dec_hid_dim, tgt_vocab_size or src_vocab_size),
             nn.LogSoftmax())
 
-        self.init_weights()
-
-    def init_weights(self, init_range=0.05):
-        self.src_embedding.weight.data.uniform_(-init_range, init_range)
-        if self.bilingual:
-            self.tgt_embedding.weight.data.uniform_(-init_range, init_range)
+    def init_params(self, init_range=0.05):
+        for p in self.parameters():
+            p.data.uniform_(-init_range, init_range)
 
     def project(self, dec_t):
         return self.generator(dec_t)
