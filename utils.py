@@ -152,12 +152,13 @@ class Dataset(object):
         return self.num_batches
 
 
-def prepare_data(data_generator, char2int, batch_size, align_right=True):
+def prepare_data(data_generator, char2int, batch_size,
+                 align_right=True, gpu=False):
     eos, pad = char2int[EOS], char2int[PAD]
     src, tgt = zip(*list(data_generator))
     src = [[char2int[x] for x in seq] for seq in src]
     tgt = [[eos] + [char2int[x] for x in seq] + [eos] for seq in tgt]
-    return Dataset(src, tgt, batch_size, pad, align_right=align_right)
+    return Dataset(src, tgt, batch_size, pad, align_right=align_right, gpu=gpu)
 
 
 if __name__ == '__main__':
