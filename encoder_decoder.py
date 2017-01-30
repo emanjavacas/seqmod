@@ -268,7 +268,8 @@ class Decoder(nn.Module):
         data = h_0.data.new(h_0.size(1), self.hid_dim).zero_()
         return Variable(data, requires_grad=False)
 
-    def forward(self, targets, enc_output, enc_hidden, return_weights=False):
+    def forward(self, targets, enc_output, enc_hidden,
+                init_hidden=None, init_output=None, return_weights=False):
         """
         Parameters:
         -----------
@@ -289,7 +290,7 @@ class Decoder(nn.Module):
         if return_weights:
             att_weights = []
         # init hidden at first decoder lstm layer
-        hidden = self.init_hidden_for(enc_hidden)
+        hidden = init_hidden or self.init_hidden_for(enc_hidden)
         if self.att_type == 'Bahdanau':
             enc_att = self.attn.project_enc_output(enc_output)
         # first target is just <EOS>
@@ -297,7 +298,7 @@ class Decoder(nn.Module):
             # drop first dim of y_prev (1 x batch X emb_dim)
             y_prev = y_prev.squeeze(0)
             if self.add_prev:
-                output = output or self.init_output_for(hidden)
+                output = output or init_output or self.init_output_for(hidden)
                 dec_inp = torch.cat([y_prev, output], 1)
             else:
                 dec_inp = y_prev
@@ -338,6 +339,8 @@ class EncoderDecoder(nn.Module):
         self.cell = cell
         self.add_prev = add_prev
         self.bilingual = bool(tgt_dict)
+        self.src_dict = src_dict
+        self.tgt_dict = tgt_dict
         src_vocab_size = len(src_dict)
         tgt_vocab_size = len(tgt_dict) if tgt_dict else None
 
@@ -385,15 +388,15 @@ class EncoderDecoder(nn.Module):
             c_t: torch.Tensor (batch x dec_hid_dim)
         att_ws: (batch x seq_len), batched context vector output by att network
         """
-        embedded_inp = self.src_embedding(inp)
+        emb_inp = self.src_embedding(inp)
         if self.bilingual:
-            embedded_tgt = self.tgt_embedding(tgt)
+            emb_tgt = self.tgt_embedding(tgt)
         else:
-            embedded_tgt = self.src_embedding(tgt)
-        enc_output, hidden = self.encoder(embedded_inp)
-        # repackage_hidden in case of bidirectional encoder
+            emb_tgt = self.src_embedding(tgt)
+        enc_out, hidden = self.encoder(emb_inp)
+        # Repackage hidden in case of bidirectional encoder:
+        # bidi encoder outputs hidden (num_layers * 2 x batch x enc_hid_dim)
+        # but decoder expects hidden (num_layers x batch x dec_hid_dim)
         if self.encoder.bidi:
-            h_n, c_n = u.repackage_bidi(hidden[0]), u.repackage_bidi(hidden[1])
-            hidden = (h_n, c_n)
-        return self.decoder(
-            embedded_tgt, enc_output, hidden, return_weights=return_weights)
+            hidden = (u.repackage_bidi(hidden[0]), u.repackage_bidi(hidden[1]))
+        return self.decoder(emb_tgt, enc_out, hidden, return_weights=return_weights)
