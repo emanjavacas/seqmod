@@ -54,7 +54,7 @@ def validate_model(model, criterion, val_data, pad):
     return total_loss / total_words
 
 
-def train_epoch(epoch, train_data, criterion, checkpoint):
+def train_epoch(epoch, train_data, criterion, optimizer, checkpoint):
     start = time.time()
     epoch_loss, report_loss = 0, 0
     epoch_words, report_words = 0, 0
@@ -67,7 +67,7 @@ def train_epoch(epoch, train_data, criterion, checkpoint):
         targets = targets[1:]   # exclude initial <eos> from targets from test
         loss, grad_output = batch_loss(model, outs, targets, criterion)
         outs.backward(grad_output)
-        optim.step()
+        optimizer.step()
 
         num_words = targets.data.ne(pad).sum()
         epoch_words += num_words
@@ -79,14 +79,13 @@ def train_epoch(epoch, train_data, criterion, checkpoint):
                   (epoch, b, len(train_data),
                    math.exp(report_loss / report_words),
                    report_words/(time.time()-start)))
-
             report_loss = report_words = 0
             start = time.time()
 
     return epoch_loss / epoch_words
 
 
-def train_model(model, train_data, valid_data, src_dict, optim, epochs,
+def train_model(model, train_data, valid_data, src_dict, optimizer, epochs,
                 init_range=0.05, checkpoint=50, gpu=False):
     pad = char2int[u.PAD]
     criterion = make_criterion(len(src_dict), pad)
@@ -100,15 +99,15 @@ def train_model(model, train_data, valid_data, src_dict, optim, epochs,
 
     for epoch in range(1, epochs + 1):
         # train for one epoch on the training set
-        train_loss = train_epoch(epoch, train_data, criterion, checkpoint)
+        train_loss = train_epoch(
+            epoch, train_data, criterion, optimizer, checkpoint)
         print('Train perplexity: %g' % math.exp(min(train_loss, 100)))
         # evaluate on the validation set
         val_loss = validate_model(model, criterion, valid_data, pad)
         val_ppl = math.exp(min(val_loss, 100))
         print('Validation perplexity: %g' % val_ppl)
         # maybe update the learning rate
-        if optim == 'SGD':
-            optim.update_learning_rate(val_loss, epoch)
+        optimizer.maybe_update_lr(epoch, val_loss)
 
 
 if __name__ == '__main__':
@@ -167,7 +166,7 @@ if __name__ == '__main__':
     model = EncoderDecoder(
         (args.layers, args.layers), args.emb_dim, (args.hid_dim, args.hid_dim),
         args.att_dim, char2int, att_type=args.att_type, dropout=args.dropout)
-    optim = Optimizer(
+    optimizer = Optimizer(
         model.parameters(), args.optim, args.learning_rate, args.max_grad_norm,
         lr_decay=args.learning_rate_decay, start_decay_at=args.start_decay_at)
 
@@ -176,5 +175,5 @@ if __name__ == '__main__':
 
     print(model)
     train_model(
-        model, train_data, val_data, char2int, optim, args.epochs,
+        model, train_data, val_data, char2int, optimizer, args.epochs,
         gpu=args.gpu)
