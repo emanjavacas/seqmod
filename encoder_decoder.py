@@ -243,9 +243,9 @@ class Decoder(nn.Module):
             dec_c0 = torch.bmm(c_t, u.tile(self.W_c, bs)).view(*size)
         else:
             assert num_layers == self.num_layers, \
-                "encoder and decoder need equal depth if project_init is False"
+                "encoder and decoder need equal depth if project_init not set"
             assert hid_dim == self.hid_dim, \
-                "encoder and decoder need equal size if project_init is False"
+                "encoder and decoder need equal size if project_init not set"
             dec_h0, dec_c0 = enc_hidden
         return dec_h0, dec_c0
 
