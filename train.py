@@ -9,6 +9,7 @@ from torch.autograd import Variable
 
 import utils as u
 from encoder_decoder import EncoderDecoder
+from translate import translate_checkpoint
 from optimizer import Optimizer
 
 
@@ -40,7 +41,7 @@ def batch_loss(model, outs, targets, criterion, do_val=False, split_batch=52):
     return batch_loss, grad_output
 
 
-def validate_model(model, criterion, val_data, pad):
+def validate_model(model, criterion, val_data, pad, target='redrum'):
     total_loss, total_words = 0, 0
     model.eval()
     for b in range(len(val_data)):
@@ -50,6 +51,8 @@ def validate_model(model, criterion, val_data, pad):
         loss, _ = batch_loss(model, outs, targets, criterion, do_val=True)
         total_loss += loss
         total_words += targets.data.ne(pad).sum()
+    pred = translate_checkpoint(model, target)
+    print("[%s] -> [%s]" % (target, pred))
     model.train()
     return total_loss / total_words
 
