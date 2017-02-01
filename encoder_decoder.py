@@ -50,7 +50,13 @@ class Encoder(nn.Module):
         c_t : (num_layers * num_directions x batch x hidden_size)
             tensor containing the cell state for t=seq_len
         """
-        return self.rnn(inp, hidden or self.init_hidden_for(inp))
+        enc_out, hidden = self.rnn(inp, hidden or self.init_hidden_for(inp))
+        # Repackage hidden in case of bidirectional encoder:
+        # bidi encoder outputs hidden (num_layers * 2 x batch x enc_hid_dim)
+        # but decoder expects hidden (num_layers x batch x dec_hid_dim)
+        if self.bidi:
+            hidden = (u.repackage_bidi(hidden[0]), u.repackage_bidi(hidden[1]))
+        return enc_out, hidden
 
 
 class GlobalAttention(nn.Module):
@@ -60,10 +66,10 @@ class GlobalAttention(nn.Module):
         self.softmax = nn.Softmax()
         self.linear_out = nn.Linear(dim * 2, dim, bias=False)
 
-    def forward(self, dec_output, enc_outputs):
+    def forward(self, dec_output, enc_outputs, *args, **kwargs):
         """
         dec_output: (batch x hid_dim)
-        enc_outputs: (seq_len x batch x hid_dim == att_dim)
+        enc_outputs: (seq_len x batch x hid_dim (== att_dim))
         """
         # (batch x att_dim x 1)
         dec_att = self.linear_in(dec_output).unsqueeze(2)
@@ -103,7 +109,7 @@ class BahdanauAttention(nn.Module):
         """
         return torch.cat([self.enc2att(i).unsqueeze(0) for i in enc_outputs])
 
-    def forward(self, dec_output, enc_outputs, enc_att):
+    def forward(self, dec_output, enc_outputs, enc_att, *args, **kwargs):
         """
         Parameters:
         -----------
@@ -135,8 +141,9 @@ class BahdanauAttention(nn.Module):
         weights = self.softmax(u.bmv(dec_enc_att.t(), self.att_v).squeeze(2))
         # enc_outputs: (seq_len x batch x hid_dim) * weights (batch x seq_len)
         #   -> context: (batch x hid_dim)
-        weights = weights.unsqueeze(2)
-        context = enc_outputs.t().transpose(2, 1).bmm(weights).squeeze(2)
+        context = enc_outputs.t().transpose(2, 1)\
+                                 .bmm(weights.unsqueeze(2))\
+                                 .squeeze(2)
         return context, weights
 
 
@@ -269,7 +276,7 @@ class Decoder(nn.Module):
         return Variable(data, requires_grad=False)
 
     def forward(self, targets, enc_output, enc_hidden,
-                init_hidden=None, init_output=None, return_weights=False):
+                init_hidden=None, init_output=None):
         """
         Parameters:
         -----------
@@ -287,10 +294,10 @@ class Decoder(nn.Module):
             decoder (e.g. the hidden state at the last encoding step.)
         """
         outputs, output = [], None
-        if return_weights:
-            att_weights = []
+        att_weights, enc_att = [], None
         # init hidden at first decoder lstm layer
         hidden = init_hidden or self.init_hidden_for(enc_hidden)
+        # cache encoder att projection for bahdanau
         if self.att_type == 'Bahdanau':
             enc_att = self.attn.project_enc_output(enc_output)
         # first target is just <EOS>
@@ -299,24 +306,17 @@ class Decoder(nn.Module):
             y_prev = y_prev.squeeze(0)
             if self.add_prev:
                 output = output or init_output or self.init_output_for(hidden)
-                dec_inp = torch.cat([y_prev, output], 1)
+                dec_inp = torch.cat([output, y_prev], 1)
             else:
-                dec_inp = y_prev
+                dec_inp = output
             output, hidden = self.rnn_step(dec_inp, hidden)
-            if self.att_type == 'Bahdanau':
-                output, att_weight = self.attn(output, enc_output, enc_att)
-            else:
-                output, att_weight = self.attn(output, enc_output)
+            output, att_weight = self.attn(output, enc_output, enc_att)
             if self.has_dropout:
                 output = self.dropout(output)
             outputs.append(output)
-            if return_weights:
-                att_weights.append(att_weight)
+            att_weights.append(att_weight)
 
-        if return_weights:
-            return torch.stack(outputs), hidden, torch.stack(att_weights)
-        else:
-            return torch.stack(outputs), hidden
+        return torch.stack(outputs), hidden, torch.stack(att_weights)
 
 
 class EncoderDecoder(nn.Module):
@@ -371,7 +371,7 @@ class EncoderDecoder(nn.Module):
     def project(self, dec_t):
         return self.generator(dec_t)
 
-    def forward(self, inp, tgt, return_weights=False):
+    def forward(self, inp, tgt):
         """
         Parameters:
         -----------
@@ -386,7 +386,7 @@ class EncoderDecoder(nn.Module):
         hidden: (h_t, c_t)
             h_t: torch.Tensor (batch x dec_hid_dim)
             c_t: torch.Tensor (batch x dec_hid_dim)
-        att_ws: (batch x seq_len), batched context vector output by att network
+        att_weights: (batch x seq_len)
         """
         emb_inp = self.src_embedding(inp)
         if self.bilingual:
@@ -394,9 +394,5 @@ class EncoderDecoder(nn.Module):
         else:
             emb_tgt = self.src_embedding(tgt)
         enc_out, hidden = self.encoder(emb_inp)
-        # Repackage hidden in case of bidirectional encoder:
-        # bidi encoder outputs hidden (num_layers * 2 x batch x enc_hid_dim)
-        # but decoder expects hidden (num_layers x batch x dec_hid_dim)
-        if self.encoder.bidi:
-            hidden = (u.repackage_bidi(hidden[0]), u.repackage_bidi(hidden[1]))
-        return self.decoder(emb_tgt, enc_out, hidden, return_weights=return_weights)
+        dec_out, hidden, att_weights = self.decoder(emb_tgt, enc_out, hidden)
+        return dec_out, hidden, att_weights

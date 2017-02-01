@@ -2,15 +2,24 @@
 import time
 import string
 import math
+import matplotlib.pyplot as plt
 
 import torch
 from torch import nn
 from torch.autograd import Variable
 
-import utils as u
+from hinton_diagram import hinton
 from encoder_decoder import EncoderDecoder
 from translate import translate_checkpoint
 from optimizer import Optimizer
+import utils as u
+
+
+def plot_weights(att_weights, target, pred, e, batch):
+    fig = hinton(att_weights.squeeze(1).t().data.cpu().numpy(),
+                 ylabels=list(target),
+                 xlabels=list(pred.replace(u.EOS, '')))
+    plt.savefig('./img/%d_%d' % (e, batch))
 
 
 def make_criterion(vocab_size, pad):
@@ -41,18 +50,19 @@ def batch_loss(model, outs, targets, criterion, do_val=False, split_batch=52):
     return batch_loss, grad_output
 
 
-def validate_model(model, criterion, val_data, pad, target='redrum'):
+def validate_model(model, criterion, e, val_data, pad, target='redrum', gpu=False):
     total_loss, total_words = 0, 0
     model.eval()
     for b in range(len(val_data)):
         source, targets = val_data[b]
-        outs, _ = model(source, targets[:-1])
+        outs, _, _ = model(source, targets[:-1])
         targets = targets[1:]
         loss, _ = batch_loss(model, outs, targets, criterion, do_val=True)
         total_loss += loss
         total_words += targets.data.ne(pad).sum()
-    pred = translate_checkpoint(model, target)
+    pred, att_weights = translate_checkpoint(model, e, b, target, gpu=gpu)
     print("[%s] -> [%s]" % (target, pred))
+    plot_weights(att_weights, target, pred, e, b)
     model.train()
     return total_loss / total_words
 
@@ -66,7 +76,7 @@ def train_epoch(epoch, train_data, criterion, optimizer, checkpoint):
     for b, idx in enumerate(batch_order):
         source, targets = train_data[idx]
         model.zero_grad()       # empty gradients at begin of batch
-        outs, _ = model(source, targets[:-1])  # exclude last <eos> from train
+        outs, _, _ = model(source, targets[:-1])  # exclude last <eos> from train
         targets = targets[1:]   # exclude initial <eos> from targets from test
         loss, grad_output = batch_loss(model, outs, targets, criterion)
         outs.backward(grad_output)
@@ -106,7 +116,7 @@ def train_model(model, train_data, valid_data, src_dict, optimizer, epochs,
             epoch, train_data, criterion, optimizer, checkpoint)
         print('Train perplexity: %g' % math.exp(min(train_loss, 100)))
         # evaluate on the validation set
-        val_loss = validate_model(model, criterion, valid_data, pad)
+        val_loss = validate_model(model, criterion, epoch, valid_data, pad, gpu=gpu)
         val_ppl = math.exp(min(val_loss, 100))
         print('Validation perplexity: %g' % val_ppl)
         # maybe update the learning rate

@@ -46,6 +46,13 @@ def repackage_bidi(h_or_c):
                  .view(layers_2 // 2, bs, hid_dim * 2)
 
 
+def unpackage_bidi(h_or_c):
+    layers, bs, hid_dim_2 = h_or_c.size()
+    return h_or_c.view(layers, bs, 2, hid_dim_2 // 2) \
+                 .transpose(1, 2).contiguous() \
+                 .view(layers * 2, bs, hid_dim_2 // 2)
+
+
 # string generator functions
 def identity(string):
     return string, string
