@@ -50,7 +50,7 @@ def batch_loss(model, outs, targets, criterion, do_val=False, split_batch=52):
     return batch_loss, grad_output
 
 
-def validate_model(model, criterion, e, val_data, pad, target='redrum', gpu=False):
+def validate_model(model, criterion, e, val_data, pad, target=None, gpu=False):
     total_loss, total_words = 0, 0
     model.eval()
     for b in range(len(val_data)):
@@ -60,9 +60,10 @@ def validate_model(model, criterion, e, val_data, pad, target='redrum', gpu=Fals
         loss, _ = batch_loss(model, outs, targets, criterion, do_val=True)
         total_loss += loss
         total_words += targets.data.ne(pad).sum()
-    pred, att_weights = translate_checkpoint(model, e, b, target, gpu=gpu)
-    print("[%s] -> [%s]" % (target, pred))
-    plot_weights(att_weights, target, pred, e, b)
+    if target:
+        pred, att_weights = translate_checkpoint(model, e, b, target, gpu=gpu)
+        print("[%s] -> [%s]" % (target, pred))
+        plot_weights(att_weights, target, pred, e, b)
     model.train()
     return total_loss / total_words
 
@@ -99,7 +100,7 @@ def train_epoch(epoch, train_data, criterion, optimizer, checkpoint):
 
 
 def train_model(model, train_data, valid_data, src_dict, optimizer, epochs,
-                init_range=0.05, checkpoint=50, gpu=False):
+                init_range=0.05, checkpoint=50, gpu=False, target=None):
     pad = char2int[u.PAD]
     criterion = make_criterion(len(src_dict), pad)
 
@@ -116,7 +117,8 @@ def train_model(model, train_data, valid_data, src_dict, optimizer, epochs,
             epoch, train_data, criterion, optimizer, checkpoint)
         print('Train perplexity: %g' % math.exp(min(train_loss, 100)))
         # evaluate on the validation set
-        val_loss = validate_model(model, criterion, epoch, valid_data, pad, gpu=gpu)
+        val_loss = validate_model(
+            model, criterion, epoch, valid_data, pad, gpu=gpu, target=target)
         val_ppl = math.exp(min(val_loss, 100))
         print('Validation perplexity: %g' % val_ppl)
         # maybe update the learning rate
@@ -127,6 +129,7 @@ if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('-t', '--train_len', default=10000, type=int)
+    parser.add_argument('-T', '--target', default='redrum', type=str)
     parser.add_argument('-v', '--val_len', default=1000, type=int)
     parser.add_argument('-b', '--batch_size', default=64, type=int)
     parser.add_argument('-m', '--min_input_len', default=1, type=int)
@@ -139,7 +142,7 @@ if __name__ == '__main__':
     parser.add_argument('-A', '--att_type', default='Bahdanau', type=str)
     parser.add_argument('-E', '--epochs', default=5, type=int)
     parser.add_argument('-p', '--prefix', default='model', type=str)
-    parser.add_argument('-V', '--vocab', default=list(string.ascii_letters))
+    parser.add_argument('-V', '--vocab', default=list(string.ascii_letters) + [' '])
     parser.add_argument('-c', '--checkpoint', default=500, type=int)
     parser.add_argument('-o', '--optim', default='SGD', type=str)
     parser.add_argument('-P', '--plot', action='store_true')
@@ -189,4 +192,4 @@ if __name__ == '__main__':
     print(model)
     train_model(
         model, train_data, val_data, char2int, optimizer, args.epochs,
-        gpu=args.gpu)
+        gpu=args.gpu, target=args.target)
