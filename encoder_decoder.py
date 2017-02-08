@@ -443,43 +443,38 @@ class EncoderDecoder(nn.Module):
             enc_hidden = (u.repackage_bidi(enc_hidden[0]),
                           u.repackage_bidi(enc_hidden[1]))
         # decode
-        dec_out, dec_hidden = None, None
-        # initialize beam-aware variables
-        enc_outs = u.repeat(enc_outs, (1, beam_width, 1))
-        enc_hidden = (u.repeat(enc_hidden[0], (1, beam_width, 1)),
-                      u.repeat(enc_hidden[1], (1, beam_width, 1)))
-        # repeat only requires same number of elements (but not of dims)
-        # for simplicity, we keep the beam width in a separate dim
-        mask = src.data.eq(pad).t().unsqueeze(0).repeat(beam_width, 1, 1)
+        mask = src.data.eq(pad)
         beams = [Beam(beam_width, eos, pad) for _ in range(batch)]
-        for i in range(len(src) * max_decode_len):
-            beam_data = [b.get_current_state() for b in beams]
-            # (1 x batch * width)
-            prev = Variable(torch.cat(beam_data).unsqueeze(0), volatile=True)
-            # (1 x batch * width x emb_dim)
-            prev_emb = self.src_embedding(prev)
-            dec_out, dec_hidden, att_weights = self.decoder(
-                prev_emb, enc_outs, enc_hidden, mask=mask,
-                init_hidden=dec_hidden, init_output=dec_out)
-            # (seq x batch * width x hid) -> (batch * width x hid)
-            dec_out = dec_out.squeeze(0)
-            # (batch x width x vocab_size)
-            logs = self.project(dec_out).view(batch, beam_width, -1)
-            for idx, beam in enumerate(beams):
-                if not beam.active:
-                    continue
-                beam.advance(logs.data[idx])
-                for dec in dec_hidden:
-                    # (layers x width * batch x hid_dim)
-                    # -> (layers x width x batch x hid_dim)
-                    _, _, hid_dim = dec.size()
-                    size = -1, beam_width, batch, hid_dim
-                    beam_hid = dec.view(*size)[:, :, idx]
-                    source_beam = beam.get_source_beam()
-                    target_hid = beam_hid.data.index_select(1, source_beam)
-                    beam_hid.data.copy_(target_hid)
-            if sum(b.active for b in beams) == 0:
-                break
+        for b in range(batch):
+            dec_out, dec_hidden = None, None
+            idx = torch.LongTensor([b])
+            beam = beams[b]
+            mask_t = mask.index_select(1, idx).repeat(1, beam_width)
+            size_t = (1, beam_width, 1)
+            enc_outs_t = u.repeat(
+                Variable(enc_outs.data.index_select(1, idx)), size_t)
+            h, c = enc_hidden
+            enc_hidden_t = (
+                u.repeat(Variable(h.data.index_select(1, idx)), size_t),
+                u.repeat(Variable(c.data.index_select(1, idx)), size_t))
+            while beam.active and len(beam) < len(src) * max_decode_len:
+                # (1 x width)
+                beam_data = beam.get_current_state().unsqueeze(0)
+                prev = Variable(beam_data, volatile=True)
+                # (1 x width x emb_dim)
+                prev_emb = self.src_embedding(prev)
+                dec_out, dec_hidden, att_weights = self.decoder(
+                    prev_emb, enc_outs_t, enc_hidden_t, mask=mask_t,
+                    init_hidden=dec_hidden, init_output=dec_out)
+                # (seq x width x hid) -> (width x hid)
+                dec_out = dec_out.squeeze(0)
+                # (width x vocab_size)
+                logs = self.project(dec_out)
+                beam.advance(logs.data)
+                dec_out = u.swap(dec_out, 0, beam.get_source_beam())
+                dec_hidden = (u.swap(dec_hidden[0], 1, beam.get_source_beam()),
+                              u.swap(dec_hidden[1], 1, beam.get_source_beam()))
+
         scores, hyps = [], []
         for b in beams:
             score, hyp = b.decode(n=beam_width)

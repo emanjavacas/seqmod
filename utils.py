@@ -38,6 +38,12 @@ def repeat(x, size):
     return torch.autograd.Variable(x.data.repeat(*size))
 
 
+def swap(x, dim, perm):
+    if isinstance(perm, list):
+        perm = torch.LongTensor(perm)
+    return torch.autograd.Variable(x.data.index_select(dim, perm))
+
+
 def repackage_bidi(h_or_c):
     """
     In a bidirectional RNN output is (output, (h_n, c_n))

@@ -47,8 +47,8 @@ class Beam(object):
         # compute source beam and best candidates for the next beam
         source_beams = flatten_ids / vocab
         beam_first_ids = source_beams * vocab
-        decoded_ids = flatten_ids - beam_first_ids
-        return scores, source_beams, decoded_ids
+        beam = flatten_ids - beam_first_ids
+        return scores, source_beams, beam
 
     def get_source_beam(self, step=-1):
         """
@@ -64,23 +64,22 @@ class Beam(object):
         """
         return self._get_beam_at(step=-1)
 
-    def finished(self, decoded_ids):
+    def finished(self, beam):
         """
         Finished criterion based on whether the last best hypothesis is EOS
         """
-        return decoded_ids[0] == self.eos
+        return beam[0] == self.eos
 
     def advance(self, logs):
         """
         Runs a decoder step accumulating the path and the ids.
         """
-        scores, source_beams, decoded_ids = self._new_beam(logs)
-        if self.finished(decoded_ids):
+        scores, source_beams, beam = self._new_beam(logs)
+        if self.finished(beam):
             self.active = False
         self.scores = scores
         self.source_beams.append(source_beams)
-        self.beam_values.append(decoded_ids)
-        return decoded_ids
+        self.beam_values.append(beam)
 
     def get_hypothesis(self, idx):
         """
