@@ -51,6 +51,7 @@ class Optimizer(object):
         Decay learning rate if validation perplexity does not improve
         or we hit the start_decay_at limit
         """
+        last_lr = self.lr
         if self.method == 'SGD':
             if self.start_decay_at and epoch >= self.start_decay_at:
                 self.start_decay = True
@@ -58,6 +59,7 @@ class Optimizer(object):
                 self.start_decay = True
             if self.start_decay:
                 self.lr = self.lr * self.lr_decay
-                print("Decaying learning rate to %g" % self.lr)
             self.last_ppl = ppl
             self.optim = getattr(optim, self.method)(self.params, lr=self.lr)
+        if self.start_decay:
+            return {'last_lr': last_lr, 'new_lr': self.lr}

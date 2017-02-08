@@ -1,8 +1,11 @@
 
+import math
 import torch
 import torch.nn as nn
 from torch.autograd import Variable
 
+from beam_search import Beam
+# from beam import Beam
 import utils as u
 
 
@@ -50,13 +53,8 @@ class Encoder(nn.Module):
         c_t : (num_layers * num_directions x batch x hidden_size)
             tensor containing the cell state for t=seq_len
         """
-        enc_out, hidden = self.rnn(inp, hidden or self.init_hidden_for(inp))
-        # Repackage hidden in case of bidirectional encoder:
-        # bidi encoder outputs hidden (num_layers * 2 x batch x enc_hid_dim)
-        # but decoder expects hidden (num_layers x batch x dec_hid_dim)
-        if self.bidi:
-            hidden = (u.repackage_bidi(hidden[0]), u.repackage_bidi(hidden[1]))
-        return enc_out, hidden
+        enc_outs, hidden = self.rnn(inp, hidden or self.init_hidden_for(inp))
+        return enc_outs, hidden
 
 
 class GlobalAttention(nn.Module):
@@ -66,20 +64,22 @@ class GlobalAttention(nn.Module):
         self.softmax = nn.Softmax()
         self.linear_out = nn.Linear(dim * 2, dim, bias=False)
 
-    def forward(self, dec_output, enc_outputs, *args, **kwargs):
+    def forward(self, dec_out, enc_outs, mask=None, *args, **kwargs):
         """
-        dec_output: (batch x hid_dim)
-        enc_outputs: (seq_len x batch x hid_dim (== att_dim))
+        dec_out: (batch x hid_dim)
+        enc_outs: (seq_len x batch x hid_dim (== att_dim))
         """
         # (batch x att_dim x 1)
-        dec_att = self.linear_in(dec_output).unsqueeze(2)
+        dec_att = self.linear_in(dec_out).unsqueeze(2)
         # (batch x seq_len x att_dim) * (batch x att_dim x 1) -> (batch x seq_len)
-        weights = torch.bmm(enc_outputs.t(), dec_att).squeeze(2)
+        weights = torch.bmm(enc_outs.t(), dec_att).squeeze(2)
         weights = self.softmax(weights)
+        if mask is not None:
+            weights.data.masked_fill_(mask, -math.inf)
         # (batch x 1 x seq_len) * (batch x seq_len x att_dim) -> (batch x att_dim)
-        weighted = weights.unsqueeze(1).bmm(enc_outputs.t()).squeeze(1)
+        weighted = weights.unsqueeze(1).bmm(enc_outs.t()).squeeze(1)
         # (batch x att_dim * 2)
-        combined = torch.cat([weighted, dec_output], 1)
+        combined = torch.cat([weighted, dec_out], 1)
         output = nn.functional.tanh(self.linear_out(combined))
         return output, weights
 
@@ -93,13 +93,13 @@ class BahdanauAttention(nn.Module):
         self.att_v = nn.Parameter(torch.Tensor(att_dim))
         self.softmax = nn.Softmax()
 
-    def project_enc_output(self, enc_outputs):
+    def project_enc_outs(self, enc_outs):
         """
         mapping: (seq_len x batch x hid_dim) -> (seq_len x batch x att_dim)
 
         Parameters:
         -----------
-        enc_outputs: torch.Tensor (seq_len x batch x hid_dim),
+        enc_outs: torch.Tensor (seq_len x batch x hid_dim),
             output of encoder over seq_len input symbols
 
         Returns:
@@ -107,19 +107,19 @@ class BahdanauAttention(nn.Module):
         enc_att: torch.Tensor (seq_len x batch x att_dim),
             Projection of encoder output onto attention space
         """
-        return torch.cat([self.enc2att(i).unsqueeze(0) for i in enc_outputs])
+        return torch.cat([self.enc2att(i).unsqueeze(0) for i in enc_outs])
 
-    def forward(self, dec_output, enc_outputs, enc_att, *args, **kwargs):
+    def forward(self, dec_out, enc_outs, enc_att, mask=None, *args, **kwargs):
         """
         Parameters:
         -----------
-        dec_output: torch.Tensor (batch x dec_hid_dim)
+        dec_out: torch.Tensor (batch x dec_hid_dim)
             Output of decoder at current step
 
-        enc_outputs: torch.Tensor (seq_len x batch x enc_hid_dim)
+        enc_outs: torch.Tensor (seq_len x batch x enc_hid_dim)
             Output of encoder over the entire sequence
 
-        enc_att: see self.project_enc_output(self, enc_outputs)
+        enc_att: see self.project_enc_outs(self, enc_outs)
 
         Returns:
         --------
@@ -129,21 +129,21 @@ class BahdanauAttention(nn.Module):
         # enc_outputs * weights
         # weights: softmax(E) (seq_len x batch)
         # E: att_v (att_dim) * tanh(dec_att + enc_att) -> (seq_len x batch)
-        # tanh(dec_output_att + enc_output_att) -> (seq_len x batch x att_dim)
+        # tanh(dec_out_att + enc_output_att) -> (seq_len x batch x att_dim)
         seq_len, batch, hid_dim = enc_att.size()
         # project current decoder output onto attention (batch_size x att_dim)
-        dec_att = self.dec2att(dec_output)
+        dec_att = self.dec2att(dec_out)
         # elemwise addition of dec_out over enc_att
         # dec_enc_att: (batch x seq_len x att_dim)
         dec_enc_att = nn.functional.tanh(enc_att + u.tile(dec_att, seq_len))
         # dec_enc_att (seq_len x batch x att_dim) * att_v (att_dim)
         #   -> weights (batch x seq_len)
         weights = self.softmax(u.bmv(dec_enc_att.t(), self.att_v).squeeze(2))
-        # enc_outputs: (seq_len x batch x hid_dim) * weights (batch x seq_len)
+        if mask is not None:
+            weights.data.masked_fill_(mask, -math.inf)
+        # enc_outs: (seq_len x batch x hid_dim) * weights (batch x seq_len)
         #   -> context: (batch x hid_dim)
-        context = enc_outputs.t().transpose(2, 1)\
-                                 .bmm(weights.unsqueeze(2))\
-                                 .squeeze(2)
+        context = weights.unsqueeze(1).bmm(enc_outs.t()).squeeze(1)
         return context, weights
 
 
@@ -275,8 +275,8 @@ class Decoder(nn.Module):
         data = h_0.data.new(h_0.size(1), self.hid_dim).zero_()
         return Variable(data, requires_grad=False)
 
-    def forward(self, targets, enc_output, enc_hidden,
-                init_hidden=None, init_output=None):
+    def forward(self, targets, enc_outs, enc_hidden, mask=None,
+                init_hidden=None, init_output=None, init_enc_att=None):
         """
         Parameters:
         -----------
@@ -284,7 +284,7 @@ class Decoder(nn.Module):
         targets: torch.Tensor (seq_len x batch x emb_dim),
             Target output sequence for batch.
 
-        enc_output: torch.Tensor (seq_len x batch x enc_hid_dim),
+        enc_outs: torch.Tensor (seq_len x batch x enc_hid_dim),
             Output of the encoder at the last layer for all encoding steps.
 
         enc_hidden: tuple (h_t, c_t)
@@ -293,30 +293,30 @@ class Decoder(nn.Module):
             Can be used to use to specify an initial hidden state for the
             decoder (e.g. the hidden state at the last encoding step.)
         """
-        outputs, output = [], None
+        outs, out = [], None
         att_weights, enc_att = [], None
         # init hidden at first decoder lstm layer
         hidden = init_hidden or self.init_hidden_for(enc_hidden)
         # cache encoder att projection for bahdanau
         if self.att_type == 'Bahdanau':
-            enc_att = self.attn.project_enc_output(enc_output)
+            enc_att = init_enc_att or self.attn.project_enc_outs(enc_outs)
         # first target is just <EOS>
         for y_prev in targets.chunk(targets.size(0)):
             # drop first dim of y_prev (1 x batch X emb_dim)
             y_prev = y_prev.squeeze(0)
             if self.add_prev:
-                output = output or init_output or self.init_output_for(hidden)
-                dec_inp = torch.cat([output, y_prev], 1)
+                out = out or init_output or self.init_output_for(hidden)
+                dec_inp = torch.cat([out, y_prev], 1)
             else:
-                dec_inp = output
-            output, hidden = self.rnn_step(dec_inp, hidden)
-            output, att_weight = self.attn(output, enc_output, enc_att)
+                dec_inp = out
+            out, hidden = self.rnn_step(dec_inp, hidden)
+            out, att_weight = self.attn(out, enc_outs, enc_att, mask=mask)
             if self.has_dropout:
-                output = self.dropout(output)
-            outputs.append(output)
+                out = self.dropout(out)
+            outs.append(out)
             att_weights.append(att_weight)
 
-        return torch.stack(outputs), hidden, torch.stack(att_weights)
+        return torch.stack(outs), hidden, torch.stack(att_weights)
 
 
 class EncoderDecoder(nn.Module):
@@ -360,7 +360,7 @@ class EncoderDecoder(nn.Module):
             dropout=dropout, add_prev=add_prev, project_init=project_init,
             att_type=att_type)
         # output projection
-        self.generator = nn.Sequential(
+        self.project = nn.Sequential(
             nn.Linear(dec_hid_dim, tgt_vocab_size or src_vocab_size),
             nn.LogSoftmax())
 
@@ -368,16 +368,13 @@ class EncoderDecoder(nn.Module):
         for p in self.parameters():
             p.data.uniform_(-init_range, init_range)
 
-    def project(self, dec_t):
-        return self.generator(dec_t)
-
     def forward(self, inp, tgt):
         """
         Parameters:
         -----------
-        inp: torch.Tensor (source_seq_len x batch),
+        inp: torch.Tensor (seq_len x batch),
             Train data for a single batch.
-        tgt: torch.Tensor (target_seq_len x batch)
+        tgt: torch.Tensor (seq_len x batch)
             Desired output for a single batch
 
         Returns: outs, hidden, att_ws
@@ -389,10 +386,135 @@ class EncoderDecoder(nn.Module):
         att_weights: (batch x seq_len)
         """
         emb_inp = self.src_embedding(inp)
+        enc_outs, hidden = self.encoder(emb_inp)
+        if self.encoder.bidi:
+            # Repackage hidden in case of bidirectional encoder
+            # BiRNN encoder outputs (num_layers * 2 x batch x enc_hid_dim)
+            # but decoder expects   (num_layers x batch x dec_hid_dim)
+            hidden = (u.repackage_bidi(hidden[0]), u.repackage_bidi(hidden[1]))
         if self.bilingual:
             emb_tgt = self.tgt_embedding(tgt)
         else:
             emb_tgt = self.src_embedding(tgt)
-        enc_out, hidden = self.encoder(emb_inp)
-        dec_out, hidden, att_weights = self.decoder(emb_tgt, enc_out, hidden)
+        dec_out, hidden, att_weights = self.decoder(emb_tgt, enc_outs, hidden)
         return dec_out, hidden, att_weights
+
+    def translate(self, src, max_decode_len=2, beam_width=5):
+        seq_len, batch = src.size()
+        pad, eos = self.src_dict[u.PAD], self.src_dict[u.EOS]
+        mask = src.data.eq(pad).t()
+        # encode
+        emb = self.src_embedding(src)
+        enc_outs, enc_hidden = self.encoder(emb)
+        if self.encoder.bidi:
+            enc_hidden = (u.repackage_bidi(enc_hidden[0]),
+                          u.repackage_bidi(enc_hidden[1]))
+        # decode
+        dec_out, dec_hidden = None, None
+        trans = torch.LongTensor(batch).fill_(pad)
+        att = torch.FloatTensor(batch)
+        prev = Variable(src.data.new(1, batch).fill_(eos), volatile=True)
+        for i in range(len(src) * max_decode_len):
+            prev_emb = self.src_embedding(prev)
+            dec_out, dec_hidden, att_weights = self.decoder(
+                prev_emb, enc_outs, enc_hidden,
+                init_hidden=dec_hidden, init_output=dec_out, mask=mask)
+            # (seq x batch x hid) -> (batch x hid)
+            dec_out = dec_out.squeeze(0)
+            # (batch x vocab_size)
+            logs = self.project(dec_out)
+            # (1 x batch) argmax over log-probs (take idx across batch dim)
+            prev = logs.max(1)[1].t()
+            # colwise concat of step vectors
+            att = torch.cat([att, att_weights.squeeze(0).data], 1)
+            trans = torch.cat([trans, prev.squeeze(0).data], 1)
+            # termination criterion: at least one EOS per batch element
+            eos_per_batch = trans.eq(eos).sum(1)
+            if (eos_per_batch >= 1).sum() == batch:
+                break
+        return trans[:, 1:].numpy().tolist(), att[:, 1:].numpy().tolist()
+
+    def translate_beam(self, src, max_decode_len=2, beam_width=5):
+        seq_len, batch = src.size()
+        pad, eos = self.src_dict[u.PAD], self.src_dict[u.EOS]
+        # encode
+        emb = self.src_embedding(src)
+        enc_outs, enc_hidden = self.encoder(emb)
+        if self.encoder.bidi:
+            enc_hidden = (u.repackage_bidi(enc_hidden[0]),
+                          u.repackage_bidi(enc_hidden[1]))
+        # decode
+        dec_out, dec_hidden = None, None
+        # TODO: check gpu
+        trans = torch.LongTensor(batch).fill_(pad)
+        att = torch.FloatTensor(batch)
+        # initialize beam-aware variables
+        beams = [Beam(beam_width, eos, pad) for _ in range(batch)]
+        enc_outs = u.repeat(enc_outs, (1, beam_width, 1))
+        enc_hidden = (u.repeat(enc_hidden[0], (1, beam_width, 1)),
+                      u.repeat(enc_hidden[1], (1, beam_width, 1)))
+        # repeat only requires same number of elements (but not of dims)
+        # for simplicity, we keep the beam width in a separate dim
+        mask = src.data.eq(pad).t().unsqueeze(0).repeat(beam_width, 1, 1)
+        batch_idx = list(range(batch))
+        remaining = batch
+
+        for i in range(len(src) * max_decode_len):
+            beam_data = [b.get_current_state() for b in beams if b.active]
+            # (1 x batch * width)
+            prev = Variable(torch.cat(beam_data).unsqueeze(0), volatile=True)
+            # (1 x batch * width x emb_dim)
+            prev_emb = self.src_embedding(prev)
+            dec_out, dec_hidden, att_weights = self.decoder(
+                prev_emb, enc_outs, enc_hidden, mask=mask,
+                init_hidden=dec_hidden, init_output=dec_out)
+            # (seq x batch * width x hid) -> (batch * width x hid)
+            dec_out = dec_out.squeeze(0)
+            # (batch x width x vocab_size)
+            logs = self.project(dec_out).view(remaining, beam_width, -1)
+            active = []
+            for b in range(batch):
+                beam = beams[b]
+                if not beam.active:
+                    continue
+                idx = batch_idx[b]
+                beam.advance(logs.data[idx])
+                if beam.active:
+                    active.append(b)
+                # update hidden states to match each beam source
+                for dec in dec_hidden:
+                    # (layers x width * batch x hid_dim)
+                    # -> (layers x width x batch x hid_dim)
+                    _, _, hid_dim = dec.size()
+                    size = -1, beam_width, remaining, hid_dim
+                    beam_hid = dec.view(*size)[:, :, idx]
+                    source_beam = beam.get_source_beam()
+                    target_hid = beam_hid.data.index_select(1, source_beam)
+                    beam_hid.data.copy_(target_hid)
+
+            if not active:
+                break
+
+            # TODO: check GPU
+            active_idx = torch.LongTensor([batch_idx[k] for k in active])
+            batch_idx = {b: idx for idx, b in enumerate(active)}
+
+            def purge(t):
+                *head, batch, hid_dim = t.size()
+                view = t.data.view(-1, remaining, hid_dim)
+                size = *head, batch * len(active_idx) // remaining, hid_dim
+                return Variable(view.index_select(1, active_idx).view(*size))
+
+            enc_hidden = (purge(enc_hidden[0]), purge(enc_hidden[1]))
+            dec_hidden = (purge(dec_hidden[0]), purge(dec_hidden[1]))
+            dec_out, enc_outs = purge(dec_out), purge(enc_outs)
+            mask = mask.index_select(1, active_idx)
+            remaining = len(active)
+
+        # retrieve best hypothesis
+        scores, hyps = [], []
+        for b in beams:
+            score, hyp = b.decode(n=beam_width)
+            scores.append(score), hyps.append(hyp)
+
+        return scores, hyps

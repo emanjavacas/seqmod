@@ -30,6 +30,14 @@ def bmv(bm, v):
     return bm.bmm(bv)
 
 
+def repeat(x, size):
+    """
+    Utility function for the missing (as of 7. Feb. 2017) repeat
+    method for Variable's
+    """
+    return torch.autograd.Variable(x.data.repeat(*size))
+
+
 def repackage_bidi(h_or_c):
     """
     In a bidirectional RNN output is (output, (h_n, c_n))
@@ -116,6 +124,18 @@ def generate_set(size, vocab, min_len=1, max_len=15, sample_fn=reverse):
         yield sample_fn(generate_str(min_len, max_len, vocab))
 
 
+def batchify(seqs, pad, align_right=True):
+    max_length = max(len(x) for x in seqs)
+    out = torch.LongTensor(len(seqs), max_length).fill_(pad)
+    for i in range(len(seqs)):
+        seq = torch.Tensor(seqs[i])
+        seq_length = seq.size(0)
+        offset = max_length - seq_length if align_right else 0
+        out[i].narrow(0, offset, seq_length).copy_(seq)
+    out = out.t().contiguous()
+    return out
+
+
 class Dataset(object):
     def __init__(self, src_data, tgt_data, batch_size, pad,
                  align_right=True, gpu=False):
@@ -132,14 +152,7 @@ class Dataset(object):
         self.num_batches = len(self.src) // batch_size
 
     def _batchify(self, batch_data):
-        max_length = max(len(x) for x in batch_data)
-        out = torch.LongTensor(len(batch_data), max_length).fill_(self.pad)
-        for i in range(len(batch_data)):
-            seq = torch.Tensor(batch_data[i])
-            seq_length = seq.size(0)
-            offset = max_length - seq_length if self.align_right else 0
-            out[i].narrow(0, offset, seq_length).copy_(seq)
-        out = out.t().contiguous()
+        out = batchify(batch_data, self.pad, align_right=self.align_right)
         if self.gpu:
             out = out.cuda()
         return torch.autograd.Variable(out)
