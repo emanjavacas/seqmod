@@ -5,7 +5,6 @@ import torch.nn as nn
 from torch.autograd import Variable
 
 from beam_search import Beam
-# from beam import Beam
 import utils as u
 
 
@@ -445,22 +444,16 @@ class EncoderDecoder(nn.Module):
                           u.repackage_bidi(enc_hidden[1]))
         # decode
         dec_out, dec_hidden = None, None
-        # TODO: check gpu
-        trans = torch.LongTensor(batch).fill_(pad)
-        att = torch.FloatTensor(batch)
         # initialize beam-aware variables
-        beams = [Beam(beam_width, eos, pad) for _ in range(batch)]
         enc_outs = u.repeat(enc_outs, (1, beam_width, 1))
         enc_hidden = (u.repeat(enc_hidden[0], (1, beam_width, 1)),
                       u.repeat(enc_hidden[1], (1, beam_width, 1)))
         # repeat only requires same number of elements (but not of dims)
         # for simplicity, we keep the beam width in a separate dim
         mask = src.data.eq(pad).t().unsqueeze(0).repeat(beam_width, 1, 1)
-        batch_idx = list(range(batch))
-        remaining = batch
-
+        beams = [Beam(beam_width, eos, pad) for _ in range(batch)]
         for i in range(len(src) * max_decode_len):
-            beam_data = [b.get_current_state() for b in beams if b.active]
+            beam_data = [b.get_current_state() for b in beams]
             # (1 x batch * width)
             prev = Variable(torch.cat(beam_data).unsqueeze(0), volatile=True)
             # (1 x batch * width x emb_dim)
@@ -471,50 +464,24 @@ class EncoderDecoder(nn.Module):
             # (seq x batch * width x hid) -> (batch * width x hid)
             dec_out = dec_out.squeeze(0)
             # (batch x width x vocab_size)
-            logs = self.project(dec_out).view(remaining, beam_width, -1)
-            active = []
-            for b in range(batch):
-                beam = beams[b]
+            logs = self.project(dec_out).view(batch, beam_width, -1)
+            for idx, beam in enumerate(beams):
                 if not beam.active:
                     continue
-                idx = batch_idx[b]
                 beam.advance(logs.data[idx])
-                if beam.active:
-                    active.append(b)
-                # update hidden states to match each beam source
                 for dec in dec_hidden:
                     # (layers x width * batch x hid_dim)
                     # -> (layers x width x batch x hid_dim)
                     _, _, hid_dim = dec.size()
-                    size = -1, beam_width, remaining, hid_dim
+                    size = -1, beam_width, batch, hid_dim
                     beam_hid = dec.view(*size)[:, :, idx]
                     source_beam = beam.get_source_beam()
                     target_hid = beam_hid.data.index_select(1, source_beam)
                     beam_hid.data.copy_(target_hid)
-
-            if not active:
+            if sum(b.active for b in beams) == 0:
                 break
-
-            # TODO: check GPU
-            active_idx = torch.LongTensor([batch_idx[k] for k in active])
-            batch_idx = {b: idx for idx, b in enumerate(active)}
-
-            def purge(t):
-                *head, batch, hid_dim = t.size()
-                view = t.data.view(-1, remaining, hid_dim)
-                size = *head, batch * len(active_idx) // remaining, hid_dim
-                return Variable(view.index_select(1, active_idx).view(*size))
-
-            enc_hidden = (purge(enc_hidden[0]), purge(enc_hidden[1]))
-            dec_hidden = (purge(dec_hidden[0]), purge(dec_hidden[1]))
-            dec_out, enc_outs = purge(dec_out), purge(enc_outs)
-            mask = mask.index_select(1, active_idx)
-            remaining = len(active)
-
-        # retrieve best hypothesis
         scores, hyps = [], []
         for b in beams:
             score, hyp = b.decode(n=beam_width)
             scores.append(score), hyps.append(hyp)
-
         return scores, hyps
