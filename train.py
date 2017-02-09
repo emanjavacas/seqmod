@@ -27,23 +27,22 @@ def translate(model, epoch, b, targets, pad, gpu=False):
         batch = Variable(batch_data, volatile=True).cuda()
     else:
         batch = Variable(batch_data, volatile=True)
-    # trans, att = model.translate(batch, max_decode_len=4)
-    # trans = [trans]
-    scores, trans = model.translate_beam(batch, beam_width=5, max_decode_len=4)
-    return trans, None  # att
+    # preds, att = model.translate(batch, max_decode_len=4)
+    scores, preds = model.translate_beam(batch, beam_width=5, max_decode_len=4)
+    return preds, None  # att
 
 
 def visualize_targets(model, e, b, pad, targets, plot_target_id, gpu):
     if targets:
         int2char = {i: c for c, i in model.src_dict.items()}
-        trans, att_weights = translate(model, e, b, targets, pad, gpu=gpu)
-        for target, t in zip(targets, trans):
+        preds, att_weights = translate(model, e, b, targets, pad, gpu=gpu)
+        for target, hyps in zip(targets, preds):
             print("* " + target)
-            for idx, p in enumerate(t):
-                print("* [%d]: %s" % (idx, ''.join(int2char[w] for w in p)))
-    # if plot_target_id:
-    #     target, trans = targets[plot_target_id], trans[plot_target_id]
-    #     plot_weights(att_weights, target, trans, e, b)
+            for idx, hyp in enumerate(hyps):
+                print("* [%d]: %s" % (idx, ''.join(int2char[w] for w in hyp)))
+        if plot_target_id:
+            target, pred = targets[plot_target_id], preds[plot_target_id]
+            plot_weights(att_weights, target, pred, e, b)
 
 
 def validate_model(model, criterion, e, val_data, pad,

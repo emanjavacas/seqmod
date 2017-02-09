@@ -39,6 +39,14 @@ def repeat(x, size):
 
 
 def swap(x, dim, perm):
+    """
+    swap the entries of a tensor in given dimension according to a given perm
+    dim: int,
+        It has to be less than total number of dimensions in x.
+    perm: list or torch.LongTensor,
+        It has to be as long as the specified dimension and it can only contain
+        unique elements.
+    """
     if isinstance(perm, list):
         perm = torch.LongTensor(perm)
     return torch.autograd.Variable(x.data.index_select(dim, perm))
@@ -130,7 +138,7 @@ def generate_set(size, vocab, min_len=1, max_len=15, sample_fn=reverse):
         yield sample_fn(generate_str(min_len, max_len, vocab))
 
 
-def batchify(seqs, pad, align_right=True):
+def batchify(seqs, pad, align_right=False):
     max_length = max(len(x) for x in seqs)
     out = torch.LongTensor(len(seqs), max_length).fill_(pad)
     for i in range(len(seqs)):
@@ -144,7 +152,7 @@ def batchify(seqs, pad, align_right=True):
 
 class Dataset(object):
     def __init__(self, src_data, tgt_data, batch_size, pad,
-                 align_right=True, gpu=False):
+                 align_right=False, gpu=False):
         self.pad = pad
         self.align_right = align_right
         self.gpu = gpu
@@ -179,7 +187,7 @@ class Dataset(object):
 
 
 def prepare_data(data_generator, char2int, batch_size,
-                 align_right=True, gpu=False):
+                 align_right=False, gpu=False):
     eos, pad = char2int[EOS], char2int[PAD]
     src, tgt = zip(*list(data_generator))
     src = [[char2int[x] for x in seq] for seq in src]
@@ -194,8 +202,8 @@ if __name__ == '__main__':
     parser.add_argument('train_file')
     parser.add_argument('test_file')
     parser.add_argument('--vocab', default=list(string.ascii_letters))
-    parser.add_argument('--min_len', default=5)
-    parser.add_argument('--max_len', default=20)
+    parser.add_argument('--min_len', default=5, type=int)
+    parser.add_argument('--max_len', default=20, type=int)
     parser.add_argument('--train_set_len', default=10000)
 
     args = parser.parse_args()

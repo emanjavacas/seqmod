@@ -5,6 +5,7 @@ import torch.nn as nn
 from torch.autograd import Variable
 
 from beam_search import Beam
+# from beam import Beam
 import utils as u
 
 
@@ -63,7 +64,7 @@ class GlobalAttention(nn.Module):
         self.softmax = nn.Softmax()
         self.linear_out = nn.Linear(dim * 2, dim, bias=False)
 
-    def forward(self, dec_out, enc_outs, mask=None, *args, **kwargs):
+    def forward(self, dec_out, enc_outs, mask=None, **kwargs):
         """
         dec_out: (batch x hid_dim)
         enc_outs: (seq_len x batch x hid_dim (== att_dim))
@@ -108,7 +109,7 @@ class BahdanauAttention(nn.Module):
         """
         return torch.cat([self.enc2att(i).unsqueeze(0) for i in enc_outs])
 
-    def forward(self, dec_out, enc_outs, enc_att, mask=None, *args, **kwargs):
+    def forward(self, dec_out, enc_outs, enc_att=None, mask=None, **kwargs):
         """
         Parameters:
         -----------
@@ -125,6 +126,7 @@ class BahdanauAttention(nn.Module):
         context: torch.Tensor (batch x hid_dim), weights (batch x seq_len)
             Batch-first matrix of context vectors (for each input in batch)
         """
+        enc_att = enc_att or self.project_enc_outs(enc_outs)
         # enc_outputs * weights
         # weights: softmax(E) (seq_len x batch)
         # E: att_v (att_dim) * tanh(dec_att + enc_att) -> (seq_len x batch)
@@ -148,8 +150,8 @@ class BahdanauAttention(nn.Module):
 
 class Decoder(nn.Module):
     def __init__(self, emb_dim, enc_hid_dim, hid_dim, num_layers, cell,
-                 att_dim, att_type='Global', dropout=0.0,
-                 add_prev=False, project_init=False):
+                 att_dim, att_type='Bahdanau', dropout=0.0,
+                 add_prev=True, project_init=False):
         """
         Parameters:
         -----------
@@ -274,8 +276,8 @@ class Decoder(nn.Module):
         data = h_0.data.new(h_0.size(1), self.hid_dim).zero_()
         return Variable(data, requires_grad=False)
 
-    def forward(self, targets, enc_outs, enc_hidden, mask=None,
-                init_hidden=None, init_output=None, init_enc_att=None):
+    def forward(self, targets, enc_outs, enc_hidden, dad=0.0, mask=None,
+                init_hidden=None, init_output=None):
         """
         Parameters:
         -----------
@@ -298,18 +300,19 @@ class Decoder(nn.Module):
         hidden = init_hidden or self.init_hidden_for(enc_hidden)
         # cache encoder att projection for bahdanau
         if self.att_type == 'Bahdanau':
-            enc_att = init_enc_att or self.attn.project_enc_outs(enc_outs)
+            enc_att = self.attn.project_enc_outs(enc_outs)
         # first target is just <EOS>
         for y_prev in targets.chunk(targets.size(0)):
             # drop first dim of y_prev (1 x batch X emb_dim)
             y_prev = y_prev.squeeze(0)
+            out = out or init_output or self.init_output_for(hidden)
             if self.add_prev:
-                out = out or init_output or self.init_output_for(hidden)
                 dec_inp = torch.cat([out, y_prev], 1)
             else:
                 dec_inp = out
             out, hidden = self.rnn_step(dec_inp, hidden)
-            out, att_weight = self.attn(out, enc_outs, enc_att, mask=mask)
+            out, att_weight = self.attn(
+                out, enc_outs, enc_att=enc_att, mask=mask)
             if self.has_dropout:
                 out = self.dropout(out)
             outs.append(out)
@@ -401,18 +404,29 @@ class EncoderDecoder(nn.Module):
     def translate(self, src, max_decode_len=2, beam_width=5):
         seq_len, batch = src.size()
         pad, eos = self.src_dict[u.PAD], self.src_dict[u.EOS]
-        mask = src.data.eq(pad).t()
         # encode
-        emb = self.src_embedding(src)
-        enc_outs, enc_hidden = self.encoder(emb)
+        enc_outs, enc_hidden = [], None
+        for src_t in src.chunk(seq_len):
+            emb_t = self.src_embedding(src_t)
+            enc_out_t, enc_hidden = self.encoder(emb_t, hidden=enc_hidden)
+            mask_t = emb_t.data.squeeze(0).eq(pad).nonzero()
+            if mask_t.nelement() > 0:
+                mask_t = mask_t.squeeze(1)
+                enc_hidden[0].data.index_fill_(1, mask_t, 0)
+                enc_hidden[1].data.index_fill_(1, mask_t, 0)
+            enc_outs.append(enc_out_t)
         if self.encoder.bidi:
             enc_hidden = (u.repackage_bidi(enc_hidden[0]),
                           u.repackage_bidi(enc_hidden[1]))
+        enc_outs = torch.cat(enc_outs)
         # decode
         dec_out, dec_hidden = None, None
-        trans = torch.LongTensor(batch).fill_(pad)
+        # we use a singleton hypothesis dimension for consistency with other
+        # decoding methods which may entail multiple hypothesis
+        trans = torch.LongTensor(batch, 1).fill_(pad)
         att = torch.FloatTensor(batch)
         prev = Variable(src.data.new(1, batch).fill_(eos), volatile=True)
+        mask = src.data.eq(pad).t()
         for i in range(len(src) * max_decode_len):
             prev_emb = self.src_embedding(prev)
             dec_out, dec_hidden, att_weights = self.decoder(
@@ -426,12 +440,13 @@ class EncoderDecoder(nn.Module):
             prev = logs.max(1)[1].t()
             # colwise concat of step vectors
             att = torch.cat([att, att_weights.squeeze(0).data], 1)
-            trans = torch.cat([trans, prev.squeeze(0).data], 1)
+            trans = torch.cat([trans, prev.squeeze(0).data], 2)
             # termination criterion: at least one EOS per batch element
-            eos_per_batch = trans.eq(eos).sum(1)
+            # print(prev.squeeze(0).data)
+            eos_per_batch = trans.eq(eos).sum(2)
             if (eos_per_batch >= 1).sum() == batch:
                 break
-        return trans[:, 1:].numpy().tolist(), att[:, 1:].numpy().tolist()
+        return trans[:, :, 1:].numpy().tolist(), att[:, 1:].numpy().tolist()
 
     def translate_beam(self, src, max_decode_len=2, beam_width=5):
         seq_len, batch = src.size()
@@ -471,6 +486,7 @@ class EncoderDecoder(nn.Module):
                 # (width x vocab_size)
                 logs = self.project(dec_out)
                 beam.advance(logs.data)
+                # TODO: this doesn't seem to affect the output :-s
                 dec_out = u.swap(dec_out, 0, beam.get_source_beam())
                 dec_hidden = (u.swap(dec_hidden[0], 1, beam.get_source_beam()),
                               u.swap(dec_hidden[1], 1, beam.get_source_beam()))
