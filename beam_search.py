@@ -10,9 +10,9 @@ class Beam(object):
         self.active = True
         self.scores = torch.FloatTensor(width).zero_()
         if gpu:
-            init_state = torch.LongTensor(width).fill_(pad).cuda()
+            init_state = torch.LongTensor(width).fill_(eos).cuda()
         else:
-            init_state = torch.LongTensor(width).fill_(pad)
+            init_state = torch.LongTensor(width).fill_(eos)
         self.beam_values = [init_state]  # output values at each beam
         self.source_beams = []  # backpointer to previous beam
 
