@@ -51,7 +51,7 @@ def validate_model(model, criterion, e, val_data, pad,
     model.eval()
     for b in range(len(val_data)):
         src, tgt = val_data[b]
-        outs, _, _ = model(src, tgt[:-1])
+        outs = model(src, tgt[:-1])
         tgt = tgt[1:]
         loss, _ = batch_loss(model, outs, tgt, criterion, do_val=True)
         total_loss += loss
@@ -90,7 +90,7 @@ def train_epoch(epoch, train_data, criterion, optimizer, checkpoint):
     for b, idx in enumerate(batch_order):
         optimizer.optim.zero_grad()   # empty gradients at begin of batch
         source, targets = train_data[idx]
-        outs, _, _ = model(source, targets[:-1])  # exclude last <eos> at train
+        outs = model(source, targets[:-1])  # exclude last <eos> at train
         targets = targets[1:]   # exclude initial <eos> from targets from test
         loss, grad_output = batch_loss(model, outs, targets, criterion)
         outs.backward(grad_output)
