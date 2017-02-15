@@ -3,16 +3,17 @@ import torch
 
 
 class Beam(object):
-    def __init__(self, width, eos, pad, gpu=False):
+    def __init__(self, width, bos, eos, pad, gpu=False):
         self.width = width
+        self.bos = bos
         self.eos = eos
         self.pad = pad
         self.active = True
         self.scores = torch.FloatTensor(width).zero_()
         if gpu:
-            init_state = torch.LongTensor(width).fill_(eos).cuda()
+            init_state = torch.LongTensor(width).fill_(bos).cuda()
         else:
-            init_state = torch.LongTensor(width).fill_(eos)
+            init_state = torch.LongTensor(width).fill_(bos)
         self.beam_values = [init_state]  # output values at each beam
         self.source_beams = []  # backpointer to previous beam
 
