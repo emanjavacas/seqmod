@@ -17,11 +17,11 @@ def batchify(seqs, pad, align_right=False):
 
 
 class Dataset(object):
-    def __init__(self, src_data, tgt_data, batch_size, pad,
+    def __init__(self, src_data, trg_data, batch_size, pad,
                  align_right=False, gpu=False):
         self.src = src_data
-        assert len(self.src) == len(tgt_data), "src and tgt must be equal"
-        self.tgt = tgt_data
+        assert len(self.src) == len(trg_data), "src and trg must be equal"
+        self.trg = trg_data
         self.batch_size = batch_size
         self.pad = pad
         self.align_right = align_right
@@ -43,8 +43,8 @@ class Dataset(object):
         batch_from = idx * self.batch_size
         batch_to = (idx+1)*self.batch_size
         src_batch = self._batchify(self.src[batch_from: batch_to])
-        tgt_batch = self._batchify(self.tgt[batch_from: batch_to])
-        return src_batch, tgt_batch
+        trg_batch = self._batchify(self.trg[batch_from: batch_to])
+        return src_batch, trg_batch
 
     def __len__(self):
         return self.num_batches
@@ -52,14 +52,13 @@ class Dataset(object):
     @classmethod
     def from_disk(cls, path, batch_size, gpu=False):
         data = torch.load(path)
-        src_data = data['src_data']
-        tgt_data = data.get('tgt_data')
-        instance = cls(src_data, tgt_data, batch_size, gpu=gpu)
+        src_data, trg_data = data['src_data'], data['trg_data']
+        instance = cls(src_data, trg_data, batch_size, gpu=gpu)
         instance.torched = True
         return instance
 
     def to_disk(self, path):
-        data = {'src_data': self.src_data, 'tgt_data': self.tgt_data}
+        data = {'src_data': self.src_data, 'trg_data': self.trg_data}
         torch.save(data, path)
 
 
@@ -79,7 +78,7 @@ class DatasetMaker(object):
             code = self.sym2int[sym]
         return code
 
-    def parse_files(self, src_file, tgt_file):
+    def parse_files(self, src_file, trg_file):
         pass
 
     def torch(self, pairs, shuffle=True, sort=True):
