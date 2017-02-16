@@ -1,11 +1,7 @@
 
 from random import choice, randrange
-
-from dataset import Dataset
-
+from dataset import Dataset, Dict
 import utils as u
-
-from torchtext import data
 
 
 # string generator functions
@@ -71,38 +67,17 @@ def generate_set(size, vocab, min_len, max_len, sample_fn):
         yield sample_fn(generate_str(min_len, max_len, vocab))
 
 
-def prepare_data(data_generator, char2int, batch_size,
-                 align_right=False, gpu=False):
-    bos, eos, pad = char2int[u.BOS], char2int[u.EOS], char2int[u.PAD]
-    data = sorted(list(data_generator), key=lambda x: len(x[0]))
-    src, tgt = zip(*data)
-    src = [[char2int[x] for x in seq] + [eos] for seq in src]
-    tgt = [[bos] + [char2int[x] for x in seq] + [eos] for seq in tgt]
-    return Dataset(src, tgt, batch_size, pad, align_right=align_right, gpu=gpu)
-
-
-class DummyDataset(data.Dataset):
-    def __init__(self, fields, vocab, size,
-                 min_len=5, max_len=15, sample_fn=reverse, **kwargs):
-        examples = []
-        generator = generate_set(size, vocab, min_len, max_len, sample_fn)
-        for src, tgt in sorted(generator, key=lambda s: len(s[0])):
-            examples.append(
-                data.Example.fromlist(
-                    [list(src), list(tgt)], fields))
-
-        super(DummyDataset, self).__init__(examples, fields, **kwargs)
-
-    @staticmethod
-    def sort_key(ex):
-        return data.interleave_keys(len(ex.src), len(ex.trg))
-
-    @classmethod
-    def splits(cls, fields, vocab, size, dev=0.1, test=0.2, **kwargs):
-        train = 1 - sum(split for split in [dev, test] if split)
-        assert train > 0, "dev and test proportions must be below 1"
-        return tuple(cls(fields, vocab, int(size * split), **kwargs)
-                     for split in [train, dev, test] if split)
+def load_dummy_data(size, vocab, batch_size, min_len=5, max_len=15,
+                    sample_fn=reverse, gpu=False, **kwargs):
+    src, trg = zip(*generate_set(size, vocab, min_len, max_len, sample_fn))
+    src, trg = list(map(list, src)), list(map(list, trg))
+    src_dict = Dict(pad_token=u.PAD, eos_token=u.EOS, bos_token=u.BOS)
+    src_dict.fit(src, trg)
+    dicts = {'src': src_dict, 'trg': src_dict}
+    train, dev = Dataset.splits(
+        src, trg, dicts, sort_key=lambda pair: len(pair[0]),
+        test=None, batchify=True, batch_size=batch_size, gpu=gpu, **kwargs)
+    return train, dev
 
 
 if __name__ == '__main__':

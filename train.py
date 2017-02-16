@@ -62,7 +62,8 @@ def validate_model(model, criterion, val_data, e,
         source, targets = batch
         # remove <eos> from decoder targets
         decode_targets = Variable(u.map_index(targets[:-1].data, eos, pad))
-        outs = model(source, decode_targets)
+        # remove <bos> from sources
+        outs = model(source[1:], decode_targets)
         # remove <bos> from loss targets
         loss_targets = targets[1:]
         loss, _ = batch_loss(model, outs, loss_targets, criterion, do_val=True)
@@ -99,7 +100,8 @@ def train_epoch(model, epoch, train_data, criterion, optimizer, checkpoint):
         source, targets = batch
         # remove <eos> from decoder targets
         decode_targets = Variable(u.map_index(targets[:-1].data, eos, pad))
-        outs = model(source, decode_targets)
+        # remove <bos> from source
+        outs = model(source[1:], decode_targets)
         # remove <bos> from loss targets
         loss_targets = targets[1:]
         loss, grad_output = batch_loss(model, outs, loss_targets, criterion)
@@ -164,7 +166,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--train_len', default=10000, type=int)
     parser.add_argument('--targets', default=['redrum'], nargs='*')
-    parser.add_argument('--val_len', default=1000, type=int)
+    parser.add_argument('--val_split', default=0.1, type=float)
     parser.add_argument('--batch_size', default=64, type=int)
     parser.add_argument('--min_len', default=1, type=int)
     parser.add_argument('--max_len', default=15, type=int)
@@ -198,24 +200,19 @@ if __name__ == '__main__':
         torch.manual_seed(args.seed)
 
     vocab = args.vocab
+    size = args.train_len
+    batch_size = args.batch_size
 
-    # sample data
-    src_dict = vocab + [u.EOS, u.BOS, u.PAD]
-    char2int = {s: i for i, s in enumerate(src_dict)}
-    train_set = d.generate_set(
-        args.train_len, vocab, sample_fn=getattr(d, args.sample_fn),
-        min_len=args.min_len, max_len=args.max_len)
-    val_set = d.generate_set(
-        args.val_len, vocab, sample_fn=getattr(d, args.sample_fn),
-        min_len=args.min_len, max_len=args.max_len)
-    train_data = d.prepare_data(
-        train_set, char2int, args.batch_size, gpu=args.gpu)
-    val_data = d.prepare_data(
-        val_set, char2int, args.batch_size, gpu=args.gpu)
+    train, val = d.load_dummy_data(
+        size, vocab, batch_size, min_len=args.min_len, max_len=args.max_len,
+        sample_fn=getattr(d, args.sample_fn), gpu=args.gpu, dev=args.val_split)
+    src_dict = train.dataset.dicts['src'].s2i
+
+    assert len(src_dict) == len(train.dataset.dicts['src'].vocab)
 
     print(' * vocabulary size. %d' % len(src_dict))
-    print(' * number of training sentences. %d' % len(train_data))
-    print(' * maximum batch size. %d' % args.batch_size)
+    print(' * number of train batches. %d' % len(train))
+    print(' * maximum batch size. %d' % batch_size)
 
     print('Building model...')
 
@@ -233,5 +230,5 @@ if __name__ == '__main__':
     print(model)
 
     train_model(
-        model, train_data, val_data, optimizer, args.epochs,
+        model, train, val, optimizer, args.epochs,
         gpu=args.gpu, targets=args.targets)
