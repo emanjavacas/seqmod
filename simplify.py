@@ -25,8 +25,11 @@ def load_data(path, exts):
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
+    parser.add_argument('--path', required=True)
     parser.add_argument('--targets', default=['redrum'], nargs='*')
     parser.add_argument('--dev_split', default=0.1, type=float)
+    parser.add_argument('--max_size', default=10000, type=int)
+    parser.add_argument('--min_freq', default=5, type=int)
     parser.add_argument('--batch_size', default=64, type=int)
     parser.add_argument('--bidi', action='store_true')
     parser.add_argument('--layers', default=1, type=int)
@@ -55,14 +58,14 @@ if __name__ == '__main__':
     else:
         torch.manual_seed(args.seed)
 
-    path = '~/Downloads/wiki-aligned-data/aligned'
-    src_data, trg_data = load_data(path, ('.main', '.simple'))
-    src_dict = Dict(pad_token=u.PAD, eos_token=u.EOS, bos_token=u.BOS)
+    src_data, trg_data = load_data(args.path, ('.main', '.simple'))
+    src_dict = Dict(pad_token=u.PAD, eos_token=u.EOS, bos_token=u.BOS,
+                    max_size=args.max_size, min_freq=args.min_freq)
     src_dict.fit(src_data, trg_data)
     dicts = {'src': src_dict, 'trg': src_dict}
     train, dev = Dataset.splits(
         src_data, trg_data, dicts,
-        test=None, batchify=True, batch_size=args.batch_size,
+        test=None, batchify=True, batch_size=args.batch_size, gpu=args.gpu,
         sort_key=lambda pair: len(pair[0]))
     src_dict = train.dataset.dicts['src'].s2i
 
