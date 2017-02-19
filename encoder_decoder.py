@@ -129,8 +129,8 @@ class EncoderDecoder(nn.Module):
             # (1 x batch) argmax over log-probs (take idx across batch dim)
             prev = logs.max(1)[1].t()
             # colwise concat of step vectors
-            att = torch.cat([att, att_weights.squeeze(0).data], 1)
-            trans = torch.cat([trans, prev.squeeze(0).data], 2)
+            att = torch.cat([att, att_weights.squeeze(0).data.cpu()], 1)
+            trans = torch.cat([trans, prev.squeeze(0).data.cpu()], 2)
             # termination criterion: at least one EOS per batch element
             eos_per_batch = trans.eq(eos).sum(2)
             if (eos_per_batch >= 1).sum() == batch:
