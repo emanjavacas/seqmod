@@ -15,8 +15,8 @@ class EncoderDecoder(nn.Module):
                  emb_dim,
                  hid_dim,
                  att_dim,
-                 src_vocab,
-                 trg_vocab=None,
+                 src_dict,
+                 trg_dict=None,
                  cell='LSTM',
                  att_type='Bahdanau',
                  dropout=0.0,
@@ -28,12 +28,12 @@ class EncoderDecoder(nn.Module):
         enc_num_layers, dec_num_layers = num_layers
         self.cell = cell
         self.add_prev = add_prev
-        self.src_dict = {s: i for i, s in enumerate(src_vocab)}
-        src_vocab_size = len(src_vocab)
-        self.bilingual = bool(trg_vocab)
+        self.src_dict = src_dict
+        src_vocab_size = len(src_dict)
+        self.bilingual = bool(trg_dict)
         if self.bilingual:
-            self.trg_dict = {s: i for i, s in enumerate(trg_vocab)}
-            trg_vocab_size = len(trg_vocab)
+            self.trg_dict = trg_dict
+            trg_vocab_size = len(trg_dict)
 
         # embedding layer(s)
         self.src_embedding = nn.Embedding(
