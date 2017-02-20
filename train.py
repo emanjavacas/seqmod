@@ -3,9 +3,17 @@ import time
 import string
 import math
 
+seed = 1001
+
+import random
+random.seed(seed)
+
 import torch
 from torch import nn
 from torch.autograd import Variable
+
+torch.cuda.manual_seed(seed)
+torch.manual_seed(seed)
 
 from hinton_diagram import hinton
 from encoder_decoder import EncoderDecoder
@@ -23,9 +31,9 @@ def plot_weights(att_weights, target, pred, e, batch):
     fig.savefig('./img/%d_%d' % (e, batch))
 
 
-def translate(model, epoch, b, targets, gpu=False, beam=False):
-    pad, eos = model.src_dict[u.PAD], model.src_dict[u.EOS]
-    seqs = [[model.src_dict[c] for c in t] + [eos] for t in targets]
+def translate(model, targets, src_dict, gpu=False, beam=True):
+    pad, eos = src_dict.get_pad(), src_dict.get_eos()
+    seqs = [[src_dict.index(c) for c in t] + [eos] for t in targets]
     batch = Variable(batchify(seqs, pad), volatile=True)
     batch = batch.cuda() if gpu else batch
     if beam:
@@ -36,20 +44,20 @@ def translate(model, epoch, b, targets, gpu=False, beam=False):
     return preds, None
 
 
-def visualize_targets(model, e, b, targets, plot_target_id, gpu):
+def visualize_targets(model, targets, src_dict, e, b, plot_target_id, gpu):
     if targets:
-        int2char = {i: c for c, i in model.src_dict.items()}
-        preds, att = translate(model, e, b, targets, gpu=gpu)
-        for target, hyps in zip(targets, preds):
-            print("* " + target)
+        i2s = {i: c for c, i in model.src_dict.items()}
+        preds, att = translate(model, targets, src_dict, gpu=gpu)
+        for t, hyps in zip(targets, preds):
+            print("* " + ' '.join(t) if isinstance(t, list) else t)
             for idx, hyp in enumerate(hyps):
-                print("* [%d]: %s" % (idx, ''.join(int2char[w] for w in hyp)))
+                print("* [%d]: %s" % (idx, ' '.join(i2s[w] for w in hyp)))
         if plot_target_id:
             target, pred = targets[plot_target_id], preds[plot_target_id]
             plot_weights(att, target, pred, e, b)
 
 
-def validate_model(model, criterion, val_data, e,
+def validate_model(model, criterion, val_data, src_dict, e,
                    val_targets=None, gpu=False, plot_target_id=False):
     pad, eos = model.src_dict[u.PAD], model.src_dict[u.EOS]
     total_loss, total_words = 0, 0
@@ -62,11 +70,10 @@ def validate_model(model, criterion, val_data, e,
         # remove <bos> from sources
         outs = model(source[1:], decode_targets)
         # remove <bos> from loss targets
-        loss_targets = targets[1:]
-        loss, _ = batch_loss(model, outs, loss_targets, criterion, do_val=True)
+        loss, _ = batch_loss(model, outs, targets[1:], criterion, do_val=True)
         total_loss += loss
         total_words += targets.data.ne(pad).sum()
-    visualize_targets(model, e, b, val_targets, plot_target_id, gpu)
+    visualize_targets(model, val_targets, src_dict, e, b. plot_target_id, gpu)
     return total_loss / total_words
 
 
@@ -100,8 +107,7 @@ def train_epoch(model, epoch, train_data, criterion, optimizer, checkpoint):
         # remove <bos> from source
         outs = model(source[1:], decode_targets)
         # remove <bos> from loss targets
-        loss_targets = targets[1:]
-        loss, grad_output = batch_loss(model, outs, loss_targets, criterion)
+        loss, grad_output = batch_loss(model, outs, targets[1:], criterion)
         outs.backward(grad_output)
         optimizer.step()
         # report
@@ -137,6 +143,7 @@ def train_model(model, train_data, valid_data, optimizer, epochs,
         criterion.cuda()
         model.cuda()
 
+    model.apply()
     model.init_params(init_range=init_range)
 
     train_data.repeat = False
@@ -176,7 +183,7 @@ if __name__ == '__main__':
     parser.add_argument('--att_type', default='Bahdanau', type=str)
     parser.add_argument('--epochs', default=5, type=int)
     parser.add_argument('--prefix', default='model', type=str)
-    parser.add_argument('--vocab', default=list(string.ascii_letters + ''))
+    parser.add_argument('--vocab', default=list(string.ascii_letters) + [' '])
     parser.add_argument('--checkpoint', default=500, type=int)
     parser.add_argument('--optim', default='SGD', type=str)
     parser.add_argument('--plot', action='store_true')
@@ -185,16 +192,8 @@ if __name__ == '__main__':
     parser.add_argument('--learning_rate_decay', default=0.5, type=float)
     parser.add_argument('--start_decay_at', default=8, type=int)
     parser.add_argument('--max_grad_norm', default=5., type=float)
-    parser.add_argument('--seed', default=1006, type=int)
     parser.add_argument('--gpu', action='store_true')
     args = parser.parse_args()
-
-    import random
-    random.seed(args.seed)
-    if args.gpu:
-        torch.cuda.manual_seed(args.seed)
-    else:
-        torch.manual_seed(args.seed)
 
     vocab = args.vocab
     size = args.train_len

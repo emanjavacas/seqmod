@@ -92,9 +92,9 @@ class Dict(object):
         self.s2i = {s: i for i, s in enumerate(self.vocab)}
         self.fitted = True
 
-    def transform(self, examples):
-        bos = [self.index(self.bos_token)] if self.bos_token else []
-        eos = [self.index(self.eos_token)] if self.eos_token else []
+    def transform(self, examples, bos=True, eos=True):
+        bos = [self.index(self.bos_token)] if self.bos_token and bos else []
+        eos = [self.index(self.eos_token)] if self.eos_token and eos else []
         for example in examples:
             example = bos + [self.index(s) for s in example] + eos
             yield example

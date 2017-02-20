@@ -57,9 +57,9 @@ def skip2reverse(string):
 
 
 # dataset
-def generate_str(min_len, max_len, vocab, reserved=[u.EOS, u.PAD]):
+def generate_str(min_len, max_len, vocab):
     randlen = randrange(min_len, max_len)
-    return ''.join([choice(vocab[:-len(reserved)]) for _ in range(randlen)])
+    return ''.join([choice(vocab) for _ in range(randlen)])
 
 
 def generate_set(size, vocab, min_len, max_len, sample_fn):

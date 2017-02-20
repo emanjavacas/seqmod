@@ -98,7 +98,7 @@ class EncoderDecoder(nn.Module):
             dec_outs.append(dec_out)
         return torch.stack(dec_outs)
 
-    def translate(self, src, max_decode_len=2, beam_width=5):
+    def translate(self, src, max_decode_len=2):
         seq_len, batch = src.size()
         pad, eos = self.src_dict[u.PAD], self.src_dict[u.EOS]
         # encode
@@ -113,8 +113,8 @@ class EncoderDecoder(nn.Module):
             enc_att = None
         # we use a singleton hypothesis dimension for consistency with other
         # decoding methods which may entail multiple hypothesis
-        trans = torch.LongTensor(batch, 1).fill_(pad)
-        att = torch.FloatTensor(batch)
+        preds = src.data.new(batch, 1).fill_(pad).long()
+        atts = src.data.new(batch).float()
         mask = src.data.eq(pad).t()
         prev = Variable(self.init_batch(src), volatile=True)
         for i in range(len(src) * max_decode_len):
@@ -122,23 +122,23 @@ class EncoderDecoder(nn.Module):
             dec_out, dec_hidden, att_weights = self.decoder(
                 prev_emb, enc_outs, enc_hidden, enc_att=enc_att,
                 hidden=dec_hidden, out=dec_out, mask=mask)
-            # (seq x batch x hid) -> (batch x hid)
-            dec_out = dec_out.squeeze(0)
             # (batch x vocab_size)
             logs = self.project(dec_out)
             # (1 x batch) argmax over log-probs (take idx across batch dim)
             prev = logs.max(1)[1].t()
             # colwise concat of step vectors
-            att = torch.cat([att, att_weights.squeeze(0).data.cpu()], 1)
-            trans = torch.cat([trans, prev.squeeze(0).data.cpu()], 2)
+            print(preds.size())
+            atts = torch.cat([atts, att_weights.data], 1)
+            preds = torch.cat([preds, prev.squeeze(0).data], 2)
             # termination criterion: at least one EOS per batch element
-            eos_per_batch = trans.eq(eos).sum(2)
+            eos_per_batch = preds.eq(eos).sum(2)
             if (eos_per_batch >= 1).sum() == batch:
                 break
-        return trans[:, :, 1:].numpy().tolist(), att[:, 1:].numpy().tolist()
+        return preds[:, :, 1:], atts[:, 1:]
 
     def translate_beam(self, src, max_decode_len=2, beam_width=5):
         seq_len, batch = src.size()
+        gpu = src.is_cuda
         pad, eos, bos = \
             self.src_dict[u.PAD], self.src_dict[u.EOS], self.src_dict[u.BOS]
         # encode
@@ -147,9 +147,9 @@ class EncoderDecoder(nn.Module):
             emb, compute_mask=True, mask_symbol=pad)
         # decode
         mask = src.data.eq(pad)
-        beams = [Beam(beam_width, bos, eos, pad) for _ in range(batch)]
+        beams = [Beam(beam_width, bos, eos, pad, gpu=gpu) for _ in range(batch)]
         for b in range(batch):
-            beam, idx = beams[b], torch.LongTensor([b])
+            beam, idx = beams[b], src.data.new([b]).long()
             mask_t = mask.index_select(1, idx).repeat(1, beam_width)
             dec_out, dec_hidden = None, None
             size_t = (1, beam_width, 1)
@@ -168,8 +168,6 @@ class EncoderDecoder(nn.Module):
                 dec_out, dec_hidden, att_weights = self.decoder(
                     prev_emb, enc_outs_t, enc_hidden_t, mask=mask_t,
                     hidden=dec_hidden, out=dec_out)
-                # (seq x width x hid) -> (width x hid)
-                dec_out = dec_out.squeeze(0)
                 # (width x vocab_size)
                 logs = self.project(dec_out)
                 beam.advance(logs.data)

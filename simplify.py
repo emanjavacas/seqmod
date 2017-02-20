@@ -1,5 +1,9 @@
 
 import os
+import random
+
+seed = 1001
+random.seed(seed)
 
 import torch
 
@@ -10,12 +14,39 @@ from optimizer import Optimizer
 from train import train_model
 
 
-def load_data(path, exts):
+def sent_processor(language='en'):
+    try:
+        from normalizr import Normalizr
+    except ImportError:
+        print("Try installing normalizr")
+        return lambda sent: sent
+
+    normalizations = [
+        ('replace_emails', {'replacement': '<email>'}),
+        ('replace_emojis', {'replacement': '<emoji>'}),
+        ('replace_urls', {'replacement': ''})]
+    normalizr = Normalizr(language=language)
+
+    import re
+    NUM = re.compile('[0-9]+')
+
+    def processor(sent):
+        sent = normalizr.normalize(sent, normalizations)
+        sent = NUM.sub('<num>', sent)
+        return sent
+
+    return processor
+
+
+def load_data(path, exts, sent_processor=sent_processor()):
     src_data, trg_data = [], []
     path = os.path.expanduser(path)
     with open(path + exts[0]) as src, open(path + exts[1]) as trg:
         for src_line, trg_line in zip(src, trg):
             src_line, trg_line = src_line.strip(), trg_line.strip()
+            if sent_processor is not None:
+                src_line = sent_processor(src_line)
+                trg_line = sent_processor(trg_line)
             if src_line and trg_line:
                 src_data.append(src_line.split())
                 trg_data.append(trg_line.split())
@@ -26,37 +57,33 @@ if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('--path', required=True)
-    parser.add_argument('--targets', default=['redrum'], nargs='*')
     parser.add_argument('--dev_split', default=0.1, type=float)
     parser.add_argument('--max_size', default=10000, type=int)
     parser.add_argument('--min_freq', default=5, type=int)
     parser.add_argument('--batch_size', default=64, type=int)
-    parser.add_argument('--bidi', action='store_true')
+    parser.add_argument('--bidi', action='store_false')
     parser.add_argument('--layers', default=1, type=int)
-    parser.add_argument('--emb_dim', default=4, type=int)
-    parser.add_argument('--hid_dim', default=64, type=int)
+    parser.add_argument('--emb_dim', default=264, type=int)
+    parser.add_argument('--hid_dim', default=128, type=int)
     parser.add_argument('--att_dim', default=64, type=int)
     parser.add_argument('--att_type', default='Bahdanau', type=str)
-    parser.add_argument('--epochs', default=5, type=int)
+    parser.add_argument('--epochs', default=20, type=int)
     parser.add_argument('--prefix', default='model', type=str)
     parser.add_argument('--checkpoint', default=500, type=int)
-    parser.add_argument('--optim', default='SGD', type=str)
+    parser.add_argument('--optim', default='RMSprop', type=str)
     parser.add_argument('--plot', action='store_true')
-    parser.add_argument('--learning_rate', default=1., type=float)
-    parser.add_argument('--dropout', default=0.0, type=float)
+    parser.add_argument('--learning_rate', default=0.01, type=float)
+    parser.add_argument('--dropout', default=0.2, type=float)
     parser.add_argument('--learning_rate_decay', default=0.5, type=float)
     parser.add_argument('--start_decay_at', default=8, type=int)
     parser.add_argument('--max_grad_norm', default=5., type=float)
-    parser.add_argument('--seed', default=1003, type=int)
     parser.add_argument('--gpu', action='store_true')
     args = parser.parse_args()
 
-    import random
-    random.seed(args.seed)
     if args.gpu:
-        torch.cuda.manual_seed(args.seed)
+        torch.cuda.manual_seed(seed)
     else:
-        torch.manual_seed(args.seed)
+        torch.manual_seed(seed)
 
     src_data, trg_data = load_data(args.path, ('.main', '.simple'))
     src_dict = Dict(pad_token=u.PAD, eos_token=u.EOS, bos_token=u.BOS,
@@ -68,8 +95,6 @@ if __name__ == '__main__':
         test=None, batchify=True, batch_size=args.batch_size, gpu=args.gpu,
         sort_key=lambda pair: len(pair[0]))
     src_dict = train.dataset.dicts['src'].s2i
-
-    assert len(src_dict) == len(train.dataset.dicts['src'].vocab)
 
     print(' * vocabulary size. %d' % len(src_dict))
     print(' * number of train batches. %d' % len(train))
@@ -87,9 +112,11 @@ if __name__ == '__main__':
 
     n_params = sum([p.nelement() for p in model.parameters()])
     print('* number of parameters: %d' % n_params)
-
     print(model)
 
-    train_model(
-        model, train, dev, optimizer, args.epochs,
-        gpu=args.gpu, targets=args.targets)
+    target = 'It was also the first animated Disney movie to create a whole' + \
+             ' bunch of new sound effects to replace many of their original' + \
+             'classic sounds , which would be used occasionally in later' + \
+             'Disney movies .'
+    train_model(model, train, dev, optimizer, args.epochs,
+                gpu=args.gpu, targets=[target.split()])
