@@ -77,3 +77,9 @@ def unpackage_bidi(h_or_c):
 
 def map_index(t, source_idx, target_idx):
     return t.masked_fill_(t.eq(source_idx), target_idx)
+
+
+def make_initializer(linear_range):
+    def init(m):
+        if isinstance(m, torch.nn.Linear):
+            pass
