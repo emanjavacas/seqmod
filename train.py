@@ -26,16 +26,13 @@ def plot_weights(att_weights, target, pred, e, batch):
 def translate(model, epoch, b, targets, gpu=False, beam=False):
     pad, eos = model.src_dict[u.PAD], model.src_dict[u.EOS]
     seqs = [[model.src_dict[c] for c in t] + [eos] for t in targets]
-    batch_data = batchify(seqs, pad)
-    if gpu:
-        batch = Variable(batch_data, volatile=True).cuda()
-    else:
-        batch = Variable(batch_data, volatile=True)
+    batch = Variable(batchify(seqs, pad), volatile=True)
+    batch = batch.cuda() if gpu else batch
     if beam:
-        scores, preds = model.translate_beam(
+        preds, _ = model.translate_beam(
             batch, beam_width=5, max_decode_len=4)
     else:
-        preds, att = model.translate(batch, max_decode_len=4)
+        preds, _ = model.translate(batch, max_decode_len=4)
     return preds, None
 
 

@@ -182,4 +182,4 @@ class EncoderDecoder(nn.Module):
         for b in beams:
             score, hyp = b.decode(n=beam_width)
             scores.append(score), hyps.append(hyp)
-        return scores, hyps
+        return hyps, scores
