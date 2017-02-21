@@ -12,7 +12,10 @@ import torch
 from torch import nn
 from torch.autograd import Variable
 
-torch.cuda.manual_seed(seed)
+try:
+    torch.cuda.manual_seed(seed)
+except:
+    print('no NVIDIA driver found')
 torch.manual_seed(seed)
 
 from hinton_diagram import hinton
