@@ -50,7 +50,7 @@ class Encoder(nn.Module):
         c_t : (num_layers * num_directions x batch x hidden_size)
             tensor containing the cell state for t=seq_len
         """
-        if compute_mask:
+        if compute_mask:        # fixme, somehow not working
             seqlen, batch, _ = inp.size()
             outs, hidden = [], hidden or self.init_hidden_for(inp)
             for inp_t in inp.chunk(seqlen):

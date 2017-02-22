@@ -68,7 +68,6 @@ if __name__ == '__main__':
     parser.add_argument('--att_dim', default=64, type=int)
     parser.add_argument('--att_type', default='Bahdanau', type=str)
     parser.add_argument('--epochs', default=20, type=int)
-    parser.add_argument('--prefix', default='model', type=str)
     parser.add_argument('--checkpoint', default=500, type=int)
     parser.add_argument('--optim', default='RMSprop', type=str)
     parser.add_argument('--plot', action='store_true')
@@ -94,7 +93,7 @@ if __name__ == '__main__':
         src_data, trg_data, dicts,
         test=None, batchify=True, batch_size=args.batch_size, gpu=args.gpu,
         sort_key=lambda pair: len(pair[0]))
-    src_dict = train.dataset.dicts['src'].s2i
+    s2i = train.dataset.dicts['src'].s2i
 
     print(' * vocabulary size. %d' % len(src_dict))
     print(' * number of train batches. %d' % len(train))
@@ -104,11 +103,13 @@ if __name__ == '__main__':
 
     model = EncoderDecoder(
         (args.layers, args.layers), args.emb_dim, (args.hid_dim, args.hid_dim),
-        args.att_dim, src_dict, att_type=args.att_type, dropout=args.dropout,
+        args.att_dim, s2i, att_type=args.att_type, dropout=args.dropout,
         bidi=args.bidi)
     optimizer = Optimizer(
         model.parameters(), args.optim, args.learning_rate, args.max_grad_norm,
         lr_decay=args.learning_rate_decay, start_decay_at=args.start_decay_at)
+
+    model.init_params()
 
     n_params = sum([p.nelement() for p in model.parameters()])
     print('* number of parameters: %d' % n_params)
@@ -116,7 +117,8 @@ if __name__ == '__main__':
 
     target = 'It was also the first animated Disney movie to create a whole' + \
              ' bunch of new sound effects to replace many of their original' + \
-             'classic sounds , which would be used occasionally in later' + \
-             'Disney movies .'
-    train_model(model, train, dev, optimizer, args.epochs,
+             ' classic sounds , which would be used occasionally in later' + \
+             ' Disney movies .'
+
+    train_model(model, train, dev, optimizer, src_dict, args.epochs,
                 gpu=args.gpu, targets=[target.split()])

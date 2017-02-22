@@ -3,7 +3,7 @@ import time
 import string
 import math
 
-seed = 1001
+seed = 1005
 
 import random
 random.seed(seed)
@@ -34,10 +34,9 @@ def plot_weights(att_weights, target, pred, e, batch):
     fig.savefig('./img/%d_%d' % (e, batch))
 
 
-def translate(model, targets, src_dict, gpu=False, beam=True):
-    pad, eos = src_dict.get_pad(), src_dict.get_eos()
-    seqs = [[src_dict.index(c) for c in t] + [eos] for t in targets]
-    batch = Variable(batchify(seqs, pad), volatile=True)
+def translate(model, target, src_dict, gpu, beam):
+    target = torch.LongTensor(list(src_dict.transform(target, bos=False))).t()
+    batch = Variable(target, volatile=True)
     batch = batch.cuda() if gpu else batch
     if beam:
         preds, _ = model.translate_beam(
@@ -47,21 +46,19 @@ def translate(model, targets, src_dict, gpu=False, beam=True):
     return preds, None
 
 
-def visualize_targets(model, targets, src_dict, e, b, plot_target_id, gpu):
-    if targets:
+def run_translation(model, target, src_dict, e, b, plot_att, gpu, beam):
+    if target:
         i2s = {i: c for c, i in model.src_dict.items()}
-        preds, att = translate(model, targets, src_dict, gpu=gpu)
-        for t, hyps in zip(targets, preds):
-            print("* " + ' '.join(t) if isinstance(t, list) else t)
-            for idx, hyp in enumerate(hyps):
-                print("* [%d]: %s" % (idx, ' '.join(i2s[w] for w in hyp)))
-        if plot_target_id:
-            target, pred = targets[plot_target_id], preds[plot_target_id]
+        preds, att = translate(model, target, src_dict, gpu, beam)
+        print("* " + ' '.join(target) if isinstance(target, list) else t)
+        for idx, hyp in enumerate(preds):
+            print("* [%d]: %s" % (idx, ' '.join(i2s[w] for w in hyp)))
+        if plot_att:
             plot_weights(att, target, pred, e, b)
 
 
 def validate_model(model, criterion, val_data, src_dict, e,
-                   val_targets=None, gpu=False, plot_target_id=False):
+                   target=None, gpu=False, plot_att=False, beam=True):
     pad, eos = model.src_dict[u.PAD], model.src_dict[u.EOS]
     total_loss, total_words = 0, 0
     model.eval()
@@ -76,7 +73,7 @@ def validate_model(model, criterion, val_data, src_dict, e,
         loss, _ = batch_loss(model, outs, targets[1:], criterion, do_val=True)
         total_loss += loss
         total_words += targets.data.ne(pad).sum()
-    visualize_targets(model, val_targets, src_dict, e, b. plot_target_id, gpu)
+    run_translation(model, target, src_dict, e, b, plot_att, gpu, beam)
     return total_loss / total_words
 
 
@@ -137,19 +134,15 @@ def make_criterion(vocab_size, pad):
     return criterion
 
 
-def train_model(model, train_data, valid_data, optimizer, epochs,
-                init_range=0.05, checkpoint=50, gpu=False, targets=None):
-    vocab_size = len(model.src_dict)
-    criterion = make_criterion(vocab_size, model.src_dict[u.PAD])
+def train_model(model, train_data, valid_data, optimizer, src_dict, epochs,
+                checkpoint=50, gpu=False, target=None, beam=False):
+    vocab_size = len(src_dict)
+    criterion = make_criterion(vocab_size, src_dict.get_pad())
 
     if gpu:
         criterion.cuda()
         model.cuda()
 
-    model.apply()
-    model.init_params(init_range=init_range)
-
-    train_data.repeat = False
     for epoch in range(1, epochs + 1):
         model.train()
         # train for one epoch on the training set
@@ -158,7 +151,8 @@ def train_model(model, train_data, valid_data, optimizer, epochs,
         print('Train perplexity: %g' % math.exp(min(train_loss, 100)))
         # evaluate on the validation set
         val_loss = validate_model(
-            model, criterion, valid_data, epoch, gpu=gpu, val_targets=targets)
+            model, criterion, valid_data, src_dict, epoch,
+            gpu=gpu, target=target, beam=beam)
         val_ppl = math.exp(min(val_loss, 100))
         print('Validation perplexity: %g' % val_ppl)
         # maybe update the learning rate
@@ -172,7 +166,7 @@ if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('--train_len', default=10000, type=int)
-    parser.add_argument('--targets', default=['redrum'], nargs='*')
+    parser.add_argument('--target', default=['redrum'], nargs='*')
     parser.add_argument('--val_split', default=0.1, type=float)
     parser.add_argument('--batch_size', default=64, type=int)
     parser.add_argument('--min_len', default=1, type=int)
@@ -196,18 +190,17 @@ if __name__ == '__main__':
     parser.add_argument('--start_decay_at', default=8, type=int)
     parser.add_argument('--max_grad_norm', default=5., type=float)
     parser.add_argument('--gpu', action='store_true')
+    parser.add_argument('--beam', action='store_true')
     args = parser.parse_args()
 
     vocab = args.vocab
     size = args.train_len
     batch_size = args.batch_size
 
-    train, val = d.load_dummy_data(
+    train, val, src_dict = d.load_dummy_data(
         size, vocab, batch_size, min_len=args.min_len, max_len=args.max_len,
         sample_fn=getattr(d, args.sample_fn), gpu=args.gpu, dev=args.val_split)
-    src_dict = train.dataset.dicts['src'].s2i
-
-    assert len(src_dict) == len(train.dataset.dicts['src'].vocab)
+    s2i = train.dataset.dicts['src'].s2i
 
     print(' * vocabulary size. %d' % len(src_dict))
     print(' * number of train batches. %d' % len(train))
@@ -217,8 +210,13 @@ if __name__ == '__main__':
 
     model = EncoderDecoder(
         (args.layers, args.layers), args.emb_dim, (args.hid_dim, args.hid_dim),
-        args.att_dim, src_dict, att_type=args.att_type, dropout=args.dropout,
+        args.att_dim, s2i, att_type=args.att_type, dropout=args.dropout,
         bidi=args.bidi)
+
+    # model.apply(u.Initializer.make_initializer())
+    # model.apply(u.default_weight_init)
+    model.init_params()
+
     optimizer = Optimizer(
         model.parameters(), args.optim, args.learning_rate, args.max_grad_norm,
         lr_decay=args.learning_rate_decay, start_decay_at=args.start_decay_at)
@@ -228,6 +226,5 @@ if __name__ == '__main__':
 
     print(model)
 
-    train_model(
-        model, train, val, optimizer, args.epochs,
-        gpu=args.gpu, targets=args.targets)
+    train_model(model, train, val, optimizer, src_dict, args.epochs,
+                gpu=args.gpu, target=args.target, beam=args.beam)

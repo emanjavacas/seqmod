@@ -77,7 +77,7 @@ def load_dummy_data(size, vocab, batch_size, min_len=5, max_len=15,
     train, dev = Dataset.splits(
         src, trg, dicts, sort_key=lambda pair: len(pair[0]),
         test=None, batchify=True, batch_size=batch_size, gpu=gpu, **kwargs)
-    return train, dev
+    return train, dev, src_dict
 
 
 if __name__ == '__main__':

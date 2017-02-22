@@ -61,6 +61,9 @@ class EncoderDecoder(nn.Module):
             p.data.uniform_(-init_range, init_range)
 
     def init_batch(self, src):
+        """
+        Constructs a first prev batch for initializing the decoder.
+        """
         batch, bos = src.size(1), self.src_dict[u.BOS]
         return src.data.new(1, batch).fill_(bos)
 
@@ -99,8 +102,8 @@ class EncoderDecoder(nn.Module):
         return torch.stack(dec_outs)
 
     def translate(self, src, max_decode_len=2):
-        seq_len, batch = src.size()
-        pad, eos = self.src_dict[u.PAD], self.src_dict[u.EOS]
+        pad, eos, bos = \
+            self.src_dict[u.PAD], self.src_dict[u.EOS], self.src_dict[u.BOS]
         # encode
         emb = self.src_embedding(src)
         enc_outs, enc_hidden = self.encoder(
@@ -111,73 +114,58 @@ class EncoderDecoder(nn.Module):
             enc_att = self.decoder.attn.project_enc_outs(enc_outs)
         else:
             enc_att = None
-        # we use a singleton hypothesis dimension for consistency with other
-        # decoding methods which may entail multiple hypothesis
-        preds = src.data.new(batch, 1).fill_(pad).long()
-        atts = src.data.new(batch).float()
-        mask = src.data.eq(pad).t()
-        prev = Variable(self.init_batch(src), volatile=True)
-        for i in range(len(src) * max_decode_len):
+        atts, preds = [], []
+        prev = Variable(src.data.new([bos]), volatile=True).unsqueeze(0)
+        for _ in range(len(src) * max_decode_len):
             prev_emb = self.src_embedding(prev).squeeze(0)
             dec_out, dec_hidden, att_weights = self.decoder(
                 prev_emb, enc_outs, enc_hidden, enc_att=enc_att,
-                hidden=dec_hidden, out=dec_out, mask=mask)
+                hidden=dec_hidden, out=dec_out)
             # (batch x vocab_size)
             logs = self.project(dec_out)
             # (1 x batch) argmax over log-probs (take idx across batch dim)
             prev = logs.max(1)[1].t()
-            # colwise concat of step vectors
-            print(preds.size())
-            atts = torch.cat([atts, att_weights.data], 1)
-            preds = torch.cat([preds, prev.squeeze(0).data], 2)
-            # termination criterion: at least one EOS per batch element
-            eos_per_batch = preds.eq(eos).sum(2)
-            if (eos_per_batch >= 1).sum() == batch:
+            # concat of step vectors along seq_len dim
+            atts.append(att_weights.squeeze().data.cpu().numpy().tolist())
+            preds.append(prev.squeeze().data.cpu().numpy().tolist()[0])
+            # termination criterion: decoding <eos>
+            if prev.data.eq(eos).nonzero().nelement() > 0:
                 break
-        return preds[:, :, 1:], atts[:, 1:]
+        # add singleton hyp dimension for compatibility with other decoding
+        return [preds], atts
 
     def translate_beam(self, src, max_decode_len=2, beam_width=5):
-        seq_len, batch = src.size()
-        gpu = src.is_cuda
         pad, eos, bos = \
             self.src_dict[u.PAD], self.src_dict[u.EOS], self.src_dict[u.BOS]
+        gpu = src.is_cuda
         # encode
         emb = self.src_embedding(src)
         enc_outs, enc_hidden = self.encoder(
-            emb, compute_mask=True, mask_symbol=pad)
+            emb, compute_mask=False, mask_symbol=pad)
         # decode
-        mask = src.data.eq(pad)
-        beams = [Beam(beam_width, bos, eos, pad, gpu=gpu) for _ in range(batch)]
-        for b in range(batch):
-            beam, idx = beams[b], src.data.new([b]).long()
-            mask_t = mask.index_select(1, idx).repeat(1, beam_width)
-            dec_out, dec_hidden = None, None
-            size_t = (1, beam_width, 1)
-            enc_outs_t = u.repeat(
-                Variable(enc_outs.data.index_select(1, idx)), size_t)
-            h, c = enc_hidden
-            enc_hidden_t = (
-                u.repeat(Variable(h.data.index_select(1, idx)), size_t),
-                u.repeat(Variable(c.data.index_select(1, idx)), size_t))
-            while beam.active and len(beam) < len(src) * max_decode_len:
-                # (1 x width)
-                prev = Variable(
-                    beam.get_current_state().unsqueeze(0), volatile=True)
-                # (1 x width x emb_dim)
-                prev_emb = self.src_embedding(prev).squeeze(0)
-                dec_out, dec_hidden, att_weights = self.decoder(
-                    prev_emb, enc_outs_t, enc_hidden_t, mask=mask_t,
-                    hidden=dec_hidden, out=dec_out)
-                # (width x vocab_size)
-                logs = self.project(dec_out)
-                beam.advance(logs.data)
-                # TODO: this doesn't seem to affect the output :-s
-                dec_out = u.swap(dec_out, 0, beam.get_source_beam())
-                dec_hidden = (u.swap(dec_hidden[0], 1, beam.get_source_beam()),
-                              u.swap(dec_hidden[1], 1, beam.get_source_beam()))
-
-        scores, hyps = [], []
-        for b in beams:
-            score, hyp = b.decode(n=beam_width)
-            scores.append(score), hyps.append(hyp)
+        enc_outs = enc_outs.repeat(1, beam_width, 1)
+        enc_hidden = (enc_hidden[0].repeat(1, beam_width, 1),
+                      enc_hidden[1].repeat(1, beam_width, 1))
+        beam = Beam(beam_width, bos, eos, pad, gpu=gpu)
+        dec_out, dec_hidden = None, None
+        if self.decoder.att_type == 'Bahdanau':
+            enc_att = self.decoder.attn.project_enc_outs(enc_outs)
+        else:
+            enc_att = None
+        while beam.active and len(beam) < len(src) * max_decode_len:
+            # add seq_len singleton dim (1 x width)
+            prev = Variable(beam.get_current_state().unsqueeze(0), volatile=True)
+            prev_emb = self.src_embedding(prev).squeeze(0)
+            dec_out, dec_hidden, att_weights = self.decoder(
+                prev_emb, enc_outs, enc_hidden,
+                hidden=dec_hidden, out=dec_out)
+            # (width x vocab_size)
+            logs = self.project(dec_out)
+            beam.advance(logs.data)
+            # TODO: this doesn't seem to affect the output :-s
+            dec_out = u.swap(dec_out, 0, beam.get_source_beam())
+            dec_hidden = (u.swap(dec_hidden[0], 1, beam.get_source_beam()),
+                          u.swap(dec_hidden[1], 1, beam.get_source_beam()))
+        # decode beams
+        scores, hyps = beam.decode(n=beam_width)
         return hyps, scores

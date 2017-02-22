@@ -1,5 +1,7 @@
 
 import torch
+import numpy as np
+from itertools import groupby
 
 
 BOS = '<bos>'
@@ -76,10 +78,86 @@ def unpackage_bidi(h_or_c):
 
 
 def map_index(t, source_idx, target_idx):
+    """
+    Map a source integer to a target integer across all dims of a LongTensor.
+    """
     return t.masked_fill_(t.eq(source_idx), target_idx)
 
 
-def make_initializer(linear_range):
-    def init(m):
-        if isinstance(m, torch.nn.Linear):
-            pass
+def default_weight_init(m, init_range=0.05):
+    for p in m.parameters():
+        p.data.uniform_(-init_range, init_range)
+
+
+def get_fans(weight):
+    fan_in = weight.size(1)
+    fan_out = weight.size(0)
+    return fan_in, fan_out
+
+
+def rnn_param_type(param):
+    """
+    Distinguish between bias and state weight params inside an RNN.
+    Criterion: biases are vectors, weights are matrices.
+    """
+    if len(param.size()) == 2:
+        return "weight"
+    elif len(param.size()) == 1:
+        return "bias"
+    raise ValueError("Unkown param shape of size [%d]" % param.size())
+
+
+class Initializer(object):
+    """
+    Stateless class grouping different initialization functions.
+    """
+    @staticmethod
+    def glorot_uniform(weight, gain=1.0):
+        fan_in, fan_out = get_fans(weight)
+        a = gain * np.sqrt(2. / (fan_in + fan_out))
+        weight.data.uniform_(-a, a)
+
+    @staticmethod
+    def glorot_normal(weight, gain=1.0):
+        fan_in, fan_out = get_fans(weight)
+        std = gain * np.sqrt(2. / (fan_in + fan_out))
+        weight.data.normal_(std=std)
+
+    @staticmethod
+    def constant(param, value=0.):
+        param.data = param.data.zero_() + value
+
+    @staticmethod
+    def uniform(param, min_scale, max_scale):
+        assert max_scale >= min_scale, "Wrong scale [%d < %d]" % (max_scale, min_scale)
+        param.data.uniform_(min_scale, max_scale)
+
+    @classmethod
+    def make_initializer(
+            cls,
+            linear={'type': 'uniform', 'args': {'min_scale': -0.05, 'max_scale': 0.05}},
+            rnn={'type': 'glorot_uniform', 'args': {'gain': 1.}},
+            rnn_bias={'type': 'constant', 'args': {'value': 0.}},
+            emb={'type': 'uniform', 'args': {'min_scale': -0.05, 'max_scale': 0.05}},
+            default={'type': 'uniform', 'args': {'min_scale': -0.05, 'max_scale': 0.05}}
+    ):
+        """
+        Creates an initializer function customizable on a layer per layer basis.
+        """
+        rnns = (torch.nn.LSTM, torch.nn.GRU, torch.nn.LSTMCell, torch.nn.GRUCell)
+        def init(m):
+            if isinstance(m, (rnns)):  # RNNs
+                for param_type, params in groupby(m.parameters(), rnn_param_type):
+                    if param_type == 'weight':
+                        for param in params:
+                            getattr(cls, rnn['type'])(param, **rnn['args'])
+                    else:       # bias
+                        for param in params:
+                            getattr(cls, rnn_bias['type'])(param, **rnn_bias['args'])
+            elif isinstance(m, torch.nn.Linear):  # LINEAR
+                for param in m.parameters():
+                    getattr(cls, linear['type'])(param, **linear['args'])
+            elif isinstance(m, torch.nn.Embedding):  # EMBEDDING
+                for param in m.parameters():
+                    getattr(cls, emb['type'])(param, **emb['args'])
+        return init
