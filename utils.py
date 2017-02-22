@@ -124,13 +124,23 @@ class Initializer(object):
         weight.data.normal_(std=std)
 
     @staticmethod
-    def constant(param, value=0.):
+    def constant(param, value=0.0):
         param.data = param.data.zero_() + value
 
     @staticmethod
     def uniform(param, min_scale, max_scale):
         assert max_scale >= min_scale, "Wrong scale [%d < %d]" % (max_scale, min_scale)
         param.data.uniform_(min_scale, max_scale)
+
+    @staticmethod
+    def orthogonal(param, gain=1.0):
+        normal = np.random.standard_normal(size=param.size())
+        u, _, v = np.linalg.svd(normal, full_matrices=False)
+        if u.shape == param.data.numpy().shape:
+            param.data.copy_(torch.from_numpy(u))
+        else:
+            param.data.copy_(torch.from_numpy(v))
+        param.data.mul_(gain)
 
     @classmethod
     def make_initializer(
@@ -160,4 +170,7 @@ class Initializer(object):
             elif isinstance(m, torch.nn.Embedding):  # EMBEDDING
                 for param in m.parameters():
                     getattr(cls, emb['type'])(param, **emb['args'])
+            else:               # default initializer
+                for param in m.parameters():
+                    cls.uniform(param, -0.05, 0.05)
         return init

@@ -60,22 +60,25 @@ if __name__ == '__main__':
     parser.add_argument('--dev_split', default=0.1, type=float)
     parser.add_argument('--max_size', default=10000, type=int)
     parser.add_argument('--min_freq', default=5, type=int)
-    parser.add_argument('--batch_size', default=64, type=int)
     parser.add_argument('--bidi', action='store_false')
     parser.add_argument('--layers', default=1, type=int)
+    parser.add_argument('--cell', default='LSTM')
     parser.add_argument('--emb_dim', default=264, type=int)
     parser.add_argument('--hid_dim', default=128, type=int)
     parser.add_argument('--att_dim', default=64, type=int)
     parser.add_argument('--att_type', default='Bahdanau', type=str)
+    parser.add_argument('--dropout', default=0.2, type=float)
+    parser.add_argument('--project_init', action='store_true')
+    parser.add_argument('--batch_size', default=64, type=int)
     parser.add_argument('--epochs', default=20, type=int)
     parser.add_argument('--checkpoint', default=500, type=int)
     parser.add_argument('--optim', default='RMSprop', type=str)
     parser.add_argument('--plot', action='store_true')
     parser.add_argument('--learning_rate', default=0.01, type=float)
-    parser.add_argument('--dropout', default=0.2, type=float)
     parser.add_argument('--learning_rate_decay', default=0.5, type=float)
     parser.add_argument('--start_decay_at', default=8, type=int)
     parser.add_argument('--max_grad_norm', default=5., type=float)
+    parser.add_argument('--beam', action='store_true')
     parser.add_argument('--gpu', action='store_true')
     args = parser.parse_args()
 
@@ -104,7 +107,7 @@ if __name__ == '__main__':
     model = EncoderDecoder(
         (args.layers, args.layers), args.emb_dim, (args.hid_dim, args.hid_dim),
         args.att_dim, s2i, att_type=args.att_type, dropout=args.dropout,
-        bidi=args.bidi)
+        bidi=args.bidi, cell=args.cell, project_init=args.project_init)
     optimizer = Optimizer(
         model.parameters(), args.optim, args.learning_rate, args.max_grad_norm,
         lr_decay=args.learning_rate_decay, start_decay_at=args.start_decay_at)
@@ -121,4 +124,4 @@ if __name__ == '__main__':
              ' Disney movies .'
 
     train_model(model, train, dev, optimizer, src_dict, args.epochs,
-                gpu=args.gpu, targets=[target.split()])
+                gpu=args.gpu, target=target.split(), beam=args.beam)

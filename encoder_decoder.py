@@ -10,6 +10,38 @@ import utils as u
 
 
 class EncoderDecoder(nn.Module):
+    """
+    Vanilla configurable encoder-decoder architecture
+
+    Parameters:
+    -----------
+    num_layers: tuple(enc_num_layers, dec_num_layers) or int,
+        Number of layers for both the encoder and the decoder.
+    emb_dim: int, embedding dimension
+    hid_dim: tuple(enc_hid_dim, dec_hid_dim) or int,
+        Hidden state size for the encoder and the decoder
+    att_dim: int, hidden state for the attention network.
+        Note that it has to be equal to the encoder/decoder hidden
+        size when using GlobalAttention.
+    src_dict: dict,
+        A map from input strings to indices used for indexing the
+        training data.
+    trg_dict: dict,
+        Same as src_dict in case of bilingual training.
+    cell: string,
+        Cell type to use. One of (LSTM, GRU).
+    att_type: string, 
+        Attention mechanism to use. One of (Global, Bahdanau).
+    dropout: float
+    bidi: bool,
+        Whether to use bidirection encoder or not.
+    add_prev: bool,
+        Whether to feed back the last decoder prediction as input to
+        the decoder for the next step together with the hidden state.
+    project_init: bool,
+        Whether to use an extra projection on last encoder hidden state to
+        initialize decoder hidden state.
+    """
     def __init__(self,
                  num_layers,
                  emb_dim,
@@ -24,8 +56,14 @@ class EncoderDecoder(nn.Module):
                  add_prev=True,
                  project_init=False):
         super(EncoderDecoder, self).__init__()
-        enc_hid_dim, dec_hid_dim = hid_dim
-        enc_num_layers, dec_num_layers = num_layers
+        if isinstance(hid_dim, tuple):
+            enc_hid_dim, dec_hid_dim = hid_dim
+        else:
+            enc_hid_dim, dec_hid_dim = hid_dim, hid_dim
+        if isinstance(num_layers, tuple):
+            enc_num_layers, dec_num_layers = num_layers
+        else:
+            enc_num_layers, dec_num_layers = num_layers, num_layers
         self.cell = cell
         self.add_prev = add_prev
         self.src_dict = src_dict
@@ -135,6 +173,14 @@ class EncoderDecoder(nn.Module):
         return [preds], atts
 
     def translate_beam(self, src, max_decode_len=2, beam_width=5):
+        """
+        Translate a single input sequence using beam search.
+
+        Parameters:
+        -----------
+
+        src: torch.LongTensor (seq_len x 1)
+        """
         pad, eos, bos = \
             self.src_dict[u.PAD], self.src_dict[u.EOS], self.src_dict[u.BOS]
         gpu = src.is_cuda

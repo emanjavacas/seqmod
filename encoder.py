@@ -13,9 +13,8 @@ class Encoder(nn.Module):
         self.dirs = 2 if bidi else 1
         self.bidi = bidi
         self.hid_dim = hid_dim // self.dirs
-        assert self.hid_dim % self.dirs == 0, \
+        assert hid_dim % self.dirs == 0, \
             "Hidden dimension must be even for BiRNNs"
-
         super(Encoder, self).__init__()
         self.rnn = getattr(nn, cell)(in_dim, self.hid_dim,
                                      num_layers=num_layers,

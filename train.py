@@ -35,7 +35,7 @@ def plot_weights(att_weights, target, pred, e, batch):
 
 
 def translate(model, target, src_dict, gpu, beam):
-    target = torch.LongTensor(list(src_dict.transform(target, bos=False))).t()
+    target = torch.LongTensor(list(src_dict.transform([target], bos=False))).t()
     batch = Variable(target, volatile=True)
     batch = batch.cuda() if gpu else batch
     if beam:
@@ -50,7 +50,7 @@ def run_translation(model, target, src_dict, e, b, plot_att, gpu, beam):
     if target:
         i2s = {i: c for c, i in model.src_dict.items()}
         preds, att = translate(model, target, src_dict, gpu, beam)
-        print("* " + ' '.join(target) if isinstance(target, list) else t)
+        print("* " + ' '.join(target) if isinstance(target, list) else target)
         for idx, hyp in enumerate(preds):
             print("* [%d]: %s" % (idx, ' '.join(i2s[w] for w in hyp)))
         if plot_att:
@@ -166,7 +166,7 @@ if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('--train_len', default=10000, type=int)
-    parser.add_argument('--target', default=['redrum'], nargs='*')
+    parser.add_argument('--target', default='redrum', type=str)
     parser.add_argument('--val_split', default=0.1, type=float)
     parser.add_argument('--batch_size', default=64, type=int)
     parser.add_argument('--min_len', default=1, type=int)
@@ -213,9 +213,9 @@ if __name__ == '__main__':
         args.att_dim, s2i, att_type=args.att_type, dropout=args.dropout,
         bidi=args.bidi)
 
-    # model.apply(u.Initializer.make_initializer())
+    model.apply(u.Initializer.make_initializer())
     # model.apply(u.default_weight_init)
-    model.init_params()
+    # model.init_params()
 
     optimizer = Optimizer(
         model.parameters(), args.optim, args.learning_rate, args.max_grad_norm,
@@ -227,4 +227,4 @@ if __name__ == '__main__':
     print(model)
 
     train_model(model, train, val, optimizer, src_dict, args.epochs,
-                gpu=args.gpu, target=args.target, beam=args.beam)
+                gpu=args.gpu, target=list(args.target), beam=args.beam)
