@@ -21,6 +21,7 @@ class Decoder(nn.Module):
         in_dim = enc_hid_dim if not add_prev else enc_hid_dim + emb_dim
         enc_num_layers, dec_num_layers = num_layers
         self.num_layers = dec_num_layers
+        self.cell = cell
         self.hid_dim = hid_dim
         self.add_prev = add_prev
         self.project_init = project_init
@@ -56,8 +57,9 @@ class Decoder(nn.Module):
             # normally dec_hid_dim == enc_hid_dim, but if not we project
             self.W_h = nn.Parameter(torch.Tensor(
                 enc_hid_dim * enc_num_layers, hid_dim * dec_num_layers))
-            self.W_c = nn.Parameter(torch.Tensor(
-                enc_hid_dim * enc_num_layers, hid_dim * dec_num_layers))
+            if self.cell.startswith('LSTM'):
+                self.W_c = nn.Parameter(torch.Tensor(
+                    enc_hid_dim * enc_num_layers, hid_dim * dec_num_layers))
 
     def rnn_step(self, inp, hidden):
         """
@@ -78,16 +80,27 @@ class Decoder(nn.Module):
         h_n: torch.Tensor (num_layers x batch x hid_dim)
         c_n: torch.Tensor (num_layers x batch x hid_dim)
         """
-        h_0, c_0 = hidden
-        h_1, c_1 = [], []  # n refers to layer
-        for i, layer in enumerate(self.layers):
-            h_1_i, c_1_i = layer(inp, (h_0[i], c_0[i]))
-            h_1.append(h_1_i), c_1.append(c_1_i)
-            inp = h_1_i
-            # only add dropout to hidden layer (not output)
-            if i < (len(self.layers) - 1) and self.has_dropout:
-                inp = self.dropout(inp)
-        return inp, (torch.stack(h_1), torch.stack(c_1))
+        if self.cell.startswith('LSTM'):
+            h_0, c_0 = hidden
+            h_1, c_1 = [], []
+            for i, layer in enumerate(self.layers):
+                h_1_i, c_1_i = layer(inp, (h_0[i], c_0[i]))
+                h_1.append(h_1_i), c_1.append(c_1_i)
+                inp = h_1_i
+                # only add dropout to hidden layer (not output)
+                if i < (len(self.layers) - 1) and self.has_dropout:
+                    inp = self.dropout(inp)
+            output, hidden = inp, (torch.stack(h_1), torch.stack(c_1))
+        else:
+            h_0, h_1 = hidden, []
+            for i, layer in enumerate(self.layers):
+                h_1_i = layer(inp, h_0[i])
+                h_1.append(h_1_i)
+                inp = h_1_i
+                if i < (len(self.layers) - 1) and self.has_dropout:
+                    inp = self.dropout(inp)
+            output, hidden = inp, torch.stack(h_1)
+        return output, hidden
 
     def init_hidden_for(self, enc_hidden):
         """
@@ -98,23 +111,33 @@ class Decoder(nn.Module):
         h_0: torch.Tensor (dec_num_layers x batch x dec_hid_dim)
         c_0: torch.Tensor (dec_num_layers x batch x dec_hid_dim)
         """
-        h_t, c_t = enc_hidden
+        if self.cell.startswith('LSTM'):
+            h_t, c_t = enc_hidden
+        else:
+            h_t = enc_hidden
         num_layers, bs, hid_dim = h_t.size()
         size = self.num_layers, bs, self.hid_dim
         # use a projection of last encoder hidden state
         if self.project_init:
             # -> (batch x 1 x num_layers * enc_hid_dim)
             h_t = h_t.t().contiguous().view(-1, num_layers * hid_dim).unsqueeze(1)
-            c_t = c_t.t().contiguous().view(-1, num_layers * hid_dim).unsqueeze(1)
             dec_h0 = torch.bmm(h_t, u.tile(self.W_h, bs)).view(*size)
-            dec_c0 = torch.bmm(c_t, u.tile(self.W_c, bs)).view(*size)
+            if self.cell.startswith('LSTM'):
+                c_t = c_t.t().contiguous().view(-1, num_layers * hid_dim).unsqueeze(1)
+                dec_c0 = torch.bmm(c_t, u.tile(self.W_c, bs)).view(*size)
         else:
             assert num_layers == self.num_layers, \
                 "encoder and decoder need equal depth if project_init not set"
             assert hid_dim == self.hid_dim, \
                 "encoder and decoder need equal size if project_init not set"
-            dec_h0, dec_c0 = enc_hidden
-        return dec_h0, dec_c0
+            if self.cell.startswith('LSTM'):
+                dec_h0, dec_c0 = enc_hidden
+            else:
+                dec_h0 = enc_hidden
+        if self.cell.startswith('LSTM'):
+            return dec_h0, dec_c0
+        else:
+            return dec_h0
 
     def init_output_for(self, dec_hidden):
         """
@@ -131,7 +154,10 @@ class Decoder(nn.Module):
         --------
         torch.Tensor (batch x dec_hid_dim)
         """
-        h_0, c_0 = dec_hidden
+        if self.cell.startswith('LSTM'):
+            h_0, c_0 = dec_hidden
+        else:
+            h_0 = dec_hidden
         data = h_0.data.new(h_0.size(1), self.hid_dim).zero_()
         return Variable(data, requires_grad=False)
 

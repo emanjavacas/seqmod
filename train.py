@@ -174,6 +174,7 @@ if __name__ == '__main__':
     parser.add_argument('--sample_fn', default='reverse', type=str)
     parser.add_argument('--bidi', action='store_true')
     parser.add_argument('--layers', default=1, type=int)
+    parser.add_argument('--cell', default='LSTM', type=str)
     parser.add_argument('--emb_dim', default=4, type=int)
     parser.add_argument('--hid_dim', default=64, type=int)
     parser.add_argument('--att_dim', default=64, type=int)
@@ -211,7 +212,7 @@ if __name__ == '__main__':
     model = EncoderDecoder(
         (args.layers, args.layers), args.emb_dim, (args.hid_dim, args.hid_dim),
         args.att_dim, s2i, att_type=args.att_type, dropout=args.dropout,
-        bidi=args.bidi)
+        bidi=args.bidi, cell=args.cell)
 
     model.apply(u.Initializer.make_initializer())
     # model.apply(u.default_weight_init)

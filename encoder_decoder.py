@@ -190,8 +190,11 @@ class EncoderDecoder(nn.Module):
             emb, compute_mask=False, mask_symbol=pad)
         # decode
         enc_outs = enc_outs.repeat(1, beam_width, 1)
-        enc_hidden = (enc_hidden[0].repeat(1, beam_width, 1),
-                      enc_hidden[1].repeat(1, beam_width, 1))
+        if self.cell.startswith('LSTM'):
+            enc_hidden = (enc_hidden[0].repeat(1, beam_width, 1),
+                          enc_hidden[1].repeat(1, beam_width, 1))
+        else:
+            enc_hidden = enc_hidden.repeat(1, beam_width, 1)
         beam = Beam(beam_width, bos, eos, pad, gpu=gpu)
         dec_out, dec_hidden = None, None
         if self.decoder.att_type == 'Bahdanau':
@@ -210,8 +213,11 @@ class EncoderDecoder(nn.Module):
             beam.advance(logs.data)
             # TODO: this doesn't seem to affect the output :-s
             dec_out = u.swap(dec_out, 0, beam.get_source_beam())
-            dec_hidden = (u.swap(dec_hidden[0], 1, beam.get_source_beam()),
-                          u.swap(dec_hidden[1], 1, beam.get_source_beam()))
+            if self.cell.startswith('LSTM'):
+                dec_hidden = (u.swap(dec_hidden[0], 1, beam.get_source_beam()),
+                              u.swap(dec_hidden[1], 1, beam.get_source_beam()))
+            else:
+                dec_hidden = u.swap(dec_hidden, 1, beam.get_source_beam())
         # decode beams
         scores, hyps = beam.decode(n=beam_width)
         return hyps, scores
