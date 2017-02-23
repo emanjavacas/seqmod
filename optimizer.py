@@ -46,6 +46,9 @@ class Optimizer(object):
         self.clip_gradients(norm)
         self.optim.step()
 
+    def zero_grad(self):
+        self.optim.zero_grad()
+
     def maybe_update_lr(self, epoch, ppl):
         """
         Decay learning rate if validation perplexity does not improve

@@ -79,6 +79,7 @@ def validate_model(model, criterion, val_data, src_dict, e,
 
 def batch_loss(model, outs, targets, criterion, do_val=False, split_batch=52):
     loss = 0
+    # disentangle from graph
     outs = Variable(outs.data, requires_grad=(not do_val), volatile=do_val)
     outs_split = torch.split(outs, split_batch)
     targets_split = torch.split(targets, split_batch)
@@ -86,6 +87,7 @@ def batch_loss(model, outs, targets, criterion, do_val=False, split_batch=52):
         out = out.view(-1, out.size(2))
         loss += criterion(model.project(out), trg.view(-1))
     if not do_val:
+        # needed since model.project is being called outside model.forward
         loss.div(outs.size(1)).backward()
     grad_output = None if outs.grad is None else outs.grad.data
     return loss.data[0], grad_output
@@ -93,14 +95,13 @@ def batch_loss(model, outs, targets, criterion, do_val=False, split_batch=52):
 
 def train_epoch(model, epoch, train_data, criterion, optimizer, checkpoint):
     start = time.time()
-    epoch_loss, report_loss = 0, 0
-    epoch_words, report_words = 0, 0
+    epoch_loss, report_loss, epoch_words, report_words = 0, 0, 0, 0
     pad, eos = model.src_dict[u.PAD], model.src_dict[u.EOS]
     batch_order = torch.randperm(len(train_data))
 
     for idx in range(len(train_data)):
         batch = train_data[batch_order[idx]]
-        optimizer.optim.zero_grad()  # empty gradients at begin of batch
+        optimizer.zero_grad()  # empty gradients at begin of batch
         source, targets = batch
         # remove <eos> from decoder targets
         decode_targets = Variable(u.map_index(targets[:-1].data, eos, pad))
@@ -153,8 +154,7 @@ def train_model(model, train_data, valid_data, optimizer, src_dict, epochs,
         val_loss = validate_model(
             model, criterion, valid_data, src_dict, epoch,
             gpu=gpu, target=target, beam=beam)
-        val_ppl = math.exp(min(val_loss, 100))
-        print('Validation perplexity: %g' % val_ppl)
+        print('Validation perplexity: %g' % math.exp(min(val_loss, 100)))
         # maybe update the learning rate
         lr_data = optimizer.maybe_update_lr(epoch, val_loss)
         if lr_data is not None:
@@ -214,8 +214,8 @@ if __name__ == '__main__':
         args.att_dim, s2i, att_type=args.att_type, dropout=args.dropout,
         bidi=args.bidi, cell=args.cell)
 
-    model.apply(u.Initializer.make_initializer())
-    # model.apply(u.default_weight_init)
+    model.apply(u.Initializer.make_initializer(
+        rnn={'type': 'orthogonal', 'args': {'gain': 1.0}}))
 
     optimizer = Optimizer(
         model.parameters(), args.optim, args.learning_rate, args.max_grad_norm,

@@ -21,9 +21,10 @@ def cumsum(seq):
     return [sum(subseq) for subseq in subseqs]
 
 
-def batchify(examples, pad_token, align_right=False):
+def batchify(examples, pad_token=None, align_right=False):
     max_length = max(len(x) for x in examples)
-    out = torch.LongTensor(len(examples), max_length).fill_(pad_token)
+    out = torch.LongTensor(len(examples), max_length) \
+               .fill_(pad_token or 0)
     for i in range(len(examples)):
         example = torch.Tensor(examples[i])
         example_length = example.size(0)
@@ -56,16 +57,16 @@ class Dict(object):
         return len(self.vocab)
 
     def get_pad(self):
-        return self.s2i[self.pad_token]
+        return self.s2i.get(self.pad_token, None)
 
     def get_eos(self):
-        return self.s2i[self.eos_token]
+        return self.s2i.get(self.eos_token, None)
 
     def get_bos(self):
-        return self.s2i[self.bos_token]
+        return self.s2i.get(self.bos_token, None)
 
     def get_unk(self):
-        return self.s2i[self.unk_token]
+        return self.s2i.get(self.unk_token, None)
 
     def _get_unk(self):
         if self.unk_token not in self.s2i:
@@ -182,7 +183,8 @@ class Dataset(object):
 
 
 class BatchIterator(object):
-    def __init__(self, dataset, batch_size, gpu=False, align_right=False):
+    def __init__(self, dataset, batch_size,
+                 gpu=False, align_right=False, evaluation=False):
         """
         BatchIterator
         """
@@ -192,13 +194,14 @@ class BatchIterator(object):
         self.batch_size = batch_size
         self.gpu = gpu
         self.align_right = align_right
+        self.evaluation = evaluation
         self.num_batches = len(dataset) // batch_size
 
     def _batchify(self, batch_data, pad_token):
         out = batchify(batch_data, pad_token, align_right=self.align_right)
         if self.gpu:
             out = out.cuda()
-        return torch.autograd.Variable(out)
+        return torch.autograd.Variable(out, volatile=self.evaluation)
 
     def __getitem__(self, idx):
         assert idx < self.num_batches, "%d >= %d" % (idx, self.num_batches)

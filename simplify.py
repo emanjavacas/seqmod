@@ -1,11 +1,17 @@
 
 import os
-import random
 
 seed = 1001
+
+import random
 random.seed(seed)
 
 import torch
+try:
+    torch.cuda.manual_seed(seed)
+except:
+    print('no NVIDIA driver found')
+torch.manual_seed(seed)
 
 import utils as u
 from dataset import Dataset, Dict
@@ -14,42 +20,17 @@ from optimizer import Optimizer
 from train import train_model
 
 
-def sent_processor(language='en'):
-    try:
-        from normalizr import Normalizr
-    except ImportError:
-        print("Try installing normalizr")
-        return lambda sent: sent
-
-    normalizations = [
-        ('replace_emails', {'replacement': '<email>'}),
-        ('replace_emojis', {'replacement': '<emoji>'}),
-        ('replace_urls', {'replacement': ''})]
-    normalizr = Normalizr(language=language)
-
-    import re
-    NUM = re.compile('[0-9]+')
-
-    def processor(sent):
-        sent = normalizr.normalize(sent, normalizations)
-        sent = NUM.sub('<num>', sent)
-        return sent
-
-    return processor
-
-
-def load_data(path, exts, sent_processor=sent_processor()):
+def load_data(path, exts, text_processor=u.text_processor()):
     src_data, trg_data = [], []
     path = os.path.expanduser(path)
     with open(path + exts[0]) as src, open(path + exts[1]) as trg:
         for src_line, trg_line in zip(src, trg):
             src_line, trg_line = src_line.strip(), trg_line.strip()
-            if sent_processor is not None:
-                src_line = sent_processor(src_line)
-                trg_line = sent_processor(trg_line)
+            if text_processor is not None:
+                src_line = text_processor(src_line).split()
+                trg_line = text_processor(trg_line).split()
             if src_line and trg_line:
-                src_data.append(src_line.split())
-                trg_data.append(trg_line.split())
+                src_data.append(src_line), trg_data.append(trg_line)
     return src_data, trg_data
 
 
@@ -80,20 +61,15 @@ if __name__ == '__main__':
     parser.add_argument('--max_grad_norm', default=5., type=float)
     parser.add_argument('--beam', action='store_true')
     parser.add_argument('--gpu', action='store_true')
+    parser.add_argument('--target', default=None)
     args = parser.parse_args()
-
-    if args.gpu:
-        torch.cuda.manual_seed(seed)
-    else:
-        torch.manual_seed(seed)
 
     src_data, trg_data = load_data(args.path, ('.main', '.simple'))
     src_dict = Dict(pad_token=u.PAD, eos_token=u.EOS, bos_token=u.BOS,
                     max_size=args.max_size, min_freq=args.min_freq)
     src_dict.fit(src_data, trg_data)
-    dicts = {'src': src_dict, 'trg': src_dict}
     train, dev = Dataset.splits(
-        src_data, trg_data, dicts,
+        src_data, trg_data, {'src': src_dict, 'trg': src_dict},
         test=None, batchify=True, batch_size=args.batch_size, gpu=args.gpu,
         sort_key=lambda pair: len(pair[0]))
     s2i = train.dataset.dicts['src'].s2i
@@ -112,18 +88,14 @@ if __name__ == '__main__':
         model.parameters(), args.optim, args.learning_rate, args.max_grad_norm,
         lr_decay=args.learning_rate_decay, start_decay_at=args.start_decay_at)
 
-    model.apply(u.Initializer.make_initializer())
+    model.apply(u.Initializer.make_initializer(
+        rnn={'type': 'orthogonal', 'args': {'gain': 1.0}}))
     # model.apply(u.default_weight_init)
 
     n_params = sum([p.nelement() for p in model.parameters()])
     print('* number of parameters: %d' % n_params)
     print(model)
 
-    target = 'It was also the first animated Disney movie to create a whole' + \
-             ' bunch of new sound effects to replace many of their original' + \
-             ' classic sounds , which would be used occasionally in later' + \
-             ' Disney movies .'
-
     train_model(model, train, dev, optimizer, src_dict, args.epochs,
-                gpu=args.gpu, target=target.split(), beam=args.beam,
+                gpu=args.gpu, target=args.target.split(), beam=args.beam,
                 checkpoint=args.checkpoint)

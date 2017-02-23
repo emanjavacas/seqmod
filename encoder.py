@@ -23,12 +23,13 @@ class Encoder(nn.Module):
                                      bidirectional=bidi)
 
     def init_hidden_for(self, inp):
-        size = (self.dirs * self.num_layers, inp.size(1), self.hid_dim)
+        batch = inp.size(1)
+        size = (self.dirs * self.num_layers, batch, self.hid_dim)
         h_0 = Variable(inp.data.new(*size).zero_(), requires_grad=False)
-        c_0 = Variable(inp.data.new(*size).zero_(), requires_grad=False)
         if self.cell.startswith('GRU'):
             return h_0
         else:
+            c_0 = Variable(inp.data.new(*size).zero_(), requires_grad=False)
             return h_0, c_0
 
     def forward(self, inp, hidden=None, compute_mask=False, mask_symbol=None):

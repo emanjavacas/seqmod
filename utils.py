@@ -9,7 +9,7 @@ EOS = '<eos>'
 PAD = '<pad>'
 
 
-# pytorch utils
+# Pytorch utils
 def tile(t, times):
     """
     Repeat a tensor across an added first dimension a number of times
@@ -84,6 +84,7 @@ def map_index(t, source_idx, target_idx):
     return t.masked_fill_(t.eq(source_idx), target_idx)
 
 
+# Initializers
 def default_weight_init(m, init_range=0.05):
     for p in m.parameters():
         p.data.uniform_(-init_range, init_range)
@@ -174,3 +175,29 @@ class Initializer(object):
                 for param in m.parameters():
                     cls.uniform(param, -0.05, 0.05)
         return init
+
+
+# Text processing
+def text_processor(language='en'):
+    try:
+        from normalizr import Normalizr
+    except ImportError:
+        print("Try installing normalizr")
+        return lambda sent: sent
+
+    normalizations = [
+        ('replace_emails', {'replacement': '<email>'}),
+        ('replace_emojis', {'replacement': '<emoji>'}),
+        ('replace_urls', {'replacement': ''})]
+    normalizr = Normalizr(language=language)
+
+    import re
+    NUM = re.compile('[0-9]+')
+
+    def processor(sent):
+        sent = normalizr.normalize(sent, normalizations)
+        sent = NUM.sub('<num>', sent)  # number substitution
+        sent = sent.lower()     # downcase
+        return sent
+
+    return processor
