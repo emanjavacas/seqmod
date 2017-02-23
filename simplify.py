@@ -71,7 +71,7 @@ if __name__ == '__main__':
     parser.add_argument('--project_init', action='store_true')
     parser.add_argument('--batch_size', default=64, type=int)
     parser.add_argument('--epochs', default=20, type=int)
-    parser.add_argument('--checkpoint', default=500, type=int)
+    parser.add_argument('--checkpoint', default=50, type=int)
     parser.add_argument('--optim', default='RMSprop', type=str)
     parser.add_argument('--plot', action='store_true')
     parser.add_argument('--learning_rate', default=0.01, type=float)
@@ -125,4 +125,5 @@ if __name__ == '__main__':
              ' Disney movies .'
 
     train_model(model, train, dev, optimizer, src_dict, args.epochs,
-                gpu=args.gpu, target=target.split(), beam=args.beam)
+                gpu=args.gpu, target=target.split(), beam=args.beam,
+                checkpoint=args.checkpoint)
