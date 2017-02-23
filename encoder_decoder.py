@@ -94,10 +94,6 @@ class EncoderDecoder(nn.Module):
             nn.Linear(dec_hid_dim, output_size),
             nn.LogSoftmax())
 
-    def init_params(self, init_range=0.05):
-        for p in self.parameters():
-            p.data.uniform_(-init_range, init_range)
-
     def init_batch(self, src):
         """
         Constructs a first prev batch for initializing the decoder.

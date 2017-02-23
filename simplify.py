@@ -112,7 +112,8 @@ if __name__ == '__main__':
         model.parameters(), args.optim, args.learning_rate, args.max_grad_norm,
         lr_decay=args.learning_rate_decay, start_decay_at=args.start_decay_at)
 
-    model.init_params()
+    model.apply(u.Initializer.make_initializer())
+    # model.apply(u.default_weight_init)
 
     n_params = sum([p.nelement() for p in model.parameters()])
     print('* number of parameters: %d' % n_params)

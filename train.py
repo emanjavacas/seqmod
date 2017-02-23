@@ -216,7 +216,6 @@ if __name__ == '__main__':
 
     model.apply(u.Initializer.make_initializer())
     # model.apply(u.default_weight_init)
-    # model.init_params()
 
     optimizer = Optimizer(
         model.parameters(), args.optim, args.learning_rate, args.max_grad_norm,
