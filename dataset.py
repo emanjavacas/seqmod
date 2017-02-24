@@ -92,12 +92,16 @@ class Dict(object):
         self.vocab += [k for k, v in most_common if v >= self.min_freq]
         self.s2i = {s: i for i, s in enumerate(self.vocab)}
         self.fitted = True
+        return self
 
     def transform(self, examples, bos=True, eos=True):
         bos = [self.index(self.bos_token)] if self.bos_token and bos else []
         eos = [self.index(self.eos_token)] if self.eos_token and eos else []
         for example in examples:
-            example = bos + [self.index(s) for s in example] + eos
+            if self.sequential:
+                example = bos + [self.index(s) for s in example] + eos
+            else:
+                example = self.index(example)
             yield example
 
 

@@ -14,13 +14,14 @@ except:
 torch.manual_seed(seed)
 
 import utils as u
+from preprocess import text_processor
 from dataset import Dataset, Dict
 from encoder_decoder import EncoderDecoder
 from optimizer import Optimizer
 from train import train_model
 
 
-def load_data(path, exts, text_processor=u.text_processor()):
+def load_data(path, exts, text_processor=text_processor()):
     src_data, trg_data = [], []
     path = os.path.expanduser(path)
     with open(path + exts[0]) as src, open(path + exts[1]) as trg:
