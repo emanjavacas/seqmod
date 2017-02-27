@@ -84,10 +84,13 @@ class Dict(object):
         else:
             return self.s2i[s]
 
-    def fit(self, *args):
+    def partial_fit(self, *args):
         for dataset in args:
             for example in dataset:
                 self.counter.update(example if self.sequential else [example])
+
+    def fit(self, *args):
+        self.partial_fit(*args)
         most_common = self.counter.most_common(self.max_size)
         self.vocab += [k for k, v in most_common if v >= self.min_freq]
         self.s2i = {s: i for i, s in enumerate(self.vocab)}
