@@ -15,8 +15,10 @@ except:
 torch.manual_seed(seed)
 
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.autograd import Variable
 
+from modules import StackedRNN
 from optimizer import Optimizer
 from dataset import Dict
 from preprocess import text_processor
@@ -24,16 +26,19 @@ import utils as u
 
 
 class LM(nn.Module):
-    def __init__(self, vocab, emb_dim, hid_dim, num_layers=1, cell='LSTM', bias=True):
+    def __init__(self, vocab, emb_dim, hid_dim, num_layers=1,
+                 cell='LSTM', bias=True, dropout=0.0):
         self.vocab = vocab
         self.emb_dim = emb_dim
         self.hid_dim = hid_dim
         self.num_layers = num_layers
         self.cell = cell
+        self.has_dropout = bool(dropout)
+        self.dropout = dropout
         
         super(LM, self).__init__()
         self.embeddings = nn.Embedding(vocab, emb_dim)
-        self.rnn = getattr(nn, cell)(emb_dim, hid_dim, num_layers, bias=bias)
+        self.rnn = getattr(nn, cell)(emb_dim, hid_dim, num_layers=num_layers, bias=bias, dropout=dropout)
         self.project = nn.Linear(hid_dim, vocab)
 
     def init_hidden_for(self, inp):
@@ -48,11 +53,14 @@ class LM(nn.Module):
 
     def forward(self, inp, hidden=None):
         emb = self.embeddings(inp)
-        hidden = hidden or self.init_hidden_for(emb)
-        out, hidden = self.rnn(emb, hidden)
-        seq_len, batch, hid = out.size()
+        if self.has_dropout:
+            emb = F.dropout(emb, p=self.dropout, training=self.training)
+        outs, hidden = self.rnn(emb, hidden or self.init_hidden_for(emb))
+        if self.has_dropout:
+            outs = F.dropout(emb, p=self.dropout, training=self.training)
+        seq_len, batch, hid = outs.size()
         # (seq_len x batch x hid) -> (seq_len * batch x hid)
-        logs = self.project(out.view(seq_len * batch, hid))
+        logs = self.project(outs.view(seq_len * batch, hid))
         return logs, hidden
 
 
@@ -171,7 +179,8 @@ def train_model(model, train, valid, test, optimizer, epochs, bptt,
         valid_loss = validate_model(model, valid, bptt, criterion, gpu)
         print("Valid perplexity: %g" % math.exp(min(valid_loss, 100)))
     test_loss = validate_model(model, test, bptt, criterion, gpu)
-    print("Test perplexity: %g" % math(exp(test_loss)))
+    print("Test perplexity: %g" % math.exp(test_loss))
+
 
 if __name__ == '__main__':
     import argparse
