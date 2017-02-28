@@ -165,7 +165,11 @@ def validate_model(model, data, bptt, criterion, gpu):
     return loss / len(data)
 
 
-def train_epoch(model, data, optimizer, criterion, checkpoint, epoch, bptt, gpu):
+def train_epoch(model, data, optimizer, criterion, bptt, epoch, checkpoint, gpu,
+                hook=0, on_hook=None):
+    """
+    hook: compute `on_hook` every `hook` checkpoints
+    """
     epoch_loss, batch_loss, report_words = 0, 0, 0
     start = time.time()
     hidden = None
@@ -190,19 +194,31 @@ def train_epoch(model, data, optimizer, criterion, checkpoint, epoch, bptt, gpu)
                    report_words / (time.time() - start)))
             report_words = batch_loss = 0
             start = time.time()
+            # call thunk every `hook` checkpoints
+            if hook and (batch // checkpoint) % hook == 0:
+                if on_hook is not None:
+                    on_hook()
     return epoch_loss / len(data)
 
 
 def train_model(model, train, valid, test, optimizer, epochs, bptt,
-                checkpoint=50, gpu=False, criterion=nn.CrossEntropyLoss()):
+                criterion=nn.CrossEntropyLoss(), gpu=False,
+                checkpoint=50, hook=10):
     if gpu:
         criterion.cuda()
         model.cuda()
 
+    def on_hook():
+        model.eval()
+        valid_loss = validate_model(model, valid, bptt, criterion, gpu)
+        model.train()
+        print("Valid perplexity: %g" % math.exp(min(valid_loss, 100)))
+
     for epoch in range(1, epochs + 1):
         model.train()
         train_loss = train_epoch(
-            model, train, optimizer, criterion, checkpoint, epoch, bptt, gpu)
+            model, train, optimizer, criterion, bptt, epoch, checkpoint, gpu,
+            hook=hook, on_hook=on_hook)
         print("Train perplexity: %g" % math.exp(min(train_loss, 100)))
         model.eval()
         valid_loss = validate_model(model, valid, bptt, criterion, gpu)
@@ -224,10 +240,14 @@ if __name__ == '__main__':
     parser.add_argument('--cell', default='LSTM')
     parser.add_argument('--emb_dim', default=200, type=int)
     parser.add_argument('--hid_dim', default=200, type=int)
+    parser.add_argument('--dropout', default=0.3, type=float)
+    parser.add_argument('--tie_weights', action='store_true')
     parser.add_argument('--batch_size', default=20, type=int)
     parser.add_argument('--bptt', default=20, type=int)
     parser.add_argument('--epochs', default=10, type=int)
     parser.add_argument('--checkpoint', default=200, type=int)
+    parser.add_argument('--hook', default=10, type=int,
+                        help='Compute valid ppl after so many checkpoints')
     parser.add_argument('--optim', default='RMSprop', type=str)
     parser.add_argument('--learning_rate', default=0.01, type=float)
     parser.add_argument('--learning_rate_decay', default=0.5, type=float)
@@ -266,7 +286,8 @@ if __name__ == '__main__':
 
     print('Building model...')
     model = LM(len(d), args.emb_dim, args.hid_dim,
-               num_layers=args.layers, cell=args.cell)
+               num_layers=args.layers, cell=args.cell,
+               dropout=args.dropout, tie_weights=args.tie_weights)
 
     model.apply(u.Initializer.make_initializer(
         rnn={'type': 'orthogonal', 'args': {'gain': 1.0}}))
@@ -280,7 +301,7 @@ if __name__ == '__main__':
         lr_decay=args.learning_rate_decay, start_decay_at=args.start_decay_at)
 
     train_model(model, train, valid, test, optimizer, args.epochs, args.bptt,
-                gpu=args.gpu, checkpoint=args.checkpoint)
+                gpu=args.gpu, checkpoint=args.checkpoint, hook=args.hook)
 
     if args.save != '':
         print('Saving model')
