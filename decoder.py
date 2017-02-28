@@ -1,9 +1,11 @@
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.autograd import Variable
 
 import utils as u
+from modules import StackedRNN
 import attention as attn
 
 
@@ -27,25 +29,17 @@ class Decoder(nn.Module):
         self.project_init = project_init
 
         super(Decoder, self).__init__()
-        # decoder layers
-        self.layers = []
-        for layer in range(dec_num_layers):
-            rnn = getattr(nn, cell + 'Cell')(in_dim, hid_dim)
-            # since layer isn't an attribute of this module, we add it manually
-            self.add_module('rnn_%d' % layer, rnn)
-            self.layers.append(rnn)
-            in_dim = hid_dim
-
+        # rnn layers
+        self.rnn_step = StackedRNN(dec_num_layers, in_dim, hid_dim, cell=cell, dropout=dropout)
         # dropout
         self.has_dropout = bool(dropout)
-        if self.has_dropout:
-            self.dropout = nn.Dropout(dropout)
+        self.dropout = dropout
         # attention network
         self.att_type = att_type
         if att_type == 'Bahdanau':
-            self.attn = attn.BahdanauAttention(att_dim, in_dim, hid_dim)
+            self.attn = attn.BahdanauAttention(att_dim, hid_dim, hid_dim)
         elif att_type == 'Global':
-            assert att_dim == in_dim == hid_dim, \
+            assert att_dim == hid_dim, \
                 "For global, Encoder, Decoder & Attention must have same size"
             self.attn = attn.GlobalAttention(hid_dim)
         else:
@@ -60,47 +54,6 @@ class Decoder(nn.Module):
             if self.cell.startswith('LSTM'):
                 self.W_c = nn.Parameter(torch.Tensor(
                     enc_hid_dim * enc_num_layers, hid_dim * dec_num_layers))
-
-    def rnn_step(self, inp, hidden):
-        """
-        Parameters:
-        -----------
-
-        inp: torch.Tensor (batch x inp_dim),
-            Tensor holding the target for the previous decoding step,
-            inp_dim = emb_dim or emb_dim + hid_dim if self.add_pred is True.
-
-        hidden: tuple (h_c, c_0), output of previous step or init hidden at 0,
-            h_c: (num_layers x batch x hid_dim)
-            n_c: (num_layers x batch x hid_dim)
-
-        Returns: output, (h_n, c_n)
-        --------
-        output: torch.Tensor (batch x hid_dim)
-        h_n: torch.Tensor (num_layers x batch x hid_dim)
-        c_n: torch.Tensor (num_layers x batch x hid_dim)
-        """
-        if self.cell.startswith('LSTM'):
-            h_0, c_0 = hidden
-            h_1, c_1 = [], []
-            for i, layer in enumerate(self.layers):
-                h_1_i, c_1_i = layer(inp, (h_0[i], c_0[i]))
-                h_1.append(h_1_i), c_1.append(c_1_i)
-                inp = h_1_i
-                # only add dropout to hidden layer (not output)
-                if i < (len(self.layers) - 1) and self.has_dropout:
-                    inp = self.dropout(inp)
-            output, hidden = inp, (torch.stack(h_1), torch.stack(c_1))
-        else:
-            h_0, h_1 = hidden, []
-            for i, layer in enumerate(self.layers):
-                h_1_i = layer(inp, h_0[i])
-                h_1.append(h_1_i)
-                inp = h_1_i
-                if i < (len(self.layers) - 1) and self.has_dropout:
-                    inp = self.dropout(inp)
-            output, hidden = inp, torch.stack(h_1)
-        return output, hidden
 
     def init_hidden_for(self, enc_hidden):
         """
@@ -188,5 +141,5 @@ class Decoder(nn.Module):
         out, hidden = self.rnn_step(inp, hidden)
         out, att_weight = self.attn(out, enc_outs, enc_att=enc_att, mask=mask)
         if self.has_dropout:
-            out = self.dropout(out)
+            out = F.dropout(out, p=self.dropout, training=self.training)
         return out, hidden, att_weight
