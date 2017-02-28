@@ -25,21 +25,50 @@ from preprocess import text_processor
 import utils as u
 
 
+class TiedEmbedding(nn.Embedding):
+    def __init__(self, num_embeddings, embedding_dim, weight, **kwargs):
+        super(TiedEmbedding, self).__init__(
+            num_embeddings, embedding_dim, **kwargs)
+        assert isinstance(weight, nn.parameter.Parameter)
+        self.weight = weight
+
+
+class TiedLinear(nn.Linear):
+    def __init__(self, in_features, out_features, weight, bias=True):
+        super(TiedLinear, self).__init__(in_features, out_features, bias=bias)
+        assert isinstance(weight, nn.parameter.Parameter)
+        self.weight = weight
+
+
 class LM(nn.Module):
     def __init__(self, vocab, emb_dim, hid_dim, num_layers=1,
-                 cell='LSTM', bias=True, dropout=0.0):
+                 cell='LSTM', bias=True, dropout=0.0, tie_weights=True):
         self.vocab = vocab
         self.emb_dim = emb_dim
         self.hid_dim = hid_dim
+        if tie_weights:
+            assert self.emb_dim == self.hid_dim, \
+                "When tying weights, output projection and " + \
+                "embedding layer should have equal size"
         self.num_layers = num_layers
         self.cell = cell
         self.has_dropout = bool(dropout)
         self.dropout = dropout
         
         super(LM, self).__init__()
-        self.embeddings = nn.Embedding(vocab, emb_dim)
-        self.rnn = getattr(nn, cell)(emb_dim, hid_dim, num_layers=num_layers, bias=bias, dropout=dropout)
-        self.project = nn.Linear(hid_dim, vocab)
+        weight = None
+        if tie_weights:
+            weight = nn.parameter.Parameter(torch.randn(vocab, emb_dim))
+            self.embeddings = TiedEmbedding(vocab, emb_dim, weight)
+        else:
+            self.embeddings = nn.Embedding(vocab, emb_dim)
+        self.rnn = getattr(nn, cell)(
+            emb_dim, hid_dim,
+            num_layers=num_layers, bias=bias, dropout=dropout)
+        if tie_weights:
+            self.project = TiedLinear(hid_dim, vocab, weight)
+        else:
+            self.project = nn.Linear(hid_dim, vocab)
 
     def init_hidden_for(self, inp):
         batch = inp.size(1)
