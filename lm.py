@@ -86,10 +86,10 @@ class LM(nn.Module):
             emb = F.dropout(emb, p=self.dropout, training=self.training)
         outs, hidden = self.rnn(emb, hidden or self.init_hidden_for(emb))
         if self.has_dropout:
-            outs = F.dropout(emb, p=self.dropout, training=self.training)
-        seq_len, batch, hid = outs.size()
+            outs = F.dropout(outs, p=self.dropout, training=self.training)
+        seq_len, batch, hid_dim = outs.size()
         # (seq_len x batch x hid) -> (seq_len * batch x hid)
-        logs = self.project(outs.view(seq_len * batch, hid))
+        logs = self.project(outs.view(seq_len * batch, hid_dim))
         return logs, hidden
 
 
