@@ -27,6 +27,12 @@ import dummy as d
 import utils as u
 
 
+class EarlyStopping(Exception):
+    def __init(self, message, data={}):
+        super(EarlyStopping, self).__init__(message)
+        self.data = data
+
+
 def plot_weights(att_weights, target, pred, e, batch):
     fig = hinton(att_weights.squeeze(1).t().data.cpu().numpy(),
                  ylabels=list(target),
@@ -156,10 +162,9 @@ def train_model(model, train_data, valid_data, optimizer, src_dict, epochs,
             gpu=gpu, target=target, beam=beam)
         print('Validation perplexity: %g' % math.exp(min(val_loss, 100)))
         # maybe update the learning rate
-        lr_data = optimizer.maybe_update_lr(epoch, val_loss)
-        if lr_data is not None:
-            print("Decayed learning rate [%f -> %f]" %
-                  (lr_data['last_lr'], lr_data['new_lr']))
+        last_lr, new_lr = optimizer.maybe_update_lr(epoch, val_loss)
+        if last_lr != new_lr:
+            print("Decayed learning rate [%f -> %f]" % (last_lr, new_lr))
 
 
 if __name__ == '__main__':

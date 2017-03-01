@@ -24,7 +24,7 @@ class Optimizer(object):
 
     def LP(self, p=1):
         """
-        computes the l_p norm over gradients l_p norms
+        Computes the l_p norm over gradients l_p norms
         """
         norms = sum(math.pow(pm.grad.data.norm(p=p), p) for pm in self.params)
         return root(norms, nth=p)
@@ -36,6 +36,10 @@ class Optimizer(object):
         return self.LP(p=1)
 
     def clip_gradients(self, norm):
+        """
+        Clips gradients down whenever the total model gradient norm
+        exceeds a given threshold
+        """
         grad_norm = getattr(self, norm)()
         if grad_norm > self.threshold:
             shrinkage = self.threshold / grad_norm
@@ -43,6 +47,9 @@ class Optimizer(object):
                 param.grad.data.mul_(shrinkage)
 
     def step(self, norm='L2'):
+        """
+        Run an update eventually clipping the gradients
+        """
         self.clip_gradients(norm)
         self.optim.step()
 
@@ -65,4 +72,4 @@ class Optimizer(object):
             self.last_ppl = ppl
             self.optim = getattr(optim, self.method)(self.params, lr=self.lr)
         if self.start_decay:
-            return {'last_lr': last_lr, 'new_lr': self.lr}
+            return last_lr, self.lr
