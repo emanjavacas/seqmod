@@ -3,11 +3,10 @@ import torch
 
 
 class Beam(object):
-    def __init__(self, width, bos, eos, pad, gpu=False):
+    def __init__(self, width, bos, eos, gpu=False):
         self.width = width
         self.bos = bos
         self.eos = eos
-        self.pad = pad
         self.active = True
         self.scores = torch.FloatTensor(width).zero_()
         if gpu:

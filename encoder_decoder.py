@@ -191,7 +191,7 @@ class EncoderDecoder(nn.Module):
                           enc_hidden[1].repeat(1, beam_width, 1))
         else:
             enc_hidden = enc_hidden.repeat(1, beam_width, 1)
-        beam = Beam(beam_width, bos, eos, pad, gpu=gpu)
+        beam = Beam(beam_width, bos, eos, gpu=gpu)
         dec_out, dec_hidden = None, None
         if self.decoder.att_type == 'Bahdanau':
             enc_att = self.decoder.attn.project_enc_outs(enc_outs)
