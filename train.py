@@ -27,12 +27,6 @@ import dummy as d
 import utils as u
 
 
-class EarlyStopping(Exception):
-    def __init(self, message, data={}):
-        super(EarlyStopping, self).__init__(message)
-        self.data = data
-
-
 def plot_weights(att_weights, target, pred, e, batch):
     fig = hinton(att_weights.squeeze(1).t().data.cpu().numpy(),
                  ylabels=list(target),

@@ -94,6 +94,21 @@ class EncoderDecoder(nn.Module):
             nn.Linear(dec_hid_dim, output_size),
             nn.LogSoftmax())
 
+    def is_cuda(self):
+        """
+        Whether the model is on a gpu. We assume no device sharing.
+        """
+        return next(self.parameters()).is_cuda
+
+    def init_encoder(self, model, target_attr='rnn', layers=(0,)):
+        pass
+
+    def init_decoder(self, model, target_attr='rnn', layers=(0,)):
+        pass
+
+    def init_embedding(self, model, target_attr='embeddings'):
+        pass
+
     def init_batch(self, src):
         """
         Constructs a first prev batch for initializing the decoder.

@@ -129,8 +129,8 @@ class LM(nn.Module):
         return [hyp]
 
 # Load data
-def load_tokens(path, processor=text_processor()):
-    tokens = []
+def load_lines(path, processor=text_processor()):
+    lines = []
     with open(path) as f:
         for line in f:
             line = line.strip()
@@ -138,8 +138,8 @@ def load_tokens(path, processor=text_processor()):
                 line = processor(line)
             line = line.split()
             if line:
-                tokens.extend(line)
-    return tokens
+                lines.append(line)
+    return lines
 
 
 def load_from_file(path):
@@ -303,11 +303,12 @@ if __name__ == '__main__':
     parser.add_argument('--start_decay_at', default=5, type=int)
     parser.add_argument('--max_grad_norm', default=5., type=float)
     parser.add_argument('--gpu', action='store_true')
-    parser.add_argument('--save', default='', type=str)
+    parser.add_argument('--save', action='store_true')
+    parser.add_argument('--prefix', default='model', type=str)
     args = parser.parse_args()
 
-    print("Loading datasets...")
     if args.processed:
+        print("Loading preprocess datasets...")
         assert args.dict_path, "Processed data requires DICT_PATH"
         data, d = load_from_file(args.path), load_dict(args.dict_path)
         split = int(data.size(0) * 0.01)
@@ -317,18 +318,20 @@ if __name__ == '__main__':
         test = batchify(data[:test_split], args.batch_size)
         del data
     else:
-        train_tokens = load_tokens(args.path + 'train.txt')
-        valid_tokens = load_tokens(args.path + 'valid.txt')
-        test_tokens = load_tokens(args.path + 'test.txt')
-        d = Dict(max_size=args.max_size, min_freq=args.min_freq, sequential=False)
-        d.fit(train_tokens, valid_tokens, test_tokens)
-        train = batchify(torch.LongTensor(list(d.transform(train_tokens))),
-                         args.batch_size, gpu=args.gpu)
-        valid = batchify(torch.LongTensor(list(d.transform(valid_tokens))),
-                         args.batch_size, gpu=args.gpu)
-        test = batchify(torch.LongTensor(list(d.transform(test_tokens))),
-                        args.batch_size, gpu=args.gpu)
-        del train_tokens, valid_tokens, test_tokens
+        print("Processing datasets...")
+        train_data = load_lines(args.path + 'train.txt')
+        valid_data = load_lines(args.path + 'valid.txt')
+        test_data = load_lines(args.path + 'test.txt')
+        d = Dict(max_size=args.max_size, min_freq=args.min_freq, eos_token=u.EOS,
+                 bos_token=u.EOS)
+        d.fit(train_data, valid_data, test_data)
+        train_data = torch.LongTensor([w for s in d.transform(train_data) for w in s])
+        train = batchify(train_data, args.batch_size, gpu=args.gpu)
+        valid_data = torch.LongTensor([w for s in d.transform(valid_data) for w in s])
+        valid = batchify(valid_data, args.batch_size, gpu=args.gpu)
+        test_data = torch.LongTensor([w for s in d.transform(test_data) for w in s])
+        test = batchify(test_data, args.batch_size, gpu=args.gpu)
+        del train_data, valid_data, test_data
 
     print(' * vocabulary size. %d' % len(d))
     print(' * number of train batches. %d' % len(train))
@@ -353,7 +356,22 @@ if __name__ == '__main__':
         train_model(
             model, train, valid, test, optimizer, args.epochs, args.bptt,
             criterion, gpu=args.gpu, checkpoint=args.checkpoint, hook=args.hook)
+    except u.EarlyStopping:
+        pass
+    except KeyboardInterrupt:
+        pass
     finally:
-        if args.save != '':
-            with open(args.save, 'wb') as f:
+        test_loss = validate_model(model, test, args.bptt, criterion, args.gpu)
+        print("Test perplexity: %g" % math.exp(test_loss))
+        if args.save:
+            import os, sys
+            f = '{prefix}.{cell}.{layers}l.{hid_dim}h.{emb_dim}e.pt'
+            filename = f.format(**vars(args))
+            if os.path.isfile(filename):
+                answer = input("File [%s] exists. Overwrite? (y/n): " % filename)
+                if answer.lower() not in ("y", "yes"):
+                    print("Goodbye!")
+                    sys.exit(0)
+            print("Saving model...")
+            with open(f.format(**vars(args)), 'wb') as f:
                 torch.save(model, f)

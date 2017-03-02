@@ -1,15 +1,40 @@
 
-import torch
-import numpy as np
+from collections import OrderedDict
 from itertools import groupby
+
+import numpy as np
+import torch
 
 
 BOS = '<bos>'
 EOS = '<eos>'
 PAD = '<pad>'
 
+# General utils
+class EarlyStopping(Exception):
+    def __init(self, message, data={}):
+        super(EarlyStopping, self).__init__(message)
+        self.data = data
 
 # Pytorch utils
+def merge_states(state_dict1, state_dict2, map_dict):
+    """
+    Merge 2 state_dicts mapping parameters in state_dict2 to parameters
+    in state_dict1 according to a dict mapping parameter names in
+    state_dict2 to parameter names in state_dict1.
+    """
+    state_dict = OrderedDict()
+    for p in state_dict2:
+        if p in map_dict:
+            target_p = map_dict[p]
+            assert target_p in state_dict1, \
+                "Wrong target param [%s]" % target_p
+            state_dict[target_p] = [p]
+        else:
+            state_dict[target_p] = state_dict1[target_p]
+    return state_dict
+
+
 def tile(t, times):
     """
     Repeat a tensor across an added first dimension a number of times
