@@ -31,7 +31,8 @@ class StackedRNN(nn.Module):
                 inp = h_1_i
                 # only add dropout to hidden layer (not output)
                 if i + 1 != self.num_layers and self.has_dropout:
-                    inp = F.dropout(inp, p=self.dropout, training=self.training)
+                    inp = F.dropout(
+                        inp, p=self.dropout, training=self.training)
             output, hidden = inp, (torch.stack(h_1), torch.stack(c_1))
         else:
             h_0, h_1 = hidden, []

@@ -30,7 +30,8 @@ class Decoder(nn.Module):
 
         super(Decoder, self).__init__()
         # rnn layers
-        self.rnn_step = StackedRNN(dec_num_layers, in_dim, hid_dim, cell=cell, dropout=dropout)
+        self.rnn_step = StackedRNN(
+            dec_num_layers, in_dim, hid_dim, cell=cell, dropout=dropout)
         # dropout
         self.has_dropout = bool(dropout)
         self.dropout = dropout
