@@ -156,9 +156,10 @@ def train_model(model, train_data, valid_data, optimizer, src_dict, epochs,
             gpu=gpu, target=target, beam=beam)
         print('Validation perplexity: %g' % math.exp(min(val_loss, 100)))
         # maybe update the learning rate
-        last_lr, new_lr = optimizer.maybe_update_lr(epoch, val_loss)
-        if last_lr != new_lr:
-            print("Decayed learning rate [%f -> %f]" % (last_lr, new_lr))
+        if optimizer.method == 'SGD':
+            last_lr, new_lr = optimizer.maybe_update_lr(epoch, val_loss)
+            if last_lr != new_lr:
+                print("Decayed learning rate [%f -> %f]" % (last_lr, new_lr))
 
 
 if __name__ == '__main__':
