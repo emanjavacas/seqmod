@@ -52,6 +52,7 @@ class EncoderDecoder(nn.Module):
                  cell='LSTM',
                  att_type='Bahdanau',
                  dropout=0.0,
+                 maxout=0,
                  bidi=True,
                  add_prev=True,
                  project_init=False):
@@ -74,10 +75,10 @@ class EncoderDecoder(nn.Module):
             trg_vocab_size = len(trg_dict)
 
         # embedding layer(s)
-        self.src_embedding = nn.Embedding(
+        self.src_embeddings = nn.Embedding(
             src_vocab_size, emb_dim, padding_idx=self.src_dict[u.PAD])
         if self.bilingual:
-            self.trg_embedding = nn.Embedding(
+            self.trg_embeddings = nn.Embedding(
                 trg_vocab_size, emb_dim, padding_idx=self.trg_dict[u.PAD])
         # encoder
         self.encoder = Encoder(
@@ -87,7 +88,7 @@ class EncoderDecoder(nn.Module):
         self.decoder = Decoder(
             emb_dim, enc_hid_dim, dec_hid_dim,
             (enc_num_layers, dec_num_layers), cell, att_dim,
-            dropout=dropout, add_prev=add_prev,
+            dropout=dropout, maxout=maxout, add_prev=add_prev,
             project_init=project_init, att_type=att_type)
         # output projection
         output_size = trg_vocab_size if self.bilingual else src_vocab_size
@@ -101,14 +102,36 @@ class EncoderDecoder(nn.Module):
         """
         return next(self.parameters()).is_cuda
 
-    def init_encoder(self, model, target_attr='rnn', layers=(0,)):
-        pass
+    def _init_rnn(self, model, layer_map, source_attr, target_attr):
+        merge_map = {}
+        for p in model.state_dict().keys():
+            if not p.startswith(target_attr):
+                continue
+            from_layer = ''.join(filter(str.isdigit, p))
+            if from_layer not in layer_map:
+                continue
+            s = p.replace(target_attr, source_attr) \
+                 .replace(from_layer, layer_map[from_layer])
+            merge_map[p] = s
+        state_dict = u.merge_states(
+            self.state_dict(), model.state_dict(), merge_map)
+        self.load_state_dict(state_dict)
+
+    def init_encoder(self, model, layer_map={'0': '0'}, target_attr='rnn'):
+        self._init_rnn(model, layer_map, 'encoder.rnn', target_attr)
 
     def init_decoder(self, model, target_attr='rnn', layers=(0,)):
+        # this might be more cumbersome since the decoder rnn is
+        # implemented using StackedRNN with layer weights in the form:
+        # 'decoder.rnn_step.LSTMCell_0.weight_ih', etc...
         pass
 
     def init_embedding(self, model, target_attr='embeddings'):
-        pass
+        # todo: support also init for trg_embeddings
+        merge_map = {target_attr: 'src_embeddings'}
+        state_dict = u.merge_states(
+            model.state_dict(), self.state_dict(), merge_map)
+        self.load_state_dict(state_dict)
 
     def init_batch(self, src):
         """
@@ -134,7 +157,7 @@ class EncoderDecoder(nn.Module):
             c_t: torch.Tensor (batch x dec_hid_dim)
         att_weights: (batch x seq_len)
         """
-        emb_inp = self.src_embedding(inp)
+        emb_inp = self.src_embeddings(inp)
         enc_outs, enc_hidden = self.encoder(emb_inp)
         dec_outs, dec_out, dec_hidden = [], None, None
         # cache encoder att projection for bahdanau
@@ -142,7 +165,7 @@ class EncoderDecoder(nn.Module):
             enc_att = self.decoder.attn.project_enc_outs(enc_outs)
         else:
             enc_att = None
-        emb_f = self.trg_embedding if self.bilingual else self.src_embedding
+        emb_f = self.trg_embeddings if self.bilingual else self.src_embeddings
         for prev in trg.chunk(trg.size(0)):
             emb_prev = emb_f(prev).squeeze(0)
             dec_out, dec_hidden, att_weight = self.decoder(
@@ -155,7 +178,7 @@ class EncoderDecoder(nn.Module):
         pad, eos, bos = \
             self.src_dict[u.PAD], self.src_dict[u.EOS], self.src_dict[u.BOS]
         # encode
-        emb = self.src_embedding(src)
+        emb = self.src_embeddings(src)
         enc_outs, enc_hidden = self.encoder(
             emb, compute_mask=False, mask_symbol=pad)
         # decode
@@ -167,7 +190,7 @@ class EncoderDecoder(nn.Module):
         atts, preds = [], []
         prev = Variable(src.data.new([bos]), volatile=True).unsqueeze(0)
         for _ in range(len(src) * max_decode_len):
-            prev_emb = self.src_embedding(prev).squeeze(0)
+            prev_emb = self.src_embeddings(prev).squeeze(0)
             dec_out, dec_hidden, att_weights = self.decoder(
                 prev_emb, enc_outs, enc_hidden, enc_att=enc_att,
                 hidden=dec_hidden, out=dec_out)
@@ -197,7 +220,7 @@ class EncoderDecoder(nn.Module):
             self.src_dict[u.PAD], self.src_dict[u.EOS], self.src_dict[u.BOS]
         gpu = src.is_cuda
         # encode
-        emb = self.src_embedding(src)
+        emb = self.src_embeddings(src)
         enc_outs, enc_hidden = self.encoder(
             emb, compute_mask=False, mask_symbol=pad)
         # decode
@@ -217,7 +240,7 @@ class EncoderDecoder(nn.Module):
             # add seq_len singleton dim (1 x width)
             prev = Variable(
                 beam.get_current_state().unsqueeze(0), volatile=True)
-            prev_emb = self.src_embedding(prev).squeeze(0)
+            prev_emb = self.src_embeddings(prev).squeeze(0)
             dec_out, dec_hidden, att_weights = self.decoder(
                 prev_emb, enc_outs, enc_hidden, enc_att=enc_att,
                 hidden=dec_hidden, out=dec_out)

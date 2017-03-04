@@ -11,7 +11,7 @@ import attention as attn
 
 class Decoder(nn.Module):
     def __init__(self, emb_dim, enc_hid_dim, hid_dim, num_layers, cell,
-                 att_dim, att_type='Bahdanau', dropout=0.0, maxout=0,
+                 att_dim, att_type='Bahdanau', dropout=0.0, maxout=2,
                  add_prev=True, project_init=False):
         """
         Parameters:

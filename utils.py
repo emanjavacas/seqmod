@@ -17,7 +17,7 @@ class EarlyStopping(Exception):
         self.data = data
 
 # Pytorch utils
-def merge_states(state_dict1, state_dict2, map_dict):
+def merge_states(state_dict1, state_dict2, merge_map):
     """
     Merge 2 state_dicts mapping parameters in state_dict2 to parameters
     in state_dict1 according to a dict mapping parameter names in
@@ -25,8 +25,8 @@ def merge_states(state_dict1, state_dict2, map_dict):
     """
     state_dict = OrderedDict()
     for p in state_dict2:
-        if p in map_dict:
-            target_p = map_dict[p]
+        if p in merge_map:
+            target_p = merge_map[p]
             assert target_p in state_dict1, \
                 "Wrong target param [%s]" % target_p
             state_dict[target_p] = [p]
