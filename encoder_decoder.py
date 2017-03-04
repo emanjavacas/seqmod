@@ -30,7 +30,7 @@ class EncoderDecoder(nn.Module):
         Same as src_dict in case of bilingual training.
     cell: string,
         Cell type to use. One of (LSTM, GRU).
-    att_type: string, 
+    att_type: string,
         Attention mechanism to use. One of (Global, Bahdanau).
     dropout: float
     bidi: bool,
@@ -80,6 +80,8 @@ class EncoderDecoder(nn.Module):
         if self.bilingual:
             self.trg_embeddings = nn.Embedding(
                 trg_vocab_size, emb_dim, padding_idx=self.trg_dict[u.PAD])
+        else:
+            self.trg_embeddings = self.src_embeddings
         # encoder
         self.encoder = Encoder(
             emb_dim, enc_hid_dim, enc_num_layers,
@@ -165,9 +167,8 @@ class EncoderDecoder(nn.Module):
             enc_att = self.decoder.attn.project_enc_outs(enc_outs)
         else:
             enc_att = None
-        emb_f = self.trg_embeddings if self.bilingual else self.src_embeddings
         for prev in trg.chunk(trg.size(0)):
-            emb_prev = emb_f(prev).squeeze(0)
+            emb_prev = self.trg_embeddings(prev).squeeze(0)
             dec_out, dec_hidden, att_weight = self.decoder(
                 emb_prev, enc_outs, enc_hidden, out=dec_out,
                 hidden=dec_hidden, enc_att=enc_att)
@@ -190,7 +191,7 @@ class EncoderDecoder(nn.Module):
         atts, preds = [], []
         prev = Variable(src.data.new([bos]), volatile=True).unsqueeze(0)
         for _ in range(len(src) * max_decode_len):
-            prev_emb = self.src_embeddings(prev).squeeze(0)
+            prev_emb = self.trg_embeddings(prev).squeeze(0)
             dec_out, dec_hidden, att_weights = self.decoder(
                 prev_emb, enc_outs, enc_hidden, enc_att=enc_att,
                 hidden=dec_hidden, out=dec_out)
@@ -240,7 +241,7 @@ class EncoderDecoder(nn.Module):
             # add seq_len singleton dim (1 x width)
             prev = Variable(
                 beam.get_current_state().unsqueeze(0), volatile=True)
-            prev_emb = self.src_embeddings(prev).squeeze(0)
+            prev_emb = self.trg_embeddings(prev).squeeze(0)
             dec_out, dec_hidden, att_weights = self.decoder(
                 prev_emb, enc_outs, enc_hidden, enc_att=enc_att,
                 hidden=dec_hidden, out=dec_out)

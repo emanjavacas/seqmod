@@ -25,7 +25,7 @@ from hinton_diagram import hinton
 from encoder_decoder import EncoderDecoder
 from optimizer import Optimizer
 
-from dataset import batchify, Dataset
+from dataset import Dataset
 import dummy as d
 import utils as u
 
@@ -38,8 +38,8 @@ def plot_weights(att_weights, target, pred, e, batch):
 
 
 def translate(model, target, src_dict, gpu, beam):
-    target = torch.LongTensor(list(src_dict.transform([target], bos=False))).t()
-    batch = Variable(target, volatile=True)
+    target = torch.LongTensor(list(src_dict.transform([target], bos=False)))
+    batch = Variable(target.t(), volatile=True)
     batch = batch.cuda() if gpu else batch
     if beam:
         preds, _ = model.translate_beam(
@@ -57,7 +57,7 @@ def run_translation(model, target, src_dict, e, b, plot_att, gpu, beam):
         for idx, hyp in enumerate(preds):
             print("* [%d]: %s" % (idx, ' '.join(i2s[w] for w in hyp)))
         if plot_att:
-            plot_weights(att, target, pred, e, b)
+            plot_weights(att, target, preds[0], e, b)
 
 
 def validate_model(model, criterion, val_data, src_dict, e,
@@ -183,6 +183,7 @@ if __name__ == '__main__':
     parser.add_argument('--hid_dim', default=64, type=int)
     parser.add_argument('--att_dim', default=64, type=int)
     parser.add_argument('--att_type', default='Bahdanau', type=str)
+    parser.add_argument('--maxout', default=0, type=int)
     parser.add_argument('--epochs', default=5, type=int)
     parser.add_argument('--prefix', default='model', type=str)
     parser.add_argument('--vocab', default=list(string.ascii_letters) + [' '])
@@ -211,8 +212,9 @@ if __name__ == '__main__':
         src_dict = dataset.dicts['src']
     else:
         train, val, src_dict = d.load_dummy_data(
-            size, vocab, batch_size, min_len=args.min_len, max_len=args.max_len,
-            sample_fn=getattr(d, args.sample_fn), gpu=args.gpu, dev=args.val_split)
+            size, vocab, batch_size, min_len=args.min_len,
+            max_len=args.max_len, sample_fn=getattr(d, args.sample_fn),
+            gpu=args.gpu, dev=args.val_split)
     s2i = train.dataset.dicts['src'].s2i
 
     print(' * vocabulary size. %d' % len(src_dict))
@@ -224,7 +226,7 @@ if __name__ == '__main__':
     model = EncoderDecoder(
         (args.layers, args.layers), args.emb_dim, (args.hid_dim, args.hid_dim),
         args.att_dim, s2i, att_type=args.att_type, dropout=args.dropout,
-        bidi=args.bidi, cell=args.cell)
+        bidi=args.bidi, cell=args.cell, maxout=args.maxout)
 
     model.apply(u.Initializer.make_initializer(
         rnn={'type': 'orthogonal', 'args': {'gain': 1.0}}))

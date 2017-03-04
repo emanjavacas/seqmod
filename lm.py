@@ -61,7 +61,7 @@ class LM(nn.Module):
         self.cell = cell
         self.has_dropout = bool(dropout)
         self.dropout = dropout
-        
+
         super(LM, self).__init__()
         weight = None
         if tie_weights:
