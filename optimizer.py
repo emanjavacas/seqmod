@@ -71,5 +71,4 @@ class Optimizer(object):
                 self.lr = self.lr * self.lr_decay
             self.last_ppl = ppl
             self.optim = getattr(optim, self.method)(self.params, lr=self.lr)
-        if self.start_decay:
             return last_lr, self.lr
