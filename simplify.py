@@ -69,11 +69,11 @@ if __name__ == '__main__':
     src_dict = Dict(pad_token=u.PAD, eos_token=u.EOS, bos_token=u.BOS,
                     max_size=args.max_size, min_freq=args.min_freq)
     src_dict.fit(src_data, trg_data)
-    train, dev = Dataset.splits(
-        src_data, trg_data, {'src': src_dict, 'trg': src_dict},
+    dataset = Dataset(src_data, trg_data, {'src': src_dict, 'trg': src_dict})
+    train, dev = dataset.splits(
         test=None, batchify=True, batch_size=args.batch_size, gpu=args.gpu,
         sort_key=lambda pair: len(pair[0]))
-    s2i = train.dataset.dicts['src'].s2i
+    s2i = src_dict.s2i
 
     print(' * vocabulary size. %d' % len(src_dict))
     print(' * number of train batches. %d' % len(train))
@@ -91,12 +91,12 @@ if __name__ == '__main__':
 
     model.apply(u.Initializer.make_initializer(
         rnn={'type': 'orthogonal', 'args': {'gain': 1.0}}))
-    # model.apply(u.default_weight_init)
 
     n_params = sum([p.nelement() for p in model.parameters()])
     print('* number of parameters: %d' % n_params)
     print(model)
 
+    target = args.target.split() if args.target else None
     train_model(model, train, dev, optimizer, src_dict, args.epochs,
-                gpu=args.gpu, target=args.target.split(), beam=args.beam,
+                gpu=args.gpu, target=target, beam=args.beam,
                 checkpoint=args.checkpoint)
