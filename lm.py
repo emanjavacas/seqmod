@@ -237,7 +237,7 @@ def train_epoch(model, data, optimizer, criterion, bptt, epoch, checkpoint, gpu,
 
 
 def train_model(model, train, valid, test, optimizer, epochs, bptt,
-                criterion, gpu=False, early_stop=5, checkpoint=50, hook=10):
+                criterion, gpu=False, early_stop=3, checkpoint=50, hook=10):
     if gpu:
         criterion.cuda()
         model.cuda()
@@ -255,8 +255,9 @@ def train_model(model, train, valid, test, optimizer, epochs, bptt,
         if valid_loss >= last_val_ppl:  # update idle checkpoints
             num_idle_hooks += 1
         last_val_ppl = valid_loss
-        if num_idle_hooks >= early_stop:  # test for early stopping
-            raise u.EarlyStopping("Stopping after %d idle checkpoints", data)
+        if num_idle_hooks >= early_stop:  # check for early stopping
+            raise u.EarlyStopping(
+                "Stopping after %d idle checkpoints" % num_idle_hooks, {})
         model.train()
         print("Valid perplexity: %g" % math.exp(min(valid_loss, 100)))
 
@@ -274,6 +275,7 @@ def train_model(model, train, valid, test, optimizer, epochs, bptt,
     # test
     test_loss = validate_model(model, test, bptt, criterion, gpu)
     print("Test perplexity: %g" % math.exp(test_loss))
+    return math.exp(test_loss)
 
 
 if __name__ == '__main__':
@@ -352,6 +354,7 @@ if __name__ == '__main__':
         lr_decay=args.learning_rate_decay, start_decay_at=args.start_decay_at)
     criterion = nn.CrossEntropyLoss()
 
+    start = time.time()
     try:
         train_model(
             model, train, valid, test, optimizer, args.epochs, args.bptt,
@@ -361,17 +364,18 @@ if __name__ == '__main__':
     except KeyboardInterrupt:
         pass
     finally:
-        test_loss = validate_model(model, test, args.bptt, criterion, args.gpu)
-        print("Test perplexity: %g" % math.exp(test_loss))
+        print("Trained for [%f] secs" % (time.time() - start))
         if args.save:
             import os, sys
-            f = '{prefix}.{cell}.{layers}l.{hid_dim}h.{emb_dim}e.pt'
-            filename = f.format(**vars(args))
+            test_loss = validate_model(model, test, args.bptt, criterion, args.gpu)
+            test_ppl = math.exp(test_loss)
+            f = '{prefix}.{cell}.{layers}l.{hid_dim}h.{emb_dim}e.{ppl}.pt'
+            filename = f.format(ppl=int(test_ppl), **vars(args))
             if os.path.isfile(filename):
                 answer = input("File [%s] exists. Overwrite? (y/n): " % filename)
                 if answer.lower() not in ("y", "yes"):
                     print("Goodbye!")
                     sys.exit(0)
             print("Saving model...")
-            with open(f.format(**vars(args)), 'wb') as f:
+            with open(filename, 'wb') as f:
                 torch.save(model, f)
