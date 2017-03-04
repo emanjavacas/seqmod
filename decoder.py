@@ -5,13 +5,13 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 
 import utils as u
-from modules import StackedRNN
+from modules import StackedRNN, MaxOut
 import attention as attn
 
 
 class Decoder(nn.Module):
     def __init__(self, emb_dim, enc_hid_dim, hid_dim, num_layers, cell,
-                 att_dim, att_type='Bahdanau', dropout=0.0,
+                 att_dim, att_type='Bahdanau', dropout=0.0, maxout=0,
                  add_prev=True, project_init=False):
         """
         Parameters:
@@ -54,6 +54,11 @@ class Decoder(nn.Module):
             if self.cell.startswith('LSTM'):
                 self.W_c = nn.Parameter(torch.Tensor(
                     enc_hid_dim * enc_num_layers, hid_dim * dec_num_layers))
+        # maxout
+        self.has_maxout = False
+        if bool(maxout):
+            self.has_maxout = True
+            self.maxout = MaxOut(att_dim + emb_dim, att_dim, maxout)
 
     def init_hidden_for(self, enc_hidden):
         """
@@ -73,10 +78,12 @@ class Decoder(nn.Module):
         # use a projection of last encoder hidden state
         if self.project_init:
             # -> (batch x 1 x num_layers * enc_hid_dim)
-            h_t = h_t.t().contiguous().view(-1, num_layers * hid_dim).unsqueeze(1)
+            h_t = h_t.t().contiguous().view(
+                -1, num_layers * hid_dim).unsqueeze(1)
             dec_h0 = torch.bmm(h_t, u.tile(self.W_h, bs)).view(*size)
             if self.cell.startswith('LSTM'):
-                c_t = c_t.t().contiguous().view(-1, num_layers * hid_dim).unsqueeze(1)
+                c_t = c_t.t().contiguous().view(
+                    -1, num_layers * hid_dim).unsqueeze(1)
                 dec_c0 = torch.bmm(c_t, u.tile(self.W_c, bs)).view(*size)
         else:
             assert num_layers == self.num_layers, \
@@ -140,6 +147,9 @@ class Decoder(nn.Module):
             inp = out
         out, hidden = self.rnn_step(inp, hidden)
         out, att_weight = self.attn(out, enc_outs, enc_att=enc_att, mask=mask)
+        # out (batch x att_dim)
         if self.has_dropout:
             out = F.dropout(out, p=self.dropout, training=self.training)
+        if self.has_maxout:
+            out = self.maxout(torch.cat([out, prev], 1))
         return out, hidden, att_weight

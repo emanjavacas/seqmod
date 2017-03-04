@@ -85,9 +85,10 @@ class EncoderDecoder(nn.Module):
             cell=cell, bidi=bidi, dropout=dropout)
         # decoder
         self.decoder = Decoder(
-            emb_dim, enc_hid_dim, dec_hid_dim, num_layers, cell, att_dim,
-            dropout=dropout, add_prev=add_prev, project_init=project_init,
-            att_type=att_type)
+            emb_dim, enc_hid_dim, dec_hid_dim,
+            (enc_num_layers, dec_num_layers), cell, att_dim,
+            dropout=dropout, add_prev=add_prev,
+            project_init=project_init, att_type=att_type)
         # output projection
         output_size = trg_vocab_size if self.bilingual else src_vocab_size
         self.project = nn.Sequential(
@@ -214,10 +215,11 @@ class EncoderDecoder(nn.Module):
             enc_att = None
         while beam.active and len(beam) < len(src) * max_decode_len:
             # add seq_len singleton dim (1 x width)
-            prev = Variable(beam.get_current_state().unsqueeze(0), volatile=True)
+            prev = Variable(
+                beam.get_current_state().unsqueeze(0), volatile=True)
             prev_emb = self.src_embedding(prev).squeeze(0)
             dec_out, dec_hidden, att_weights = self.decoder(
-                prev_emb, enc_outs, enc_hidden,
+                prev_emb, enc_outs, enc_hidden, enc_att=enc_att,
                 hidden=dec_hidden, out=dec_out)
             # (width x vocab_size)
             logs = self.project(dec_out)
