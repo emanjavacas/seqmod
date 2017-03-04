@@ -109,7 +109,7 @@ class Dict(object):
 
 
 class Dataset(object):
-    def __init__(self, src, trg, dicts):
+    def __init__(self, src, trg, dicts, fitted=False):
         """
         Constructs a dataset out of source and target pairs. Examples will
         be transformed into integers according to their respective Dict.
@@ -124,8 +124,8 @@ class Dataset(object):
                 trg_dict: Dict instance fitted to the target data
             sort_key: function to sort src, trg example pairs
         """
-        self.src = list(dicts['src'].transform(src))
-        self.trg = list(dicts['trg'].transform(trg))
+        self.src = src if fitted else list(dicts['src'].transform(src))
+        self.trg = trg if fitted else list(dicts['trg'].transform(trg))
         assert len(src) == len(trg), \
             "Source and Target dataset must be equal length"
         self.dicts = dicts      # fitted dicts
@@ -151,17 +151,13 @@ class Dataset(object):
             "Batch size larger than data [%d > %d]" % (batch_size, total_len)
         return BatchIterator(self, batch_size, **kwargs)
 
-    @classmethod
-    def splits(cls, src, trg, dicts, dev=0.1, test=0.2, shuffle=False,
+    def splits(self, dev=0.1, test=0.2, shuffle=False,
                batchify=False, batch_size=None, sort_key=None, **kwargs):
         """
-        Classmethod that runs the dataset constructor on splits.
-
-        For convenience, it can return BatchIterator objects instead of Dataset
-        via method chaining.
+        Compute splits on dataset instance. For convenience, it can return
+        BatchIterator objects instead of Dataset via method chaining.
 
         Parameters:
-            src, trg, dicts: input parameters to the Dataset constructor
             dev: float less than 1 or None, dev set proportion
             test: float less than 1 or None, test set proportion
             shuffle: bool, whether to shuffle the datasets prior to splitting
@@ -171,18 +167,23 @@ class Dataset(object):
         """
         train = 1 - sum(split for split in [dev, test] if split)
         assert train > 0, "dev and test proportions must add to less than 1"
-        src, trg = shuffle_pairs(src, trg) if shuffle else (src, trg)
-        splits = cumsum(int(sp * len(src)) for sp in [train, dev, test] if sp)
-        sets = [cls(src[start: stop], trg[start: stop], dicts).sort_(sort_key)
-                for start, stop in zip(splits, splits[1:])]
-        return tuple([s.batches(batch_size, **kwargs) for s in sets]
-                     if batchify else sets)
+        if shuffle:
+            src, trg = shuffle_pairs(self.src, self.trg)
+        else:
+            src, trg = self.src, self.trg
+        splits = cumsum(int(len(src) * i) for i in [train, dev, test] if i)
+        datasets = [Dataset(src[i:j], trg[i:j], self.dicts, fitted=True) \
+                    .sort_(sort_key) for i, j in zip(splits, splits[1:])]
+        if batchify:
+            return tuple([s.batches(batch_size, **kwargs) for s in datasets])
+        else:
+            return datasets
 
     @classmethod
     def from_disk(cls, path):
         data = torch.load(path)
         src, trg, dicts = data['src'], data['trg'], data['dicts']
-        return cls(src, trg, dicts)
+        return cls(src, trg, dicts, fitted=True)
 
     def to_disk(self, path):
         data = {'src': self.src, 'trg': self.trg, 'dicts': self.dicts}

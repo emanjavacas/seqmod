@@ -9,20 +9,23 @@ import random
 random.seed(seed)
 
 import torch
-from torch import nn
-from torch.autograd import Variable
-
 try:
     torch.cuda.manual_seed(seed)
 except:
     print('no NVIDIA driver found')
 torch.manual_seed(seed)
 
+import numpy as np
+np.random.seed(seed)
+
+from torch import nn
+from torch.autograd import Variable
+
 from hinton_diagram import hinton
 from encoder_decoder import EncoderDecoder
 from optimizer import Optimizer
 
-from dataset import batchify
+from dataset import batchify, Dataset
 import dummy as d
 import utils as u
 
@@ -165,6 +168,7 @@ def train_model(model, train_data, valid_data, optimizer, src_dict, epochs,
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
+    parser.add_argument('--path', default='', type=str)
     parser.add_argument('--train_len', default=10000, type=int)
     parser.add_argument('--target', default='redrum', type=str)
     parser.add_argument('--val_split', default=0.1, type=float)
@@ -198,9 +202,17 @@ if __name__ == '__main__':
     size = args.train_len
     batch_size = args.batch_size
 
-    train, val, src_dict = d.load_dummy_data(
-        size, vocab, batch_size, min_len=args.min_len, max_len=args.max_len,
-        sample_fn=getattr(d, args.sample_fn), gpu=args.gpu, dev=args.val_split)
+    if args.path != '':
+        with open(args.path, 'rb+') as f:
+            dataset = Dataset.from_disk(f)
+        train, val = dataset.splits(
+            sort_key=lambda pair: len(pair[0]), dev=args.val_split, test=None,
+            batchify=True, batch_size=args.batch_size, gpu=args.gpu)
+        src_dict = dataset.dicts['src']
+    else:
+        train, val, src_dict = d.load_dummy_data(
+            size, vocab, batch_size, min_len=args.min_len, max_len=args.max_len,
+            sample_fn=getattr(d, args.sample_fn), gpu=args.gpu, dev=args.val_split)
     s2i = train.dataset.dicts['src'].s2i
 
     print(' * vocabulary size. %d' % len(src_dict))
