@@ -27,11 +27,12 @@ import utils as u
 
 class LM(nn.Module):
     def __init__(self, vocab, emb_dim, hid_dim, num_layers=1,
-                 cell='LSTM', bias=True, dropout=0.0, tie_weights=False):
+                 cell='LSTM', bias=True, dropout=0.0, tie_weights=False,
+                 project_on_tied_weights=False):
         self.vocab = vocab
         self.emb_dim = emb_dim
         self.hid_dim = hid_dim
-        if tie_weights:
+        if tie_weights and not project_on_tied_weights:
             assert self.emb_dim == self.hid_dim, \
                 "When tying weights, output projection and " + \
                 "embedding layer should have equal size"
@@ -44,16 +45,22 @@ class LM(nn.Module):
         weight = None
         if tie_weights:
             weight = nn.parameter.Parameter(torch.randn(vocab, emb_dim))
-            self.embeddings = TiedEmbedding(vocab, emb_dim, weight)
+            self.embeddings = TiedEmbedding(vocab, self.emb_dim, weight)
         else:
-            self.embeddings = nn.Embedding(vocab, emb_dim)
+            self.embeddings = nn.Embedding(vocab, self.emb_dim)
         self.rnn = getattr(nn, cell)(
-            emb_dim, hid_dim,
+            self.emb_dim, self.hid_dim,
             num_layers=num_layers, bias=bias, dropout=dropout)
         if tie_weights:
-            self.project = TiedLinear(hid_dim, vocab, weight)
+            if self.emb_dim == self.hid_dim:
+                self.project = TiedLinear(self.hid_dim, vocab, weight)
+            else:
+                assert project_on_tied_weights
+                self.project = nn.Sequential(
+                    nn.Linear(self.hid_dim, self.emb_dim),
+                    TiedLinear(self.hid_dim, vocab, weight))
         else:
-            self.project = nn.Linear(hid_dim, vocab)
+            self.project = nn.Linear(self.hid_dim, vocab)
 
     def init_hidden_for(self, inp):
         batch = inp.size(1)
@@ -281,6 +288,7 @@ if __name__ == '__main__':
     parser.add_argument('--hid_dim', default=200, type=int)
     parser.add_argument('--dropout', default=0.3, type=float)
     parser.add_argument('--tie_weights', action='store_true')
+    parser.add_argument('--project_on_tied_weights', action='store_true')
     parser.add_argument('--batch_size', default=20, type=int)
     parser.add_argument('--bptt', default=20, type=int)
     parser.add_argument('--epochs', default=10, type=int)
@@ -332,7 +340,8 @@ if __name__ == '__main__':
     print('Building model...')
     model = LM(len(d), args.emb_dim, args.hid_dim,
                num_layers=args.layers, cell=args.cell,
-               dropout=args.dropout, tie_weights=args.tie_weights)
+               dropout=args.dropout, tie_weights=args.tie_weights,
+               project_on_tied_weights=args.project_on_tied_weights)
 
     model.apply(u.Initializer.make_initializer())
 
