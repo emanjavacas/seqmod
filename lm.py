@@ -306,7 +306,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     if args.processed:
-        print("Loading preprocess datasets...")
+        print("Loading preprocessed datasets...")
         assert args.dict_path, "Processed data requires DICT_PATH"
         data, d = load_from_file(args.path), load_dict(args.dict_path)
         sp = int(data.size(0) * 0.01)
