@@ -10,11 +10,13 @@ BOS = '<bos>'
 EOS = '<eos>'
 PAD = '<pad>'
 
+
 # General utils
 class EarlyStopping(Exception):
     def __init(self, message, data={}):
         super(EarlyStopping, self).__init__(message)
         self.data = data
+
 
 # Pytorch utils
 def merge_states(state_dict1, state_dict2, merge_map):
@@ -206,3 +208,36 @@ class Initializer(object):
                 for param in m.parameters():
                     cls.uniform(param, -0.05, 0.05)
         return init
+
+
+# Hooks
+def has_trainable_parameters(module):
+    """
+    Determines whether a given module has any trainable parameters at all
+    as per parameter.requires_grad
+    """
+    num_trainable_params = sum(p.requires_grad for p in module.parameters())
+    return num_trainable_params > 0
+
+
+def log_grad(module, grad_input, grad_output):
+    """
+    Logs input and output gradients for a given module.
+    To be used by module.register_backward_hook or module.register_forward_hook
+    """
+    if not has_trainable_parameters(module):
+        return
+
+    def grad_norm_str(var):
+        if isinstance(var, tuple) and len(var) > 1:
+            return ", ".join("%6.4f" % g.data.norm() for g in var)
+        else:
+            if isinstance(var, tuple):
+                return "%6.4f" % var[0].data.norm()
+            return "%6.4f" % var.data.norm()
+
+    log = "{module}: grad input [{grad_input}], grad output [{grad_output}]"
+    print(log.format(
+        module=module.__class__.__name__,
+        grad_input=grad_norm_str(grad_input),
+        grad_output=grad_norm_str(grad_output)))

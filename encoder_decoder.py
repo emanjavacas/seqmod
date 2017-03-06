@@ -142,6 +142,15 @@ class EncoderDecoder(nn.Module):
         batch, bos = src.size(1), self.src_dict[u.BOS]
         return src.data.new(1, batch).fill_(bos)
 
+    def freeze_submodule(self, module):
+        for p in getattr(self, module).parameters():
+            p.requires_grad = False
+
+    def parameters(self):
+        for p in super(EncoderDecoder, self).parameters():
+            if p.requires_grad is not False:
+                yield p
+
     def forward(self, inp, trg):
         """
         Parameters:
