@@ -96,7 +96,7 @@ def batch_loss(model, outs, targets, criterion, do_val=False, split_batch=52):
     return loss.data[0], grad_output
 
 
-def train_epoch(model, epoch, train_data, criterion, optimizer, checkpoint):
+def train_epoch(model, train_data, criterion, optimizer, checkpoint, epoch):
     start = time.time()
     epoch_loss, report_loss, epoch_words, report_words = 0, 0, 0, 0
     pad, eos = model.src_dict[u.PAD], model.src_dict[u.EOS]
@@ -151,7 +151,7 @@ def train_model(model, train_data, valid_data, optimizer, src_dict, epochs,
         model.train()
         # train for one epoch on the training set
         train_loss = train_epoch(
-            model, epoch, train_data, criterion, optimizer, checkpoint)
+            model, train_data, criterion, optimizer, checkpoint, epoch)
         print('Train perplexity: %g' % math.exp(min(train_loss, 100)))
         # evaluate on the validation set
         val_loss = validate_model(
@@ -188,9 +188,9 @@ if __name__ == '__main__':
     parser.add_argument('--prefix', default='model', type=str)
     parser.add_argument('--vocab', default=list(string.ascii_letters) + [' '])
     parser.add_argument('--checkpoint', default=500, type=int)
-    parser.add_argument('--optim', default='SGD', type=str)
+    parser.add_argument('--optim', default='Adam', type=str)
     parser.add_argument('--plot', action='store_true')
-    parser.add_argument('--learning_rate', default=1., type=float)
+    parser.add_argument('--learning_rate', default=0.01, type=float)
     parser.add_argument('--dropout', default=0.0, type=float)
     parser.add_argument('--learning_rate_decay', default=0.5, type=float)
     parser.add_argument('--start_decay_at', default=8, type=int)
@@ -227,6 +227,10 @@ if __name__ == '__main__':
         (args.layers, args.layers), args.emb_dim, (args.hid_dim, args.hid_dim),
         args.att_dim, s2i, att_type=args.att_type, dropout=args.dropout,
         bidi=args.bidi, cell=args.cell, maxout=args.maxout)
+
+    # model.freeze_submodule('encoder')
+    model.encoder.register_backward_hook(u.log_grad)
+    model.decoder.register_backward_hook(u.log_grad)
 
     model.apply(u.Initializer.make_initializer(
         rnn={'type': 'orthogonal', 'args': {'gain': 1.0}}))

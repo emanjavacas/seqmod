@@ -201,7 +201,7 @@ def validate_model(model, data, bptt, criterion, gpu):
     return loss / len(data)
 
 
-def train_epoch(model, data, optimizer, criterion, bptt, epoch, checkpoint, gpu,
+def train_epoch(model, data, optim, criterion, bptt, epoch, checkpoint, gpu,
                 hook=0, on_hook=None):
     """
     hook: compute `on_hook` every `hook` checkpoints
@@ -216,7 +216,7 @@ def train_epoch(model, data, optimizer, criterion, bptt, epoch, checkpoint, gpu,
         output, hidden = model(source, hidden)
         loss = criterion(output, targets)
         hidden = repackage_hidden(hidden)
-        loss.backward(), optimizer.step()
+        loss.backward(), optim.step()
         # since loss is averaged across observations for each minibatch
         epoch_loss += len(source) * loss.data[0]
         batch_loss += loss.data[0]
@@ -236,7 +236,7 @@ def train_epoch(model, data, optimizer, criterion, bptt, epoch, checkpoint, gpu,
     return epoch_loss / len(data)
 
 
-def train_model(model, train, valid, test, optimizer, epochs, bptt,
+def train_model(model, train, valid, test, optim, epochs, bptt,
                 criterion, gpu=False, early_stop=3, checkpoint=50, hook=10):
     if gpu:
         criterion.cuda()
@@ -244,12 +244,13 @@ def train_model(model, train, valid, test, optimizer, epochs, bptt,
 
     # hook function
     last_val_ppl, num_idle_hooks = float('inf'), 0
+
     def on_hook(checkpoint):
         nonlocal last_val_ppl, num_idle_hooks
         model.eval()
         valid_loss = validate_model(model, valid, bptt, criterion, gpu)
-        if optimizer.method == 'SGD':
-            last_lr, new_lr = optimizer.maybe_update_lr(checkpoint, valid_loss)
+        if optim.method == 'SGD':
+            last_lr, new_lr = optim.maybe_update_lr(checkpoint, valid_loss)
             if last_lr != new_lr:
                 print("Decaying lr [%f -> %f]" % (last_lr, new_lr))
         if valid_loss >= last_val_ppl:  # update idle checkpoints
@@ -265,7 +266,7 @@ def train_model(model, train, valid, test, optimizer, epochs, bptt,
         # train
         model.train()
         train_loss = train_epoch(
-            model, train, optimizer, criterion, bptt, epoch, checkpoint, gpu,
+            model, train, optim, criterion, bptt, epoch, checkpoint, gpu,
             hook=hook, on_hook=on_hook)
         print("Train perplexity: %g" % math.exp(min(train_loss, 100)))
         # val
@@ -313,8 +314,8 @@ if __name__ == '__main__':
         print("Loading preprocess datasets...")
         assert args.dict_path, "Processed data requires DICT_PATH"
         data, d = load_from_file(args.path), load_dict(args.dict_path)
-        split = int(data.size(0) * 0.01)
-        test_split, val_split = data.size(0) - split, data.size(0) - (2 * split)
+        sp = int(data.size(0) * 0.01)
+        test_split, val_split = data.size(0) - sp, data.size(0) - (2 * sp)
         train = batchify(data[:val_split], args.batch_size)
         valid = batchify(data[val_split:test_split], args.batch_size)
         test = batchify(data[:test_split], args.batch_size)
@@ -324,14 +325,17 @@ if __name__ == '__main__':
         train_data = load_lines(args.path + 'train.txt')
         valid_data = load_lines(args.path + 'valid.txt')
         test_data = load_lines(args.path + 'test.txt')
-        d = Dict(max_size=args.max_size, min_freq=args.min_freq, eos_token=u.EOS,
-                 bos_token=u.EOS)
+        d = Dict(max_size=args.max_size, min_freq=args.min_freq,
+                 eos_token=u.EOS, bos_token=u.EOS)
         d.fit(train_data, valid_data, test_data)
-        train_data = torch.LongTensor([w for s in d.transform(train_data) for w in s])
+        train_data = torch.LongTensor(
+            [w for s in d.transform(train_data) for w in s])
         train = batchify(train_data, args.batch_size, gpu=args.gpu)
-        valid_data = torch.LongTensor([w for s in d.transform(valid_data) for w in s])
+        valid_data = torch.LongTensor(
+            [w for s in d.transform(valid_data) for w in s])
         valid = batchify(valid_data, args.batch_size, gpu=args.gpu)
-        test_data = torch.LongTensor([w for s in d.transform(test_data) for w in s])
+        test_data = torch.LongTensor(
+            [w for s in d.transform(test_data) for w in s])
         test = batchify(test_data, args.batch_size, gpu=args.gpu)
         del train_data, valid_data, test_data
 
@@ -349,7 +353,7 @@ if __name__ == '__main__':
     print('* number of parameters: %d' % n_params)
     print(model)
 
-    optimizer = Optimizer(
+    optim = Optimizer(
         model.parameters(), args.optim, args.learning_rate, args.max_grad_norm,
         lr_decay=args.learning_rate_decay, start_decay_at=args.start_decay_at)
     criterion = nn.CrossEntropyLoss()
@@ -357,8 +361,9 @@ if __name__ == '__main__':
     start = time.time()
     try:
         train_model(
-            model, train, valid, test, optimizer, args.epochs, args.bptt,
-            criterion, gpu=args.gpu, checkpoint=args.checkpoint, hook=args.hook)
+            model, train, valid, test, optim, args.epochs, args.bptt,
+            criterion, gpu=args.gpu, checkpoint=args.checkpoint,
+            hook=args.hook)
     except u.EarlyStopping:
         pass
     except KeyboardInterrupt:
@@ -366,13 +371,16 @@ if __name__ == '__main__':
     finally:
         print("Trained for [%f] secs" % (time.time() - start))
         if args.save:
-            import os, sys
-            test_loss = validate_model(model, test, args.bptt, criterion, args.gpu)
+            import os
+            import sys
+            test_loss = validate_model(
+                model, test, args.bptt, criterion, args.gpu)
             test_ppl = math.exp(test_loss)
             f = '{prefix}.{cell}.{layers}l.{hid_dim}h.{emb_dim}e.{ppl}.pt'
             filename = f.format(ppl=int(test_ppl), **vars(args))
             if os.path.isfile(filename):
-                answer = input("File [%s] exists. Overwrite? (y/n): " % filename)
+                answer = input(
+                    "File [%s] exists. Overwrite? (y/n): " % filename)
                 if answer.lower() not in ("y", "yes"):
                     print("Goodbye!")
                     sys.exit(0)

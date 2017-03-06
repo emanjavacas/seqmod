@@ -155,7 +155,8 @@ class Initializer(object):
 
     @staticmethod
     def uniform(param, min_scale, max_scale):
-        assert max_scale >= min_scale, "Wrong scale [%d < %d]" % (max_scale, min_scale)
+        assert max_scale >= min_scale, \
+            "Wrong scale [%d < %d]" % (max_scale, min_scale)
         param.data.uniform_(min_scale, max_scale)
 
     @staticmethod
@@ -171,25 +172,30 @@ class Initializer(object):
     @classmethod
     def make_initializer(
             cls,
-            linear={'type': 'uniform', 'args': {'min_scale': -0.05, 'max_scale': 0.05}},
+            linear={'type': 'uniform',
+                    'args': {'min_scale': -0.05, 'max_scale': 0.05}},
             rnn={'type': 'glorot_uniform', 'args': {'gain': 1.}},
             rnn_bias={'type': 'constant', 'args': {'value': 0.}},
-            emb={'type': 'uniform', 'args': {'min_scale': -0.05, 'max_scale': 0.05}},
-            default={'type': 'uniform', 'args': {'min_scale': -0.05, 'max_scale': 0.05}}
-    ):
+            emb={'type': 'uniform',
+                 'args': {'min_scale': -0.05, 'max_scale': 0.05}},
+            default={'type': 'uniform',
+                     'args': {'min_scale': -0.05, 'max_scale': 0.05}}):
         """
-        Creates an initializer function customizable on a layer per layer basis.
+        Creates an initializer function customizable on a layer basis.
         """
-        rnns = (torch.nn.LSTM, torch.nn.GRU, torch.nn.LSTMCell, torch.nn.GRUCell)
+        rnns = (
+            torch.nn.LSTM, torch.nn.GRU, torch.nn.LSTMCell, torch.nn.GRUCell)
+
         def init(m):
             if isinstance(m, (rnns)):  # RNNs
-                for param_type, params in groupby(m.parameters(), rnn_param_type):
-                    if param_type == 'weight':
-                        for param in params:
-                            getattr(cls, rnn['type'])(param, **rnn['args'])
+                for p_type, ps in groupby(m.parameters(), rnn_param_type):
+                    if p_type == 'weight':
+                        for p in ps:
+                            getattr(cls, rnn['type'])(p, **rnn['args'])
                     else:       # bias
-                        for param in params:
-                            getattr(cls, rnn_bias['type'])(param, **rnn_bias['args'])
+                        for p in ps:
+                            getattr(cls, rnn_bias['type'])(
+                                p, **rnn_bias['args'])
             elif isinstance(m, torch.nn.Linear):  # LINEAR
                 for param in m.parameters():
                     getattr(cls, linear['type'])(param, **linear['args'])
