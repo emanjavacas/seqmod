@@ -18,33 +18,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 
-from modules import StackedRNN
+from modules import StackedRNN, TiedEmbedding, TiedLinear
 from optimizer import Optimizer
 from dataset import Dict
 from preprocess import text_processor
 import utils as u
-
-
-def make_criterion(vocab_size, mask_ids=()):
-    weight = torch.ones(vocab_size)
-    for mask in mask_ids:
-        weight[mask] = 0
-    return nn.CrossEntropyLoss(weight=weight)
-
-
-class TiedEmbedding(nn.Embedding):
-    def __init__(self, num_embeddings, embedding_dim, weight, **kwargs):
-        super(TiedEmbedding, self).__init__(
-            num_embeddings, embedding_dim, **kwargs)
-        assert isinstance(weight, nn.parameter.Parameter)
-        self.weight = weight
-
-
-class TiedLinear(nn.Linear):
-    def __init__(self, in_features, out_features, weight, bias=True):
-        super(TiedLinear, self).__init__(in_features, out_features, bias=bias)
-        assert isinstance(weight, nn.parameter.Parameter)
-        self.weight = weight
 
 
 class LM(nn.Module):
@@ -104,7 +82,8 @@ class LM(nn.Module):
         beam = Beam(width, bos, eos, gpu=gpu)
         hidden = self.init_hidden_for(beam.get_current_state())
         while beam.active and len(beam) < max_seq_len:
-            prev = Variable(beam.get_current_state().unsqueeze(0), volatile=True)
+            prev = Variable(
+                beam.get_current_state().unsqueeze(0), volatile=True)
             logs, hidden = self(prev, hidden=hidden)
             beam.advance(logs.data)
             if self.cell.startswith('LSTM'):
@@ -127,6 +106,7 @@ class LM(nn.Module):
             if prev.data.eq(eos).nonzero().nelement() > 0:
                 break
         return [hyp]
+
 
 # Load data
 def load_lines(path, processor=text_processor()):
@@ -183,6 +163,13 @@ def get_batch(data, i, bptt, evaluation=False, gpu=False):
 
 
 # Training code
+def make_criterion(vocab_size, mask_ids=()):
+    weight = torch.ones(vocab_size)
+    for mask in mask_ids:
+        weight[mask] = 0
+    return nn.CrossEntropyLoss(weight=weight)
+
+
 def repackage_hidden(h):
     if type(h) == Variable:
         return Variable(h.data)
