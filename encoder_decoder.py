@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 from torch.autograd import Variable
 
+from modules import TiedEmbedding, TiedLinear
 from encoder import Encoder
 from decoder import Decoder
 from beam_search import Beam
@@ -55,6 +56,7 @@ class EncoderDecoder(nn.Module):
                  maxout=0,
                  bidi=True,
                  add_prev=True,
+                 tie_weights=False,
                  project_init=False):
         super(EncoderDecoder, self).__init__()
         if isinstance(hid_dim, tuple):
@@ -75,28 +77,54 @@ class EncoderDecoder(nn.Module):
             trg_vocab_size = len(trg_dict)
 
         # embedding layer(s)
-        self.src_embeddings = nn.Embedding(
-            src_vocab_size, emb_dim, padding_idx=self.src_dict[u.PAD])
+        embeddings_weights = None
+        if tie_weights and not self.bilingual:
+            embeddings_weights = nn.parameter.Parameter(
+                torch.randn(src_vocab_size, emb_dim))
+            self.src_embeddings = TiedEmbedding(
+                src_vocab_size, emb_dim, embeddings_weights,
+                padding_idx=self.src_dict[u.PAD])
+        else:
+            self.src_embeddings = nn.Embedding(
+                src_vocab_size, emb_dim, padding_idx=self.src_dict[u.PAD])
         if self.bilingual:
-            self.trg_embeddings = nn.Embedding(
-                trg_vocab_size, emb_dim, padding_idx=self.trg_dict[u.PAD])
+            if tie_weights:
+                embeddings_weights = nn.parameter.Parameter(
+                    torch.randn(trg_vocab_size, emb_dim))
+                self.trg_embeddings == TiedEmbedding(
+                    trg_vocab_size, emb_dim, embeddings_weights,
+                    padding_idx=self.trg_dict[u.PAD])
+            else:
+                self.trg_embeddings = nn.Embedding(
+                    trg_vocab_size, emb_dim, padding_idx=self.trg_dict[u.PAD])
         else:
             self.trg_embeddings = self.src_embeddings
+
         # encoder
         self.encoder = Encoder(
             emb_dim, enc_hid_dim, enc_num_layers,
             cell=cell, bidi=bidi, dropout=dropout)
+
         # decoder
         self.decoder = Decoder(
             emb_dim, enc_hid_dim, dec_hid_dim,
             (enc_num_layers, dec_num_layers), cell, att_dim,
             dropout=dropout, maxout=maxout, add_prev=add_prev,
             project_init=project_init, att_type=att_type)
+
         # output projection
         output_size = trg_vocab_size if self.bilingual else src_vocab_size
-        self.project = nn.Sequential(
-            nn.Linear(dec_hid_dim, output_size),
-            nn.LogSoftmax())
+        if tie_weights:
+            assert emb_dim == dec_hid_dim, \
+                "When tying weights, output projection and " + \
+                "embedding layer should have equal size"
+            self.project = nn.Sequential(
+                TiedLinear(dec_hid_dim, output_size, embeddings_weights),
+                nn.LogSoftmax())
+        else:
+            self.project = nn.Sequential(
+                nn.Linear(dec_hid_dim, output_size),
+                nn.LogSoftmax())
 
     def is_cuda(self):
         """

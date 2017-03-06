@@ -184,6 +184,7 @@ if __name__ == '__main__':
     parser.add_argument('--att_dim', default=64, type=int)
     parser.add_argument('--att_type', default='Bahdanau', type=str)
     parser.add_argument('--maxout', default=0, type=int)
+    parser.add_argument('--tie_weights', action='store_true')
     parser.add_argument('--epochs', default=5, type=int)
     parser.add_argument('--prefix', default='model', type=str)
     parser.add_argument('--vocab', default=list(string.ascii_letters) + [' '])
@@ -226,11 +227,12 @@ if __name__ == '__main__':
     model = EncoderDecoder(
         (args.layers, args.layers), args.emb_dim, (args.hid_dim, args.hid_dim),
         args.att_dim, s2i, att_type=args.att_type, dropout=args.dropout,
-        bidi=args.bidi, cell=args.cell, maxout=args.maxout)
+        bidi=args.bidi, cell=args.cell, maxout=args.maxout,
+        tie_weights=args.tie_weights)
 
     # model.freeze_submodule('encoder')
-    model.encoder.register_backward_hook(u.log_grad)
-    model.decoder.register_backward_hook(u.log_grad)
+    # model.encoder.register_backward_hook(u.log_grad)
+    # model.decoder.register_backward_hook(u.log_grad)
 
     model.apply(u.Initializer.make_initializer(
         rnn={'type': 'orthogonal', 'args': {'gain': 1.0}}))
