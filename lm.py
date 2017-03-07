@@ -132,7 +132,8 @@ def load_lines(path, processor=text_processor()):
 def load_from_file(path):
     if path.endswith('npy'):
         import numpy as np
-        data = torch.LongTensor(np.load(path))
+        array = np.load(path).astype(np.int64)
+        data = torch.LongTensor(array)
     elif path.endswith('.pt'):
         data = torch.load(path)
     else:
