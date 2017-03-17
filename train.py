@@ -134,6 +134,8 @@ def train_epoch(model, train_data, criterion, optimizer, checkpoint, epoch):
 def make_criterion(vocab_size, pad):
     weight = torch.ones(vocab_size)
     weight[pad] = 0
+    # don't average batches since num words is variable
+    # per batch (depending on padding)
     criterion = nn.NLLLoss(weight, size_average=False)
     return criterion
 
