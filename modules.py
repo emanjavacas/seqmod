@@ -96,18 +96,3 @@ class MaxOut(nn.Module):
         out = self.projection(inp).view(batch, self.out_dim, self.k)
         out, _ = out.max(2)
         return out.squeeze(2)
-
-
-class TiedEmbedding(nn.Embedding):
-    def __init__(self, num_embeddings, embedding_dim, weight, **kwargs):
-        super(TiedEmbedding, self).__init__(
-            num_embeddings, embedding_dim, **kwargs)
-        assert isinstance(weight, nn.parameter.Parameter)
-        self.weight = weight
-
-
-class TiedLinear(nn.Linear):
-    def __init__(self, in_features, out_features, weight, bias=True):
-        super(TiedLinear, self).__init__(in_features, out_features, bias=bias)
-        assert isinstance(weight, nn.parameter.Parameter)
-        self.weight = weight
