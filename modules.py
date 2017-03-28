@@ -29,6 +29,7 @@ class StackedRNN(nn.Module):
         hidden: tuple (h_c, c_0), output of previous step or init hidden at 0,
             h_c: (num_layers x batch x hid_dim)
             n_c: (num_layers x batch x hid_dim)
+
         Returns: output, (h_n, c_n)
         --------
         output: torch.Tensor (batch x hid_dim)

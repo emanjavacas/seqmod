@@ -1,6 +1,6 @@
 
 from random import choice, randrange
-from dataset import Dataset, Dict
+from dataset import PairedDataset, Dict
 import utils as u
 
 
@@ -67,23 +67,6 @@ def generate_set(size, vocab, min_len, max_len, sample_fn):
         yield sample_fn(generate_str(min_len, max_len, vocab))
 
 
-def load_dummy_data(size, vocab, batch_size, min_len=5, max_len=15,
-                    sample_fn=reverse, gpu=False, split=True, **kwargs):
-    src, trg = zip(*generate_set(size, vocab, min_len, max_len, sample_fn))
-    src, trg = list(map(list, src)), list(map(list, trg))
-    src_dict = Dict(pad_token=u.PAD, eos_token=u.EOS, bos_token=u.BOS)
-    src_dict.fit(src, trg)
-    dicts = {'src': src_dict, 'trg': src_dict}
-    dataset = Dataset(src, trg, dicts)
-    if split:
-        train, dev = dataset.splits(
-            sort_key=lambda pair: len(pair[0]), test=None, batchify=True,
-            batch_size=batch_size, gpu=gpu, **kwargs)
-        return train, dev, src_dict
-    else:
-        return dataset
-
-
 if __name__ == '__main__':
     import argparse
     import string
@@ -97,9 +80,15 @@ if __name__ == '__main__':
     args = parser.parse_args()
     sample_fn = reverse
 
-    dataset = load_dummy_data(
-        args.train_len, args.vocab, None,
-        min_len=args.min_len, max_len=args.max_len, split=False)
-
-    with open(args.path, 'wb') as f:
-        dataset.to_disk(f)
+    src, trg = zip(*generate_set(
+        args.train_len,
+        args.vocab,
+        args.min_len,
+        args.max_len,
+        sample_fn))
+    src, trg = list(map(list, src)), list(map(list, trg))
+    src_dict = Dict(pad_token=u.PAD, eos_token=u.EOS, bos_token=u.BOS)
+    src_dict.fit(src, trg)
+    dataset = PairedDataset(
+        src, trg, {'src': src_dict, 'trg': src_dict}
+    ).to_disk(args.path)

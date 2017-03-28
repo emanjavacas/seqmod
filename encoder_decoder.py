@@ -116,13 +116,23 @@ class EncoderDecoder(nn.Module):
                 nn.Linear(dec_hid_dim, output_size),
                 nn.LogSoftmax())
 
+    # General utility functions
     def is_cuda(self):
         """
         Whether the model is on a gpu. We assume no device sharing.
         """
         return next(self.parameters()).is_cuda
 
-    def _init_rnn(self, model, layer_map, source_attr, target_attr):
+    def parameters(self):
+        for p in super(EncoderDecoder, self).parameters():
+            if p.requires_grad is True:
+                yield p
+
+    def n_params(self):
+        return sum([p.nelement() for p in self.parameters()])
+
+    # Initializers
+    def init_rnn(self, model, layer_map, source_attr, target_attr):
         merge_map = {}
         for p in model.state_dict().keys():
             if not p.startswith(target_attr):
@@ -138,7 +148,7 @@ class EncoderDecoder(nn.Module):
         self.load_state_dict(state_dict)
 
     def init_encoder(self, model, layer_map={'0': '0'}, target_attr='rnn'):
-        self._init_rnn(model, layer_map, 'encoder.rnn', target_attr)
+        self.init_rnn(model, layer_map, 'encoder.rnn', target_attr)
 
     def init_decoder(self, model, target_attr='rnn', layers=(0,)):
         # this might be more cumbersome since the decoder rnn is
@@ -205,6 +215,7 @@ class EncoderDecoder(nn.Module):
     def translate(self, src, max_decode_len=2):
         pad, eos, bos = \
             self.src_dict[u.PAD], self.src_dict[u.EOS], self.src_dict[u.BOS]
+        gpu = src.is_cuda
         # encode
         emb = self.src_embeddings(src)
         enc_outs, enc_hidden = self.encoder(
@@ -215,25 +226,28 @@ class EncoderDecoder(nn.Module):
             enc_att = self.decoder.attn.project_enc_outs(enc_outs)
         else:
             enc_att = None
-        atts, preds = [], []
+        scores, hyp, atts = [], [], []
         prev = Variable(src.data.new([bos]), volatile=True).unsqueeze(0)
+        if gpu: prev = prev.cuda()
         for _ in range(len(src) * max_decode_len):
             prev_emb = self.trg_embeddings(prev).squeeze(0)
             dec_out, dec_hidden, att_weights = self.decoder(
                 prev_emb, enc_outs, enc_hidden, enc_att=enc_att,
                 hidden=dec_hidden, out=dec_out)
             # (batch x vocab_size)
-            logs = self.project(dec_out)
+            outs = self.project(dec_out)
             # (1 x batch) argmax over log-probs (take idx across batch dim)
-            prev = logs.max(1)[1].t()
+            best_score, prev = outs.max(1)
+            prev = prev.t()
             # concat of step vectors along seq_len dim
-            atts.append(att_weights.squeeze().data.cpu().numpy().tolist())
-            preds.append(prev.squeeze().data.cpu().numpy().tolist()[0])
+            scores.append(best_score.squeeze().data[0])
+            atts.append(att_weights.squeeze().data.numpy().tolist())
+            hyp.append(prev.squeeze().data[0])
             # termination criterion: decoding <eos>
             if prev.data.eq(eos).nonzero().nelement() > 0:
                 break
-        # add singleton hyp dimension for compatibility with other decoding
-        return [preds], atts
+        # add singleton dimension for compatibility with other decoding
+        return [scores], [hyp], [atts]
 
     def translate_beam(self, src, max_decode_len=2, beam_width=5):
         """
@@ -273,8 +287,8 @@ class EncoderDecoder(nn.Module):
                 prev_emb, enc_outs, enc_hidden, enc_att=enc_att,
                 hidden=dec_hidden, out=dec_out)
             # (width x vocab_size)
-            logs = self.project(dec_out)
-            beam.advance(logs.data)
+            outs = self.project(dec_out)
+            beam.advance(outs.data)
             # TODO: this doesn't seem to affect the output :-s
             dec_out = u.swap(dec_out, 0, beam.get_source_beam())
             if self.cell.startswith('LSTM'):
@@ -284,4 +298,4 @@ class EncoderDecoder(nn.Module):
                 dec_hidden = u.swap(dec_hidden, 1, beam.get_source_beam())
         # decode beams
         scores, hyps = beam.decode(n=beam_width)
-        return hyps, scores
+        return scores, hyps, None  # TODO: return attention

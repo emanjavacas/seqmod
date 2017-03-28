@@ -19,14 +19,14 @@ class GlobalAttention(nn.Module):
         dec_out: (batch x hid_dim)
         enc_outs: (seq_len x batch x hid_dim (== att_dim))
         """
-        # (batch x att_dim x 1)
+        # (batch x att x 1)
         dec_att = self.linear_in(dec_out).unsqueeze(2)
-        # (batch x seq_len x att_dim) * (batch x att_dim x 1) -> (batch x seq_len)
+        # (batch x seq_len x att_dim) * (batch x att x 1) -> (batch x seq_len)
         weights = torch.bmm(enc_outs.t(), dec_att).squeeze(2)
         weights = self.softmax(weights)
         if mask is not None:
             weights.data.masked_fill_(mask, -math.inf)
-        # (batch x 1 x seq_len) * (batch x seq_len x att_dim) -> (batch x att_dim)
+        # (batch x 1 x seq_len) * (batch x seq_len x att) -> (batch x att)
         weighted = weights.unsqueeze(1).bmm(enc_outs.t()).squeeze(1)
         # (batch x att_dim * 2)
         combined = torch.cat([weighted, dec_out], 1)
