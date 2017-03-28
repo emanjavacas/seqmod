@@ -30,20 +30,20 @@ class Beam(object):
         """
         return len(self.source_beams)
 
-    def _new_beam(self, logs):
+    def _new_beam(self, outs):
         """
-        Computes a new beam based on the current log-probs and the hist.
+        Computes a new beam based on the current model output and the hist.
         """
-        width, vocab = logs.size()
+        width, vocab = outs.size()
         if len(self) > 0:
-            # logs: (width x vocab) + scores: (width)
-            beam_logs = logs + self.scores.unsqueeze(1).expand_as(logs)
+            # outs: (width x vocab) + scores: (width)
+            beam_outs = outs + self.scores.unsqueeze(1).expand_as(outs)
         else:
             # all beams have same start values, just pick the 1st for perf
-            beam_logs = logs[0]
+            beam_outs = outs[0]
         # compute best outputs over a flatten vector of size (width x vocab)
         # i.e. regardless their source beam
-        scores, flatten_ids = beam_logs.view(-1).topk(self.width, dim=0)
+        scores, flatten_ids = beam_outs.view(-1).topk(self.width, dim=0)
         # compute source beam and best candidates for the next beam
         source_beams = flatten_ids / vocab
         beam_first_ids = source_beams * vocab
@@ -70,11 +70,11 @@ class Beam(object):
         """
         return beam[0] == self.eos
 
-    def advance(self, logs):
+    def advance(self, outs):
         """
         Runs a decoder step accumulating the path and the ids.
         """
-        scores, source_beams, beam = self._new_beam(logs)
+        scores, source_beams, beam = self._new_beam(outs)
         if self.finished(beam):
             self.active = False
         self.scores = scores
