@@ -11,11 +11,24 @@ class Logger(object):
 
 
 class StdLogger(Logger):
-    def __init__(self, outputfile=None, level='INFO',
-                 msgfmt="%(message)s", datafmt='%m-%d %H:%M'):
+    def __init__(self, outputfile=None,
+                 level='INFO',
+                 msgfmt="[%(asctime)s] %(message)s",
+                 datefmt='%m-%d %H:%M:%S'):
+        """
+        Standard python logger.
+
+        Parameters:
+        ===========
+        outputfile: str, file to print log to. If None, only a console 
+            logger will be used.
+        level: str, one of 'INFO', 'DEBUG', ... See logging.
+        msgfmt: str, message formattter
+        datefmt: str, date formatter
+        """
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(getattr(logging, level))
-        formatter = logging.Formatter(msgfmt, datafmt)
+        formatter = logging.Formatter(msgfmt, datefmt)
         sh = logging.StreamHandler()
         sh.setFormatter(formatter)
         self.logger.addHandler(sh)
@@ -50,16 +63,18 @@ class StdLogger(Logger):
                           payload["loss"], tokens_sec))
 
     def info(self, payload):
-        self.logger.info("message: %s" % payload["message"])
+        if isinstance(payload, dict):
+            payload = payload['message']
+        self.logger.info(payload)
 
 
 class VisdomLogger(Logger):
-    def __init__(self):
+    def __init__(self, log_checkpoints=True):
         self.viz = Visdom()
         self.win = None
-        self.last = {'train': {'X': 1, 'Y': 1},
-                     'valid': {'X': 1, 'Y': 1}}  # start at root
+        self.last = {'train': {'X': 1, 'Y': 1}, 'valid': {'X': 1, 'Y': 1}}
         self.legend = ['train', 'valid']
+        self.log_checkpoints = log_checkpoints
 
     def _winline(self, X, Y, **kwargs):
         if self.win is not None:
@@ -73,12 +88,16 @@ class VisdomLogger(Logger):
                                      **kwargs)
 
     def epoch_end(self, payload):
+        if self.log_checkpoints:
+            # only use epoch end if checkpoint isn't being used
+            return
         valid_X, valid_Y = self.last['valid']['X'], self.last['valid']['Y']
         train_X, train_Y = self.last['train']['X'], self.last['train']['Y']
         loss, epoch = payload['loss'], payload['epoch']
+        print(epoch)
         X = np.column_stack(([train_X, epoch], [valid_X, valid_X]))
         Y = np.column_stack(([train_Y, loss],  [valid_Y, valid_Y]))
-        self.last['train']['X'] = epoch
+        self.last['train']['X'] = epoch + 1  # epoch end
         self.last['train']['Y'] = loss
         self._winline(X, Y)
 
@@ -86,13 +105,16 @@ class VisdomLogger(Logger):
         valid_X, valid_Y = self.last['valid']['X'], self.last['valid']['Y']
         train_X, train_Y = self.last['train']['X'], self.last['train']['Y']
         loss, epoch = payload['loss'], payload['epoch']
+        print(epoch)
         X = np.column_stack(([train_X, train_X], [valid_X, epoch]))
         Y = np.column_stack(([train_Y, train_Y], [valid_Y, loss]))
-        self.last['valid']['X'] = epoch
+        self.last['valid']['X'] = epoch + 1  # epoch end
         self.last['valid']['Y'] = loss
         self._winline(X, Y)
 
     def checkpoint(self, payload):
+        if not self.log_checkpoints:
+            return
         valid_X, valid_Y = self.last['valid']['X'], self.last['valid']['Y']
         train_X, train_Y = self.last['train']['X'], self.last['train']['Y']
         epoch = payload['epoch'] + payload["batch"] / payload["total_batches"]

@@ -232,10 +232,3 @@ def make_criterion(vocab_size, mask_ids=()):
     for mask in mask_ids:
         weight[mask] = 0
     return torch.nn.CrossEntropyLoss(weight=weight)
-
-
-def print_hypotheses(scores, hyps, d):
-    for idx, (score, hyp) in enumerate(zip(scores, hyps)):
-        print('*** Hypothesis %d' % (idx + 1))
-        print('* ' + ''.join([d.vocab[c] for c in hyp]))
-        print('* Sentence score: %g' % (score / len(hyp)))

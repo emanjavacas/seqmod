@@ -56,18 +56,20 @@ def load_from_file(path):
 def make_lm_check_hook(d, gpu, early_stopping):
 
     def hook(trainer, batch_num, checkpoint):
-        print("Checking training...")
+        trainer.log("info", "\nChecking training...")
         loss = trainer.validate_model()
-        print("Valid loss: %g" % loss)
-        print("Registering early stopping loss...")
+        trainer.log("info", "Valid loss: %g" % loss)
+        trainer.log("info", "Registering early stopping loss...")
         if early_stopping is not None:
             early_stopping.add_checkpoint(loss)
-        print("Generating text...")
-        print("***")
+        trainer.log("info", "Generating text...")
         scores, hyps = trainer.model.generate_beam(
             d.get_bos(), d.get_eos(), gpu=gpu, max_seq_len=100)
-        u.print_hypotheses(scores, hyps, d)
-        print("***")
+        hyps = ['\n'.join(['\n\n*** Hypothesis %d' % (idx + 1),
+                           '* ' + ' '.join([d.vocab[c] for c in hyp]),
+                           '* Sentence score: %g' % (score / len(hyp))])
+                for idx, (score, hyp) in enumerate(zip(scores, hyps))]
+        trainer.log("info", '\n'.join(hyps) + "***\n")
 
     return hook
 
@@ -151,9 +153,11 @@ if __name__ == '__main__':
         lr_decay=args.learning_rate_decay, start_decay_at=args.start_decay_at)
     criterion = nn.CrossEntropyLoss()
 
+    # create trainer
     datasets = {"train": train, "test": test, "valid": valid}
     trainer = LMTrainer(model, datasets, criterion, optim)
 
+    # hooks
     early_stopping = None
     if args.early_stopping > 0:
         early_stopping = EarlyStopping(args.early_stopping)
@@ -162,7 +166,8 @@ if __name__ == '__main__':
     num_checks = len(train) // (args.checkpoint * args.checkpoints_per_epoch)
     trainer.add_hook(model_check_hook, num_checkpoints=num_checks)
 
-    trainer.add_loggers(StdLogger(), VisdomLogger())
+    # loggers
+    trainer.add_loggers(StdLogger(), VisdomLogger(log_checkpoints=False))
 
     trainer.train(args.epochs, args.checkpoint, gpu=args.gpu)
 

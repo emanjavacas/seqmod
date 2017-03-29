@@ -202,10 +202,10 @@ class Trainer(object):
                     epoch, epoch_loss, epoch_examples, epoch_time)
             except EarlyStoppingException as e:
                 message, _ = e.args
-                self.log("info", {"message": message})
+                self.log("info", message)
                 break
             except KeyboardInterrupt:
-                self.log("info", {"message": "Training interrupted"})
+                self.log("info", "Training interrupted")
                 break
         # test
         if self.test_name in self.datasets:
