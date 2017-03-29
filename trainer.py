@@ -16,47 +16,6 @@ def repackage_hidden(h):
         return tuple(repackage_hidden(v) for v in h)
 
 
-# Loggers
-class Logger(object):
-    @staticmethod
-    def epoch_begin(payload):
-        print("Starting epoch [%d]" % payload['epoch'])
-
-    @staticmethod
-    def epoch_end(payload):
-        tokens_sec = payload["examples"] / payload["duration"]
-        print("Epoch [%d], train loss: %g, processed: %d tokens/sec" %
-              (payload['epoch'], payload["loss"], tokens_sec))
-
-    @staticmethod
-    def validation_end(payload):
-        print("Epoch [%d], valid loss: %g" %
-              (payload['epoch'], payload['loss']))
-
-    @staticmethod
-    def test_begin(payload):
-        print("Testing...")
-
-    @staticmethod
-    def test_end(payload):
-        print("Test loss: %g" % payload["loss"])
-
-    @staticmethod
-    def checkpoint(payload):
-        tokens_sec = payload["examples"] / payload["duration"]
-        print("Batch [%d/%d], loss: %g, processed %d tokens/sec" %
-              (payload["batch"], payload["total_batches"],
-               payload["loss"], tokens_sec))
-
-    @staticmethod
-    def info(payload):
-        print("INFO: %s" % payload["message"])
-
-    def log(self, event, payload, verbose=True):
-        if verbose and hasattr(self, event):
-            getattr(self, event)(payload)
-
-
 # Base Trainer class
 class Trainer(object):
     def __init__(self, model, datasets, criterion, optimizer,
@@ -207,6 +166,7 @@ class Trainer(object):
             # checkpoint
             if checkpoint and batch_num > 0 and batch_num % checkpoint == 0:
                 self.log('checkpoint', {
+                    'epoch': epoch,
                     'batch': batch_num,
                     'total_batches': len(batch_order),
                     'examples': check_examples,

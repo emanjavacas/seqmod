@@ -17,10 +17,11 @@ torch.manual_seed(seed)
 import torch.nn as nn           # nopep8
 
 from lm import LM               # nopep8
-from trainer import LMTrainer, Logger   # nopep8
-from optimizer import Optimizer         # nopep8
-from dataset import Dict, BlockDataset  # nopep8
-from preprocess import text_processor   # nopep8
+from trainer import LMTrainer   # nopep8
+from loggers import StdLogger, VisdomLogger  # nopep8
+from optimizer import Optimizer           # nopep8
+from dataset import Dict, BlockDataset    # nopep8
+from preprocess import text_processor     # nopep8
 from early_stopping import EarlyStopping  # nopep8
 import utils as u                         # nopep8
 
@@ -161,7 +162,7 @@ if __name__ == '__main__':
     num_checks = len(train) // (args.checkpoint * args.checkpoints_per_epoch)
     trainer.add_hook(model_check_hook, num_checkpoints=num_checks)
 
-    trainer.add_loggers(Logger())
+    trainer.add_loggers(StdLogger(), VisdomLogger())
 
     trainer.train(args.epochs, args.checkpoint, gpu=args.gpu)
 

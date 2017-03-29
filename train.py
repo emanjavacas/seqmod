@@ -24,10 +24,10 @@ from hinton_diagram import hinton  # nopep8
 from encoder_decoder import EncoderDecoder  # nopep8
 from optimizer import Optimizer             # nopep8
 
-from trainer import EncoderDecoderTrainer, Logger  # nopep8
-from dataset import PairedDataset, Dict            # nopep8
-import dummy as d                                  # nopep8
-import utils as u                                  # nopep8
+from trainer import EncoderDecoderTrainer, StdLogger  # nopep8
+from dataset import PairedDataset, Dict               # nopep8
+import dummy as d                                     # nopep8
+import utils as u                                     # nopep8
 
 
 def plot_weights(att_weights, target, hyp, epoch, batch):
@@ -151,6 +151,6 @@ if __name__ == '__main__':
 
     trainer = EncoderDecoderTrainer(
         model, {'train': train, 'valid': valid}, criterion, optimizer)
-    trainer.add_loggers(Logger())
+    trainer.add_loggers(StdLogger())
 
     trainer.train(args.epochs, args.checkpoint, shuffle=True, gpu=args.gpu)
