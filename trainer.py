@@ -4,6 +4,8 @@ import math
 import torch
 import numpy as np
 from torch.autograd import Variable
+
+import utils as u
 from dataset import CyclicBlockDataset
 from early_stopping import EarlyStopping, EarlyStoppingException
 
@@ -20,7 +22,7 @@ def repackage_hidden(h):
 class Trainer(object):
     def __init__(self, model, datasets, criterion, optimizer,
                  test_name='test', valid_name='valid',
-                 size_average=True, verbose=True):
+                 size_average=True, verbose=True, loggers=None, hooks=None):
         """
         Parameter:
         ==========
@@ -38,7 +40,16 @@ class Trainer(object):
         self.size_average = size_average
         # containers
         self.hooks = []
-        self.loggers = []
+        if hooks is not None:
+            assert isinstance(hooks, list), "hooks must be list"
+            for hook in hooks:
+                if isinstance(hook, dict):
+                    num_checkpoints = hook.get('num_checkpoints', 1)
+                    hook = hook['hook']
+                else:
+                    num_checkpoints = 1
+                self.add_hook(hook, num_checkpoints=num_checkpoints)
+        self.loggers = loggers or []
         self.batch_state = {}  # instance var to share state across batches
         # properties
         self.test_name = test_name
@@ -54,13 +65,16 @@ class Trainer(object):
             logger.log(event, payload, verbose=self.verbose)
 
     # hooks
-    def add_hook(self, hook, num_checkpoints=1):
+    def add_hook(self, hook, num_checkpoints=1, clear=False):
+        if clear:
+            self.hooks = []
         self.hooks.append({'hook': hook, 'num_checkpoints': num_checkpoints})
 
     def run_hooks(self, batch_num, checkpoint):
         for hook in self.hooks:
             num_checkpoints = batch_num // checkpoint
-            if num_checkpoints % hook['num_checkpoints'] == 0:
+            if hook['num_checkpoints'] > 0 and \
+               num_checkpoints % hook['num_checkpoints'] == 0:
                 hook['hook'](self, batch_num, num_checkpoints)
 
     # callbacks
@@ -184,8 +198,9 @@ class Trainer(object):
         - checkpoint: int, log a checkpoint and hooks every x batches
         - gpu: bool
         """
+        start = time.time()
         for epoch in range(1, epochs + 1):
-            start = time.time()
+            start_epoch = time.time()
             self.on_epoch_begin(epoch)
             try:  # TODO: EarlyStopping might come from train or valid
                 # train
@@ -193,7 +208,7 @@ class Trainer(object):
                 epoch_loss, epoch_examples = self.train_epoch(
                     epoch, checkpoint, shuffle, **kwargs)
                 epoch_loss = self.format_loss(epoch_loss / epoch_examples)
-                epoch_time = time.time() - start
+                epoch_time = time.time() - start_epoch
                 # valid
                 if self.valid_name in self.datasets:
                     valid_loss = self.validate_model(**kwargs)
@@ -207,6 +222,7 @@ class Trainer(object):
             except KeyboardInterrupt:
                 self.log("info", "Training interrupted")
                 break
+        self.log("info", "Trained for [%.3f sec]" % (time.time() - start))
         # test
         if self.test_name in self.datasets:
             self.on_test_begin(epoch)
@@ -271,7 +287,7 @@ class EncoderDecoderTrainer(Trainer):
 
     def run_batch(self, batch_data, dataset='train', split_batch=52, **kwargs):
         evaluation = dataset != 'train'
-        pad, eos = self.model.src_dict[u.PAD], self.model.src_dict[u.EOS]
+        pad, eos = self.model.src_dict.get_pad(), self.model.src_dict.get_eos()
         loss = 0
         source, targets = batch_data
         # remove <eos> from decoder targets substituting them with <pad>
@@ -296,4 +312,4 @@ class EncoderDecoderTrainer(Trainer):
 
     def num_batch_examples(self, batch_data):
         _, targets = batch_data
-        return targets.data.ne(self.model.src_dict[u.PAD]).sum()
+        return targets.data.ne(self.model.src_dict.get_pad()).sum()

@@ -15,10 +15,12 @@ torch.manual_seed(seed)
 
 import utils as u
 from preprocess import text_processor
-from dataset import Dataset, Dict
+from dataset import PairedDataset, Dict
 from encoder_decoder import EncoderDecoder
 from optimizer import Optimizer
-from train import train_model
+from trainer import EncoderDecoderTrainer
+from loggers import StdLogger, VisdomLogger
+from train import make_encdec_hook, make_criterion
 
 
 def load_data(path, exts, text_processor=text_processor()):
@@ -39,7 +41,7 @@ if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('--path', required=True)
-    parser.add_argument('--dev_split', default=0.1, type=float)
+    parser.add_argument('--dev', default=0.1, type=float)
     parser.add_argument('--max_size', default=10000, type=int)
     parser.add_argument('--min_freq', default=5, type=int)
     parser.add_argument('--bidi', action='store_false')
@@ -54,6 +56,7 @@ if __name__ == '__main__':
     parser.add_argument('--batch_size', default=64, type=int)
     parser.add_argument('--epochs', default=20, type=int)
     parser.add_argument('--checkpoint', default=50, type=int)
+    parser.add_argument('--hooks_per_epoch', default=2, type=int)
     parser.add_argument('--optim', default='RMSprop', type=str)
     parser.add_argument('--plot', action='store_true')
     parser.add_argument('--learning_rate', default=0.01, type=float)
@@ -65,15 +68,14 @@ if __name__ == '__main__':
     parser.add_argument('--target', default=None)
     args = parser.parse_args()
 
-    src_data, trg_data = load_data(args.path, ('.main', '.simple'))
+    src, trg = load_data(args.path, ('.main', '.simple'))
     src_dict = Dict(pad_token=u.PAD, eos_token=u.EOS, bos_token=u.BOS,
                     max_size=args.max_size, min_freq=args.min_freq)
-    src_dict.fit(src_data, trg_data)
-    dataset = Dataset(src_data, trg_data, {'src': src_dict, 'trg': src_dict})
-    train, dev = dataset.splits(
-        test=None, batchify=True, batch_size=args.batch_size, gpu=args.gpu,
-        sort_key=lambda pair: len(pair[0]))
-    s2i = src_dict.s2i
+    src_dict.fit(src, trg)
+    train, valid = PairedDataset(
+        src, trg, {'src': src_dict, 'trg': src_dict},
+        batch_size=args.batch_size, gpu=args.gpu
+    ).splits(dev=args.dev, test=None, sort_key=lambda pair: len(pair[0]))
 
     print(' * vocabulary size. %d' % len(src_dict))
     print(' * number of train batches. %d' % len(train))
@@ -83,20 +85,28 @@ if __name__ == '__main__':
 
     model = EncoderDecoder(
         (args.layers, args.layers), args.emb_dim, (args.hid_dim, args.hid_dim),
-        args.att_dim, s2i, att_type=args.att_type, dropout=args.dropout,
+        args.att_dim, src_dict, att_type=args.att_type, dropout=args.dropout,
         bidi=args.bidi, cell=args.cell, project_init=args.project_init)
     optimizer = Optimizer(
         model.parameters(), args.optim, args.learning_rate, args.max_grad_norm,
         lr_decay=args.learning_rate_decay, start_decay_at=args.start_decay_at)
+    criterion = make_criterion(len(src_dict), src_dict.get_pad())
 
-    model.apply(u.Initializer.make_initializer(
+    model.apply(u.make_initializer(
         rnn={'type': 'orthogonal', 'args': {'gain': 1.0}}))
 
-    n_params = sum([p.nelement() for p in model.parameters()])
-    print('* number of parameters: %d' % n_params)
+    print('* number of parameters: %d' % model.n_params())
     print(model)
 
+    if args.gpu:
+        model.cuda(), criterion.cuda()
+
+    trainer = EncoderDecoderTrainer(
+        model, {'train': train, 'valid': valid}, criterion, optimizer)
+    trainer.add_loggers(StdLogger(), VisdomLogger(env='encdec'))
     target = args.target.split() if args.target else None
-    train_model(model, train, dev, optimizer, src_dict, args.epochs,
-                gpu=args.gpu, target=target, beam=args.beam,
-                checkpoint=args.checkpoint)
+    hook = make_encdec_hook(args.target, args.gpu)
+    num_checkpoints = len(train) // (args.checkpoint * args.hooks_per_epoch)
+    trainer.add_hook(hook, num_checkpoints=num_checkpoints)
+
+    trainer.train(args.epochs, args.checkpoint, shuffle=True, gpu=args.gpu)

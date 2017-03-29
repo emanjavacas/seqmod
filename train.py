@@ -20,25 +20,26 @@ np.random.seed(seed)
 from torch import nn            # nopep8
 from torch.autograd import Variable  # nopep8
 
-from hinton_diagram import hinton  # nopep8
+# from hinton_diagram import hinton  # nopep8
 from encoder_decoder import EncoderDecoder  # nopep8
 from optimizer import Optimizer             # nopep8
 
-from trainer import EncoderDecoderTrainer, StdLogger  # nopep8
-from dataset import PairedDataset, Dict               # nopep8
-import dummy as d                                     # nopep8
-import utils as u                                     # nopep8
+from trainer import EncoderDecoderTrainer   # nopep8
+from loggers import StdLogger, VisdomLogger  # nopep8
+from dataset import PairedDataset, Dict      # nopep8
+import dummy as d                            # nopep8
+import utils as u                            # nopep8
 
 
-def plot_weights(att_weights, target, hyp, epoch, batch):
-    fig = hinton(att_weights.squeeze(1).t().data.cpu().numpy(),
-                 ylabels=list(target),
-                 xlabels=list(hyp.replace(u.EOS, '')))
-    fig.savefig('./img/{epoch}_{batch}'.format(epoch=epoch, batch=batch))
+# def plot_weights(att_weights, target, hyp, epoch, batch):
+#     fig = hinton(att_weights.squeeze(1).t().data.cpu().numpy(),
+#                  ylabels=list(target),
+#                  xlabels=list(hyp.replace(u.EOS, '')))
+#     fig.savefig('./img/{epoch}_{batch}'.format(epoch=epoch, batch=batch))
 
 
-def translate(model, target, src_dict, gpu, beam=False):
-    target = torch.LongTensor(list(src_dict.transform([target], bos=False)))
+def translate(model, target, gpu, beam=False):
+    target = torch.LongTensor(list(model.src_dict.transform([target], bos=False)))
     batch = Variable(target.t(), volatile=True)
     batch = batch.cuda() if gpu else batch
     if beam:
@@ -46,10 +47,18 @@ def translate(model, target, src_dict, gpu, beam=False):
             batch, beam_width=5, max_decode_len=4)
     else:
         scores, hyps, _ = model.translate(batch, max_decode_len=4)
-    i2s = {i: c for c, i in src_dict.items()}
-    print("* " + ' '.join(target) if isinstance(target, list) else target)
-    for idx, hyp in enumerate(hyps):
-        print("* [%d]: %s" % (idx, ' '.join(i2s[w] for w in hyp)))
+    return [u.format_hyp(sum(score), hyp, hyp_num + 1, model.trg_dict)
+            for hyp_num, (score, hyp) in enumerate(zip(scores, hyps))]
+
+
+def make_encdec_hook(target, gpu, beam=False):
+
+    def hook(trainer, batch_num, checkpoint):
+        trainer.log("info", "Translating %s" % target)
+        hyps = translate(trainer.model, target, gpu, beam=beam)
+        trainer.log("info", '\n***' + ''.join(hyps) + '\n***')
+
+    return hook
 
 
 def make_criterion(vocab_size, pad):
@@ -81,10 +90,12 @@ if __name__ == '__main__':
     parser.add_argument('--att_type', default='Bahdanau', type=str)
     parser.add_argument('--maxout', default=0, type=int)
     parser.add_argument('--tie_weights', action='store_true')
+    parser.add_argument('--project_on_tied_weights', action='store_true')
     parser.add_argument('--epochs', default=5, type=int)
     parser.add_argument('--prefix', default='model', type=str)
     parser.add_argument('--vocab', default=list(string.ascii_letters) + [' '])
-    parser.add_argument('--checkpoint', default=500, type=int)
+    parser.add_argument('--checkpoint', default=100, type=int)
+    parser.add_argument('--hooks_per_epoch', default=2, type=int)
     parser.add_argument('--optim', default='Adam', type=str)
     parser.add_argument('--plot', action='store_true')
     parser.add_argument('--learning_rate', default=0.01, type=float)
@@ -118,8 +129,7 @@ if __name__ == '__main__':
         train, valid = PairedDataset(
             src, trg, {'src': src_dict, 'trg': src_dict},
             batch_size=args.batch_size, gpu=args.gpu
-        ).splits(dev=args.dev, test=None)
-    s2i = train.d['src'].s2i
+        ).splits(dev=args.dev, test=None, sort_key=lambda pair: len(pair[0]))
 
     print(' * vocabulary size. %d' % len(src_dict))
     print(' * number of train batches. %d' % len(train))
@@ -129,9 +139,10 @@ if __name__ == '__main__':
 
     model = EncoderDecoder(
         (args.layers, args.layers), args.emb_dim, (args.hid_dim, args.hid_dim),
-        args.att_dim, s2i, att_type=args.att_type, dropout=args.dropout,
+        args.att_dim, src_dict, att_type=args.att_type, dropout=args.dropout,
         bidi=args.bidi, cell=args.cell, maxout=args.maxout,
-        tie_weights=args.tie_weights)
+        tie_weights=args.tie_weights,
+        project_on_tied_weights=args.project_on_tied_weights)
 
     # model.freeze_submodule('encoder')
     # model.encoder.register_backward_hook(u.log_grad)
@@ -149,8 +160,15 @@ if __name__ == '__main__':
     print('* number of parameters: %d' % model.n_params())
     print(model)
 
+    if args.gpu:
+        model.cuda(), criterion.cuda()
+
     trainer = EncoderDecoderTrainer(
         model, {'train': train, 'valid': valid}, criterion, optimizer)
-    trainer.add_loggers(StdLogger())
+    trainer.add_loggers(StdLogger(), VisdomLogger(env='encdec'))
+
+    hook = make_encdec_hook(args.target, args.gpu)
+    num_checkpoints = len(train) // (args.checkpoint * args.hooks_per_epoch)
+    trainer.add_hook(hook, num_checkpoints=num_checkpoints)
 
     trainer.train(args.epochs, args.checkpoint, shuffle=True, gpu=args.gpu)

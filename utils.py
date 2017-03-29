@@ -232,3 +232,9 @@ def make_criterion(vocab_size, mask_ids=()):
     for mask in mask_ids:
         weight[mask] = 0
     return torch.nn.CrossEntropyLoss(weight=weight)
+
+
+def format_hyp(score, hyp, hyp_num, d):
+    return '\n* [{hyp}] [Score:{score:.3f}]: {sent}'.format(
+        hyp=hyp_num, score=score/len(hyp),
+        sent=' '.join([d.vocab[c] for c in hyp]))

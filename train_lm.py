@@ -56,7 +56,7 @@ def load_from_file(path):
 def make_lm_check_hook(d, gpu, early_stopping):
 
     def hook(trainer, batch_num, checkpoint):
-        trainer.log("info", "\nChecking training...")
+        trainer.log("info", "Checking training...")
         loss = trainer.validate_model()
         trainer.log("info", "Valid loss: %g" % loss)
         trainer.log("info", "Registering early stopping loss...")
@@ -65,11 +65,9 @@ def make_lm_check_hook(d, gpu, early_stopping):
         trainer.log("info", "Generating text...")
         scores, hyps = trainer.model.generate_beam(
             d.get_bos(), d.get_eos(), gpu=gpu, max_seq_len=100)
-        hyps = ['\n'.join(['\n\n*** Hypothesis %d' % (idx + 1),
-                           '* ' + ' '.join([d.vocab[c] for c in hyp]),
-                           '* Sentence score: %g' % (score / len(hyp))])
-                for idx, (score, hyp) in enumerate(zip(scores, hyps))]
-        trainer.log("info", '\n'.join(hyps) + "***\n")
+        hyps = [u.format_hyp(score, hyp, hyp_num + 1, d)
+                for hyp_num, (score, hyp) in enumerate(zip(scores, hyps))]
+        trainer.log("info", '\n***' + ''.join(hyps) + "\n***")
 
     return hook
 
@@ -95,7 +93,7 @@ if __name__ == '__main__':
     parser.add_argument('--bptt', default=20, type=int)
     parser.add_argument('--epochs', default=10, type=int)
     parser.add_argument('--checkpoint', default=200, type=int)
-    parser.add_argument('--checkpoints_per_epoch', default=5, type=int)
+    parser.add_argument('--hooks_per_epoch', default=5, type=int)
     parser.add_argument('--optim', default='RMSprop', type=str)
     parser.add_argument('--learning_rate', default=0.01, type=float)
     parser.add_argument('--learning_rate_decay', default=0.5, type=float)
@@ -163,8 +161,8 @@ if __name__ == '__main__':
         early_stopping = EarlyStopping(args.early_stopping)
     model_check_hook = make_lm_check_hook(
         d, args.gpu, early_stopping=early_stopping)
-    num_checks = len(train) // (args.checkpoint * args.checkpoints_per_epoch)
-    trainer.add_hook(model_check_hook, num_checkpoints=num_checks)
+    num_checkpoints = len(train) // (args.checkpoint * args.hooks_per_epoch)
+    trainer.add_hook(model_check_hook, num_checkpoints=num_checkpoints)
 
     # loggers
     trainer.add_loggers(StdLogger(), VisdomLogger(log_checkpoints=False))

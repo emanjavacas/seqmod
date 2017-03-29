@@ -4,6 +4,22 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+# Legacy classes
+class TiedEmbedding(nn.Embedding):
+    def __init__(self, num_embeddings, embedding_dim, weight, **kwargs):
+        super(TiedEmbedding, self).__init__(
+            num_embeddings, embedding_dim, **kwargs)
+        assert isinstance(weight, nn.parameter.Parameter)
+        self.weight = weight
+
+
+class TiedLinear(nn.Linear):
+    def __init__(self, in_features, out_features, weight, bias=True):
+        super(TiedLinear, self).__init__(in_features, out_features, bias=bias)
+        assert isinstance(weight, nn.parameter.Parameter)
+        self.weight = weight
+
+
 class StackedRNN(nn.Module):
     def __init__(self, num_layers, in_dim, hid_dim, cell='LSTM', dropout=0.0):
         self.num_layers = num_layers
