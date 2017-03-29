@@ -130,42 +130,53 @@ class EncoderDecoder(nn.Module):
         return sum([p.nelement() for p in self.parameters()])
 
     # Initializers
-    def init_rnn(self, model, layer_map, source_attr, target_attr):
+    def init_encoder(self, model, layer_map={'0': '0'}, target_module='rnn'):
         merge_map = {}
         for p in model.state_dict().keys():
-            if not p.startswith(target_attr):
+            if not p.startswith(target_module):
                 continue
             from_layer = ''.join(filter(str.isdigit, p))
             if from_layer not in layer_map:
                 continue
-            s = p.replace(target_attr, source_attr) \
+            s = p.replace(target_module, 'encoder.rnn') \
                  .replace(from_layer, layer_map[from_layer])
             merge_map[p] = s
         state_dict = u.merge_states(
             self.state_dict(), model.state_dict(), merge_map)
         self.load_state_dict(state_dict)
 
-    def init_encoder(self, model, layer_map={'0': '0'}, target_attr='rnn'):
-        self.init_rnn(model, layer_map, 'encoder.rnn', target_attr)
-
-    def init_decoder(self, model, target_attr='rnn', layers=(0,)):
-        # this might be more cumbersome since the decoder rnn is
-        # implemented using StackedRNN with layer weights in the form:
-        # 'decoder.rnn_step.LSTMCell_0.weight_ih', etc...
-        pass
-
-    def init_embedding(self, model, target_attr='embeddings'):
-        # todo: support also init for trg_embeddings
-        merge_map = {target_attr: 'src_embeddings'}
+    def init_decoder(self, model, target_module='rnn', layers=(0,)):
+        assert type(model.rnn) == type(self.decoder.rnn_step)
+        target_rnn = getattr(model, target_module).state_dict().keys()
+        source_rnn = self.decoder.rnn_step.state_dict().keys()
+        merge_map = {}
+        for param in source_rnn:
+            try:
+                # Decoder has format "LSTMCell_0.weight_ih"
+                num, suffix = re.findall(r".*([0-9]+)\.(.*)", param)[0]
+                # LM rnn has format "weight_ih_l0"
+                target_param = suffix + "_l" + num
+                if target_param in target_rnn:
+                    merge_map[target_param] = "decoder.rnn_step." + param
+            except IndexError:
+                continue        # couldn't find target module
         state_dict = u.merge_states(
-            model.state_dict(), self.state_dict(), merge_map)
+            self.state_dict(), model.state_dict(), merge_map)
+        self.load_state_dict(state_dict)
+
+    def init_embedding(self, model,
+                       source_module='src_embeddings',
+                       target_module='embeddings'):
+        state_dict = u.merge_states(
+            model.state_dict(), self.state_dict(),
+            {target_module: source_module})
         self.load_state_dict(state_dict)
 
     def init_batch(self, src):
         """
         Constructs a first prev batch for initializing the decoder.
         """
-        batch, bos = src.size(1), self.src_dict[u.BOS]
+        batch, bos = src.size(1), self.src_dict.get_bos()
         return src.data.new(1, batch).fill_(bos)
 
     def freeze_submodule(self, module):
@@ -240,7 +251,7 @@ class EncoderDecoder(nn.Module):
             prev = prev.t()
             # concat of step vectors along seq_len dim
             scores.append(best_score.squeeze().data[0])
-            atts.append(att_weights.squeeze().data.numpy().tolist())
+            atts.append(att_weights.squeeze().data.cpu().numpy().tolist())
             hyp.append(prev.squeeze().data[0])
             # termination criterion: decoding <eos>
             if prev.data.eq(eos).nonzero().nelement() > 0:
