@@ -23,10 +23,9 @@ class EncoderDecoder(nn.Module):
     att_dim: int, hidden state for the attention network.
         Note that it has to be equal to the encoder/decoder hidden
         size when using GlobalAttention.
-    src_dict: dict,
-        A map from input strings to indices used for indexing the
-        training data.
-    trg_dict: dict,
+    src_dict: Dict,
+        A fitted Dict used to encode the data into integers.
+    trg_dict: Dict,
         Same as src_dict in case of bilingual training.
     cell: string,
         Cell type to use. One of (LSTM, GRU).
@@ -70,18 +69,17 @@ class EncoderDecoder(nn.Module):
         self.cell = cell
         self.add_prev = add_prev
         self.src_dict = src_dict
+        self.trg_dict = trg_dict or src_dict
         src_vocab_size = len(src_dict)
+        trg_vocab_size = len(self.trg_dict)
         self.bilingual = bool(trg_dict)
-        if self.bilingual:
-            self.trg_dict = trg_dict
-            trg_vocab_size = len(trg_dict)
 
         # embedding layer(s)
         self.src_embeddings = nn.Embedding(
-            src_vocab_size, emb_dim, padding_idx=self.src_dict[u.PAD])
+            src_vocab_size, emb_dim, padding_idx=self.src_dict.get_pad())
         if self.bilingual:
             self.trg_embeddings = nn.Embedding(
-                trg_vocab_size, emb_dim, padding_idx=self.trg_dict[u.PAD])
+                trg_vocab_size, emb_dim, padding_idx=self.trg_dict.get_pad())
         else:
             self.trg_embeddings = self.src_embeddings
 
@@ -213,8 +211,9 @@ class EncoderDecoder(nn.Module):
         return torch.stack(dec_outs)
 
     def translate(self, src, max_decode_len=2):
-        pad, eos, bos = \
-            self.src_dict[u.PAD], self.src_dict[u.EOS], self.src_dict[u.BOS]
+        pad = self.src_dict.get_pad()
+        eos = self.src_dict.get_eos()
+        bos = self.src_dict.get_bos()
         gpu = src.is_cuda
         # encode
         emb = self.src_embeddings(src)
@@ -258,8 +257,9 @@ class EncoderDecoder(nn.Module):
 
         src: torch.LongTensor (seq_len x 1)
         """
-        pad, eos, bos = \
-            self.src_dict[u.PAD], self.src_dict[u.EOS], self.src_dict[u.BOS]
+        pad = self.src_dict.get_pad()
+        eos = self.src_dict.get_eos()
+        bos = self.src_dict.get_bos()
         gpu = src.is_cuda
         # encode
         emb = self.src_embeddings(src)
