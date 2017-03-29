@@ -58,9 +58,10 @@ class StdLogger(Logger):
 
     def checkpoint(self, payload):
         tokens_sec = payload["examples"] / payload["duration"]
-        self.logger.info("Batch [%d/%d], loss: %g, processed %d tokens/sec" %
-                         (payload["batch"], payload["total_batches"],
-                          payload["loss"], tokens_sec))
+        self.logger.info(
+            "Epoch[%d], batch [%d/%d], loss: %g, processed %d tokens/sec" %
+            (payload["epoch"], payload["batch"], payload["total_batches"],
+             payload["loss"], tokens_sec))
 
     def info(self, payload):
         if isinstance(payload, dict):
@@ -69,23 +70,25 @@ class StdLogger(Logger):
 
 
 class VisdomLogger(Logger):
-    def __init__(self, log_checkpoints=True):
+    def __init__(self, env=None, log_checkpoints=True):
         self.viz = Visdom()
-        self.win = None
+        self.env = env
+        self.pane = None
         self.last = {'train': {'X': 1, 'Y': 1}, 'valid': {'X': 1, 'Y': 1}}
         self.legend = ['train', 'valid']
         self.log_checkpoints = log_checkpoints
 
-    def _winline(self, X, Y, **kwargs):
-        if self.win is not None:
-            self.viz.line(X=X, Y=Y,
-                          win=self.win, update='append',
-                          opts={'legend': self.legend},
-                          **kwargs)
+    def _line(self, X, Y, **kwargs):
+        if self.pane is None:
+            self.pane = self.viz.line(
+                X=X, Y=Y,
+                env=self.env, opts={'legend': self.legend}, **kwargs)
         else:
-            self.win = self.viz.line(X=X, Y=Y,
-                                     opts={'legend': self.legend},
-                                     **kwargs)
+            self.viz.line(
+                X=X, Y=Y,
+                win=self.pane, update='append',  # update pane
+                env=self.env, opts={'legend': self.legend}, **kwargs)
+
 
     def epoch_end(self, payload):
         if self.log_checkpoints:
@@ -94,23 +97,21 @@ class VisdomLogger(Logger):
         valid_X, valid_Y = self.last['valid']['X'], self.last['valid']['Y']
         train_X, train_Y = self.last['train']['X'], self.last['train']['Y']
         loss, epoch = payload['loss'], payload['epoch']
-        print(epoch)
         X = np.column_stack(([train_X, epoch], [valid_X, valid_X]))
         Y = np.column_stack(([train_Y, loss],  [valid_Y, valid_Y]))
         self.last['train']['X'] = epoch + 1  # epoch end
         self.last['train']['Y'] = loss
-        self._winline(X, Y)
+        self._line(X, Y)
 
     def validation_end(self, payload):
         valid_X, valid_Y = self.last['valid']['X'], self.last['valid']['Y']
         train_X, train_Y = self.last['train']['X'], self.last['train']['Y']
         loss, epoch = payload['loss'], payload['epoch']
-        print(epoch)
         X = np.column_stack(([train_X, train_X], [valid_X, epoch]))
         Y = np.column_stack(([train_Y, train_Y], [valid_Y, loss]))
         self.last['valid']['X'] = epoch + 1  # epoch end
         self.last['valid']['Y'] = loss
-        self._winline(X, Y)
+        self._line(X, Y)
 
     def checkpoint(self, payload):
         if not self.log_checkpoints:
@@ -123,4 +124,4 @@ class VisdomLogger(Logger):
         Y = np.column_stack(([train_Y, loss],  [valid_Y, valid_Y]))
         self.last['train']['X'] = epoch
         self.last['train']['Y'] = loss
-        self._winline(X, Y)
+        self._line(X, Y)
