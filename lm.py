@@ -4,6 +4,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 
+import utils as u
+from beam_search import Beam
+
 
 class LM(nn.Module):
     """
