@@ -53,7 +53,7 @@ def block_batchify(vector, batch_size):
 
 class Dict(object):
     def __init__(self, pad_token=None, eos_token=None, bos_token=None,
-                 unk_token='<unk>', max_size=None, min_freq=1,
+                 unk_token='<unk>', force_unk=True, max_size=None, min_freq=1,
                  sequential=True):
         """
         Dict
@@ -61,7 +61,10 @@ class Dict(object):
         self.counter = Counter()
         self.vocab = [t for t in [pad_token, eos_token, bos_token] if t]
         self.fitted = False
-        self.has_unk = False    # only index unk_token if needed
+        self.has_unk = force_unk  # only index unk_token if needed
+        if force_unk:
+            assert unk_token is not None
+            self._maybe_index_unk()
         self.pad_token = pad_token
         self.eos_token = eos_token
         self.bos_token = bos_token
