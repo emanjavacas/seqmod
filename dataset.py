@@ -175,11 +175,12 @@ class PairedDataset(Dataset):
             src_dict: Dict instance fitted to the source data
             trg_dict: Dict instance fitted to the target data
         """
+        assert len(src) == len(trg), \
+            "Source and Target dataset must be equal length"
+        assert len(src) >= batch_size, "Empty dataset"
         self.data = {
             'src': src if fitted else list(d['src'].transform(src)),
             'trg': trg if fitted else list(d['trg'].transform(trg))}
-        assert len(src) == len(trg), \
-            "Source and Target dataset must be equal length"
         self.d = d              # fitted dicts
         self.batch_size = batch_size
         self.gpu = gpu

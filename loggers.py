@@ -81,12 +81,17 @@ class VisdomLogger(Logger):
     - legend: tuple, names of the different learning curves that will be 
         plotted.
     """
-    def __init__(self, env=None, log_checkpoints=True,
-                 legend=('train', 'valid')):
+    def __init__(self,
+                 env=None,
+                 log_checkpoints=True,
+                 legend=('train', 'valid'),
+                 **opts):
         self.viz = Visdom()
         self.env = env
         self.pane = None
-        self.legend = list(legend)
+        self.legend = legend
+        self.opts = opts
+        self.opts.update({'legend': list(legend)})
         self.log_checkpoints = log_checkpoints
         self.last = {'train': None, 'valid': None}
 
@@ -98,10 +103,10 @@ class VisdomLogger(Logger):
         Y = np.array([self.last[name]['Y'], Y])
         if self.pane is None:
             nan = np.array([np.NAN, np.NAN])
-            X = np.column_stack([X] + [nan] * len(self.legend) - 1)
-            Y = np.column_stack([Y] + [nan] * len(self.legend) - 1)
+            X = np.column_stack([X] + [nan] * (len(self.legend) - 1))
+            Y = np.column_stack([Y] + [nan] * (len(self.legend) - 1))
             self.pane = self.viz.line(
-                X=X, Y=Y, env=self.env, opts={'legend': self.legend})
+                X=X, Y=Y, env=self.env, opts=self.opts)
         else:
             self.viz.updateTrace(
                 X=X, Y=Y, name=name, append=True,

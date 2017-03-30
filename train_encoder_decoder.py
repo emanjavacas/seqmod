@@ -43,29 +43,48 @@ def translate(model, target, gpu, beam=False):
     batch = Variable(target.t(), volatile=True)
     batch = batch.cuda() if gpu else batch
     if beam:
-        scores, hyps, _ = model.translate_beam(
+        scores, hyps, att = model.translate_beam(
             batch, beam_width=5, max_decode_len=4)
     else:
-        scores, hyps, _ = model.translate(batch, max_decode_len=4)
-    return [u.format_hyp(sum(score), hyp, hyp_num + 1, model.trg_dict)
-            for hyp_num, (score, hyp) in enumerate(zip(scores, hyps))]
+        scores, hyps, att = model.translate(batch, max_decode_len=4)
+    return scores, hyps, att
 
 
 def make_encdec_hook(target, gpu, beam=False):
 
-    def hook(trainer, batch_num, checkpoint):
+    def hook(trainer, epoch, batch_num, checkpoint):
         trainer.log("info", "Translating %s" % target)
-        hyps = translate(trainer.model, target, gpu, beam=beam)
+        scores, hyps, atts = translate(trainer.model, target, gpu, beam=beam)
+        hyps = [u.format_hyp(sum(score), hyp, hyp_num + 1, trainer.model.trg_dict)
+                for hyp_num, (score, hyp) in enumerate(zip(scores, hyps))]
         trainer.log("info", '\n***' + ''.join(hyps) + '\n***')
 
     return hook
 
 
+def make_att_hook(target, gpu, beam=False):
+    assert not beam, "beam doesn't output attention yet"
+
+    def hook(trainer, epoch, batch_num, checkpoint):
+        scores, hyps, atts = translate(trainer.model, target, gpu, beam=beam)
+        # grab first hyp (only one in translate modus)
+        hyp = ' '.join([trainer.model.trg_dict.vocab[i] for i in hyps[0]])
+        trainer.log("attention",
+                    {"att": atts[0],
+                     "score": sum(scores[0]) / len(hyps[0]),
+                     "target": [trainer.model.trg_dict.bos_token] + list(target),
+                     "hyp": hyp.split(),
+                     "epoch": epoch,
+                     "batch_num": batch_num})
+
+    return hook
+    
+
+
 def make_criterion(vocab_size, pad):
     weight = torch.ones(vocab_size)
     weight[pad] = 0
-    # don't average batches since num words is variable
-    # per batch (depending on padding)
+    # don't average batches since num words is variable (depending on padding)
     criterion = nn.NLLLoss(weight, size_average=False)
     return criterion
 

@@ -20,7 +20,7 @@ from encoder_decoder import EncoderDecoder
 from optimizer import Optimizer
 from trainer import EncoderDecoderTrainer
 from loggers import StdLogger, VisdomLogger
-from train import make_encdec_hook, make_criterion
+from train_encoder_decoder import make_encdec_hook, make_criterion
 
 
 def load_data(path, exts, text_processor=text_processor()):
