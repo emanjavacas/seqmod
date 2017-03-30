@@ -20,7 +20,7 @@ class StdLogger(Logger):
 
         Parameters:
         ===========
-        outputfile: str, file to print log to. If None, only a console 
+        outputfile: str, file to print log to. If None, only a console
             logger will be used.
         level: str, one of 'INFO', 'DEBUG', ... See logging.
         msgfmt: str, message formattter
@@ -74,54 +74,50 @@ class VisdomLogger(Logger):
         self.viz = Visdom()
         self.env = env
         self.pane = None
-        self.last = {'train': {'X': 1, 'Y': 1}, 'valid': {'X': 1, 'Y': 1}}
-        self.legend = ['train', 'valid']
+        self.last = {'train': None, 'valid': None}
         self.log_checkpoints = log_checkpoints
 
-    def _line(self, X, Y, **kwargs):
+    def _update_last(self, epoch, loss, name):
+        self.last[name]['X'] = epoch
+        self.last[name]['Y'] = loss
+
+    def _line(self, X, Y, name, **kwargs):
+        X = np.array([self.last['X'][name], X])
+        Y = np.array([self.last['Y'][name], Y])
         if self.pane is None:
             self.pane = self.viz.line(
-                X=X, Y=Y,
-                env=self.env, opts={'legend': self.legend}, **kwargs)
+                X=X, Y=Y, env=self.env, **kwargs)
         else:
-            self.viz.line(
-                X=X, Y=Y,
-                win=self.pane, update='append',  # update pane
-                env=self.env, opts={'legend': self.legend}, **kwargs)
-
+            self.viz.updateTrace(
+                X=X, Y=Y, name=name,
+                win=self.pane, update='append', env=self.env, **kwargs)
 
     def epoch_end(self, payload):
         if self.log_checkpoints:
             # only use epoch end if checkpoint isn't being used
             return
-        valid_X, valid_Y = self.last['valid']['X'], self.last['valid']['Y']
-        train_X, train_Y = self.last['train']['X'], self.last['train']['Y']
         loss, epoch = payload['loss'], payload['epoch']
-        X = np.column_stack(([train_X, epoch], [valid_X, valid_X]))
-        Y = np.column_stack(([train_Y, loss],  [valid_Y, valid_Y]))
-        self.last['train']['X'] = epoch + 1  # epoch end
-        self.last['train']['Y'] = loss
-        self._line(X, Y)
+        if self.last['train'] is None:
+            self._update_last(epoch, loss, 'train')
+            return
+        else:
+            self._line(X=epoch, Y=loss, name='train')
 
     def validation_end(self, payload):
-        valid_X, valid_Y = self.last['valid']['X'], self.last['valid']['Y']
-        train_X, train_Y = self.last['train']['X'], self.last['train']['Y']
         loss, epoch = payload['loss'], payload['epoch']
-        X = np.column_stack(([train_X, train_X], [valid_X, epoch]))
-        Y = np.column_stack(([train_Y, train_Y], [valid_Y, loss]))
-        self.last['valid']['X'] = epoch + 1  # epoch end
-        self.last['valid']['Y'] = loss
-        self._line(X, Y)
+        if self.last['valid'] is None:
+            self._update_last(epoch, loss, 'valid')
+            return
+        else:
+            self._line(X=epoch, Y=loss, name='valid')
 
     def checkpoint(self, payload):
         if not self.log_checkpoints:
             return
-        valid_X, valid_Y = self.last['valid']['X'], self.last['valid']['Y']
-        train_X, train_Y = self.last['train']['X'], self.last['train']['Y']
         epoch = payload['epoch'] + payload["batch"] / payload["total_batches"]
         loss = payload['loss']
-        X = np.column_stack(([train_X, epoch], [valid_X, valid_X]))
-        Y = np.column_stack(([train_Y, loss],  [valid_Y, valid_Y]))
-        self.last['train']['X'] = epoch
-        self.last['train']['Y'] = loss
-        self._line(X, Y)
+        if self.last['train'] is None:
+            self._update_last(epoch, loss, 'train')
+            return
+        else:
+            self._line(X=epoch, Y=loss, name='train')
