@@ -32,6 +32,7 @@ class EncoderDecoder(nn.Module):
     att_type: string,
         Attention mechanism to use. One of (Global, Bahdanau).
     dropout: float
+    word_dropout: float
     bidi: bool,
         Whether to use bidirection encoder or not.
     add_prev: bool,
@@ -51,6 +52,7 @@ class EncoderDecoder(nn.Module):
                  cell='LSTM',
                  att_type='Bahdanau',
                  dropout=0.0,
+                 word_dropout=0.0,
                  maxout=0,
                  bidi=True,
                  add_prev=True,
@@ -73,6 +75,7 @@ class EncoderDecoder(nn.Module):
         src_vocab_size = len(src_dict)
         trg_vocab_size = len(self.trg_dict)
         self.bilingual = bool(trg_dict)
+        self.word_dropout = word_dropout
 
         # embedding layer(s)
         self.src_embeddings = nn.Embedding(
@@ -205,6 +208,10 @@ class EncoderDecoder(nn.Module):
             c_t: torch.Tensor (batch x dec_hid_dim)
         att_weights: (batch x seq_len)
         """
+        if self.training and self.word_dropout > 0:
+            inp.masked_fill_(mask, self.src_dict.get_unk())
+            # TODO: add word dropout
+            pass
         emb_inp = self.src_embeddings(inp)
         enc_outs, enc_hidden = self.encoder(emb_inp)
         dec_outs, dec_out, dec_hidden = [], None, None
