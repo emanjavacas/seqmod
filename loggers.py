@@ -144,3 +144,12 @@ class VisdomLogger(Logger):
         else:
             self._line(X=epoch, Y=loss, name='train')
             self._update_last(epoch, loss, 'train')
+
+    def attention(self, payload):
+        title = "epoch {epoch}/ batch {batch_num}".format(**payload)
+        self.viz.heatmap(
+            X=np.array(payload["att"]),
+            env=self.env,
+            opts={'rownames': payload["hyp"],
+                  'columnnames': payload["target"],
+                  'title': title})
