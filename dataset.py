@@ -52,23 +52,37 @@ def block_batchify(vector, batch_size):
 
 
 class Dict(object):
+    """
+    Dict class to vectorize discrete data.
+
+    Parameters:
+    ===========
+    - pad_token: None or str, symbol for representing padding
+    - eos_token: None or str, symbol for representing end of line
+    - bos_token: None or str, symbol for representing begining of line
+    - unk_token: None or str, symbol for representing unknown tokens
+    - force_unk: bool, Whether to force the inclusion of the unknown symbol
+    - max_size: None or int, Maximum size of the dictionary
+    - min_freq: int, Minimum freq for a symbol to be included in the dict
+    - sequential: bool, Whether the data is sequential (this will entail
+        that eos_token and bos_token will be added to examples, unless
+        they are None).
+    """
     def __init__(self, pad_token=None, eos_token=None, bos_token=None,
                  unk_token='<unk>', force_unk=True, max_size=None, min_freq=1,
                  sequential=True):
-        """
-        Dict
-        """
         self.counter = Counter()
-        self.vocab = [t for t in [pad_token, eos_token, bos_token] if t]
         self.fitted = False
-        self.has_unk = force_unk  # only index unk_token if needed
-        if force_unk:
-            assert unk_token is not None
-            self._maybe_index_unk()
         self.pad_token = pad_token
         self.eos_token = eos_token
         self.bos_token = bos_token
         self.unk_token = unk_token
+        # only index unk_token if needed or requested
+        self.reserved = {t for t in [pad_token, eos_token, bos_token] if t}
+        self.has_unk = force_unk
+        if force_unk:
+            assert unk_token is not None, "<unk> token needed"
+            self.reserved.add(self.unk_token)
         self.max_size = max_size
         self.min_freq = min_freq
         self.sequential = sequential
@@ -114,6 +128,7 @@ class Dict(object):
             raise ValueError('Dict is already fitted')
         self.partial_fit(*args)
         most_common = self.counter.most_common(self.max_size)
+        self.vocab = [s for s in self.reserved]
         self.vocab += [k for k, v in most_common if v >= self.min_freq]
         self.s2i = {s: i for i, s in enumerate(self.vocab)}
         self.fitted = True
