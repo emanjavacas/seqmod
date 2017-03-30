@@ -1,4 +1,5 @@
 
+import re
 import torch
 import torch.nn as nn
 from torch.autograd import Variable
@@ -146,7 +147,7 @@ class EncoderDecoder(nn.Module):
         self.load_state_dict(state_dict)
 
     def init_decoder(self, model, target_module='rnn', layers=(0,)):
-        assert type(model.rnn) == type(self.decoder.rnn_step)
+        assert isinstance(model.rnn, type(self.decoder.rnn_step))
         target_rnn = getattr(model, target_module).state_dict().keys()
         source_rnn = self.decoder.rnn_step.state_dict().keys()
         merge_map = {}
