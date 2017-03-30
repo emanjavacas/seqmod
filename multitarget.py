@@ -17,11 +17,11 @@ torch.manual_seed(seed)
 import utils as u
 import dummy as d
 from dataset import PairedDataset, Dict
-from encoder_decoder import EncoderDecoder
+from encoder_decoder import EncoderDecoder, ForkableMultiTarget
 from optimizer import Optimizer
 from trainer import EncoderDecoderTrainer
 from loggers import StdLogger, VisdomLogger
-from train import make_encdec_hook, make_criterion
+from train_encoder_decoder import make_encdec_hook, make_att_hook, make_criterion
 
 
 def wrap_autoencode(sample_fn):
@@ -145,30 +145,28 @@ if __name__ == '__main__':
         fitted=True)
 
     print(' * number of train batches. %d' % len(train))
-    stdlogger = StdLogger()
+    stdlogger = StdLogger(outputfile='.multitarget.log')
     trainer = EncoderDecoderTrainer(
         model, {'train': train, 'valid': valid, 'test': test}, criterion, optimizer)
-    trainer.add_loggers(stdlogger, VisdomLogger(env='multitarget'))
+    trainer.add_loggers(stdlogger, VisdomLogger(env='multitarget', title='general'))
     num_checkpoints = max(len(train) // (args.checkpoint * args.hooks_per_epoch), 1)
     trainer.add_hook(hook, num_checkpoints=num_checkpoints)
     trainer.train(args.epochs, args.checkpoint, shuffle=True, gpu=args.gpu)
 
-    model.freeze_submodule('encoder')
-    model.freeze_submodule('src_embeddings')
-    print("* number of parameters. %d" % model.n_params())
     # train decoders
     for target in datasets:
-        print("\n**********************\n")
-        print("Training for target: %s" % target)
-        # reinitialize unfrozen weights
-        model.decoder.apply(u.make_initializer(
-            rnn={'type': 'orthogonal', 'args': {'gain': 1.0}}))
-        model.project.apply(u.make_initializer(
-            rnn={'type': 'orthogonal', 'args': {'gain': 1.0}}))
+        fork = model.fork_target(rnn={'type': 'orthogonal', 'args': {'gain': 1.0}})
         train = datasets[target]['train']
-        print(' * Number of train batches. %d' % len(train))
+        print('\n**********************\n')
+        print('Training for target: %s' % target)
+        print(' * number of unfrozen parameters: %d.' % fork.n_params())
+        print(' * number of train batches. %d' % len(train))
         trainer = EncoderDecoderTrainer(model, datasets[target], criterion, optimizer)
-        trainer.add_loggers(stdlogger, VisdomLogger(env='multitarget'))
+        trainer.add_loggers(stdlogger, VisdomLogger(env='multitarget', title=target))
         num_checkpoints = max(1, len(train) // (args.checkpoint * args.hooks_per_epoch))
         trainer.add_hook(hook, num_checkpoints=num_checkpoints)
+        trainer.add_hook(make_att_hook(args.target, args.gpu),
+                         num_checkpoints=num_checkpoints)
         trainer.train(args.epochs, args.checkpoint, shuffle=True, gpu=args.gpu)
+
+        # TODO: save model

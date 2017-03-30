@@ -55,7 +55,7 @@ def load_from_file(path):
 # hook
 def make_lm_check_hook(d, gpu, early_stopping):
 
-    def hook(trainer, batch_num, checkpoint):
+    def hook(trainer, epoch, batch_num, checkpoint):
         trainer.log("info", "Checking training...")
         loss = trainer.validate_model()
         trainer.log("info", "Valid loss: %g" % loss)

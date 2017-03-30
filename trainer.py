@@ -70,12 +70,12 @@ class Trainer(object):
             self.hooks = []
         self.hooks.append({'hook': hook, 'num_checkpoints': num_checkpoints})
 
-    def run_hooks(self, batch_num, checkpoint):
+    def run_hooks(self, epoch, batch_num, checkpoint):
         for hook in self.hooks:
             num_checkpoints = batch_num // checkpoint
             if hook['num_checkpoints'] > 0 and \
                num_checkpoints % hook['num_checkpoints'] == 0:
-                hook['hook'](self, batch_num, num_checkpoints)
+                hook['hook'](self, epoch, batch_num, num_checkpoints)
 
     # callbacks
     def on_batch_end(self, batch, batch_loss):
@@ -186,7 +186,7 @@ class Trainer(object):
                     'examples': check_examples,
                     'duration': time.time() - start,
                     'loss': self.format_loss(check_loss / check_examples)})
-                self.run_hooks(batch_num, checkpoint)
+                self.run_hooks(epoch, batch_num, checkpoint)
                 check_loss, check_examples, start = 0, 0, time.time()
         return epoch_loss, epoch_examples
 

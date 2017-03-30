@@ -324,3 +324,14 @@ class EncoderDecoder(nn.Module):
         # decode beams
         scores, hyps = beam.decode(n=beam_width)
         return scores, hyps, None  # TODO: return attention
+
+
+class ForkableMultiTarget(EncoderDecoder):
+    def fork_target(self, **init_opts):
+        import copy
+        model = copy.deepcopy(self)
+        model.freeze_submodule('src_embeddings')
+        model.freeze_submodule('encoder')
+        model.decoder.apply(u.make_initializer(**init_opts))
+        model.project.apply(u.make_initializer(**init_opts))
+        return model
