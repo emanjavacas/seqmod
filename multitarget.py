@@ -49,6 +49,7 @@ if __name__ == '__main__':
     parser.add_argument('--att_dim', default=64, type=int)
     parser.add_argument('--att_type', default='Bahdanau', type=str)
     parser.add_argument('--dropout', default=0.0, type=float)
+    parser.add_argument('--word_dropout', default=0.0, type=float)
     parser.add_argument('--project_init', action='store_true')
     parser.add_argument('--maxout', default=0, type=int)
     parser.add_argument('--tie_weights', action='store_true')
@@ -62,8 +63,6 @@ if __name__ == '__main__':
     parser.add_argument('--learning_rate_decay', default=0.5, type=float)
     parser.add_argument('--start_decay_at', default=8, type=int)
     parser.add_argument('--max_grad_norm', default=5., type=float)
-    parser.add_argument('--autoencode', action='store_true',
-                        help='Whether to train the encoder by autoencoding')
     parser.add_argument('--gpu', action='store_true')
     parser.add_argument('--beam', action='store_true')
     args = parser.parse_args()
@@ -101,10 +100,11 @@ if __name__ == '__main__':
     print(' * maximum batch size. %d' % args.batch_size)
 
     print('Building model...')
-    model = EncoderDecoder(
+    model = ForkableMultiTarget(
         (args.layers, args.layers), args.emb_dim, (args.hid_dim, args.hid_dim),
         args.att_dim, src_dict, att_type=args.att_type, dropout=args.dropout,
-        bidi=args.bidi, cell=args.cell, project_init=args.project_init)
+        word_dropout=args.word_dropout, bidi=args.bidi, cell=args.cell,
+        project_init=args.project_init)
     optimizer = Optimizer(
         model.parameters(), args.optim, args.learning_rate, args.max_grad_norm,
         lr_decay=args.learning_rate_decay, start_decay_at=args.start_decay_at)

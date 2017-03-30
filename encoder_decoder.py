@@ -209,10 +209,16 @@ class EncoderDecoder(nn.Module):
             c_t: torch.Tensor (batch x dec_hid_dim)
         att_weights: (batch x seq_len)
         """
+        # TODO: this could be abstracted away into its own layer
         if self.training and self.word_dropout > 0:
-            inp.masked_fill_(mask, self.src_dict.get_unk())
-            # TODO: add word dropout
-            pass
+            reserved = (self.src_dict.get_eos(),
+                        self.src_dict.get_bos(),
+                        self.src_dict.get_pad())
+            mask = u.variable_length_dropout_mask(
+                inp.data, self.word_dropout, reserved)
+            inp = inp.data.new(*inp.size()).copy_(inp.data)
+            inp = Variable(inp, volatile=not self.training)
+            inp.masked_fill_(Variable(mask), self.src_dict.get_unk())
         emb_inp = self.src_embeddings(inp)
         enc_outs, enc_hidden = self.encoder(emb_inp)
         dec_outs, dec_out, dec_hidden = [], None, None
