@@ -5,7 +5,38 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 
 import utils as u
+import attention
 from beam_search import Beam
+
+
+class Attention(nn.Module):
+    def __init__(self, att_dim, hid_dim, emb_dim, num_layers=1):
+        self.att_dim = att_dim * num_layers
+        self.hid_dim = hid_dim
+        self.emb_dim = emb_dim
+        super(Attention, self).__init__()
+        self.hidden_att = nn.Linear(hid_dim, att_dim)    # W
+        self.emb_att = nn.Linear(emb_dim, att_dim)       # U
+        self.att_v = nn.Parameter(torch.Tensor(att_dim))  # b
+
+    def forward(hidden, emb):
+        """
+        Parameters:
+        -----------
+        hidden: torch.Tensor
+            (num_layers * num_dirs x batch_size x hid_dim)
+            Hidden state at step h_{t-1}
+        emb: torch.Tensor (seq_len x batch_size x emb_dim)
+            Embeddings of input words up to step t-1
+
+        Returns: context, weights
+        --------
+        context: torch.Tensor 
+        weights: torch.Tensor
+        """
+        # hidden                  # need to reshape this to account for num_layers
+        hidden_att, emb_att = self.hidden_att(hidden), self.emb_att(emb)
+
 
 
 class LM(nn.Module):
@@ -31,8 +62,9 @@ class LM(nn.Module):
         inserted after the RNN to match back to the embedding dimension.
     """
     def __init__(self, vocab, emb_dim, hid_dim, num_layers=1,
-                 cell='GRU', bias=True, dropout=0.0, tie_weights=False,
-                 project_on_tied_weights=False):
+                 cell='GRU', bias=True, dropout=0.0,
+                 tie_weights=False, project_on_tied_weights=False,
+                 add_attn=False, att_type=None, att_dim=None):
         self.vocab = vocab
         self.emb_dim = emb_dim
         self.hid_dim = hid_dim
@@ -47,18 +79,26 @@ class LM(nn.Module):
         self.bias = bias
         self.has_dropout = bool(dropout)
         self.dropout = dropout
-
         super(LM, self).__init__()
+
         # input embeddings
         self.embeddings = nn.Embedding(vocab, self.emb_dim)
         # rnn
         self.rnn = getattr(nn, cell)(
             self.emb_dim, self.hid_dim,
             num_layers=num_layers, bias=bias, dropout=dropout)
+        # attention
+        if add_attn:
+            assert self.cell == 'RNN', \
+                "currently only RNN supports attention"
+            assert att_dim is not None, "Need to specify att_dim"
+            self.att_dim = att_dim
+            self.attn = Attention(self.att_dim, self.hid_dim, self.emb_dim)
         # output embeddings
+        proj_dim = self.hid_dim if add_attn else self.hid_dim
         if tie_weights:
-            if self.emb_dim == self.hid_dim:
-                self.project = nn.Linear(self.hid_dim, vocab)
+            if self.emb_dim == proj_dim:
+                self.project = nn.Linear(proj_dim, vocab)
                 self.project.weight = self.embeddings.weight
             else:
                 assert project_on_tied_weights, \
@@ -66,9 +106,9 @@ class LM(nn.Module):
                 project = nn.Linear(self.emb_dim, vocab)
                 project.weight = self.embeddings.weight
                 self.project = nn.Sequential(
-                    nn.Linear(self.hid_dim, self.emb_dim), project)
+                    nn.Linear(proj_dim, self.emb_dim), project)
         else:
-            self.project = nn.Linear(self.hid_dim, vocab)
+            self.project = nn.Linear(proj_dim, vocab)
 
     def parameters(self):
         for p in super(LM, self).parameters():
@@ -151,6 +191,8 @@ class LM(nn.Module):
         if self.has_dropout:
             outs = F.dropout(outs, p=self.dropout, training=self.training)
         seq_len, batch, hid_dim = outs.size()
+        if hasattr(self, 'attn'):
+            context, weights = self.attn(hidden, emb)
         outs = self.project(outs.view(seq_len * batch, hid_dim))
         return outs, hidden
 
@@ -203,32 +245,25 @@ class MultiheadLM(LM):
     given number of heads). This allows the model to fine tune different
     output distribution on different datasets.
     """
-    def __init__(self, vocab, emb_dim, hid_dim, num_layers=1,
-                 cell='GRU', bias=True, dropout=0.0, heads=(), **kwargs):
+    def __init__(self, *args, heads=(), **kwargs):
+        super(MultiheadLM, self).__init__(*args, **kwargs):
         assert heads, "MultiheadLM requires at least 1 head but got 0"
-        self.vocab = vocab
-        self.emb_dim = emb_dim
-        self.hid_dim = hid_dim
-        self.num_layers = num_layers
-        self.cell = cell
-        self.bias = bias
-        self.has_dropout = bool(dropout)
-        self.dropout = dropout
-        self.heads = heads
-
-        super(LM, self).__init__()
-        self.embeddings = nn.Embedding(vocab, self.emb_dim)
-        self.rnn = getattr(nn, cell)(
-            self.emb_dim, self.hid_dim,
-            num_layers=num_layers, bias=bias, dropout=dropout)
+        import copy
+        if hasattr(self, 'attn'):
+            attn = self.attn
+            self.attn = {}
+        project = self.project
         self.project = {}
         for head in heads:
-            module = nn.Linear(self.hid_dim, vocab)
-            self.add_module(head, module)
-            self.project[head] = module
+            project_module = copy.deepcopy(project)
+            self.add_module(head, project_module)
+            self.project[head] = project_module
+            if hasattr(self, 'attn'):
+                attn_module = copy.deepcopy(attn)
+                self.add_module(head, attn_module)
+                self.attn[head] = attn_module
 
     def forward(self, inp, hidden=None, head=None):
-        """"""
         emb = self.embeddings(inp)
         if self.has_dropout:
             emb = F.dropout(emb, p=self.dropout, training=self.training)
@@ -257,7 +292,7 @@ class MultiheadLM(LM):
         for p, w in that_model.state_dict().items():
             if p in this_state_dict:
                 this_state_dict[p] = w
-            else:               # you got project layer
+            else:               # got project or attn layer
                 *_, weight = p.split('.')
                 for head in this_model.heads:
                     this_state_dict[head + "." + weight] = w
