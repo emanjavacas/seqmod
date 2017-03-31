@@ -139,6 +139,11 @@ class LM(nn.Module):
         return outs.data[0] / len(inp)
 
     def forward(self, inp, hidden=None, **kwargs):
+        """
+        Parameters:
+        -----------
+        inp: torch.Tensor (seq_len x batch_size)
+        """
         emb = self.embeddings(inp)
         if self.has_dropout:
             emb = F.dropout(emb, p=self.dropout, training=self.training)

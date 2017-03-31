@@ -96,9 +96,6 @@ if __name__ == '__main__':
                              batch_size=args.batch_size, gpu=args.gpu)
         datasets[target] = {'train': train, 'valid': valid, 'test': test}
 
-    print(' * vocabulary size. %d' % len(src_dict))
-    print(' * maximum batch size. %d' % args.batch_size)
-
     print('Building model...')
     model = ForkableMultiTarget(
         (args.layers, args.layers), args.emb_dim, (args.hid_dim, args.hid_dim),
@@ -113,18 +110,12 @@ if __name__ == '__main__':
     model.apply(u.make_initializer(
         rnn={'type': 'orthogonal', 'args': {'gain': 1.0}}))
 
-    print('* number of parameters: %d' % model.n_params())
-    print(model)
-
     if args.gpu:
         model.cuda(), criterion.cuda()
 
     hook = make_encdec_hook(args.target, args.gpu)
 
     # train general model
-    print("\n**********************\n")
-    print("Training general model")
-
     train = PairedDataset(
         [s for target in datasets for s in datasets[target]['train'].data['src']],
         [s for target in datasets for s in datasets[target]['train'].data['trg']],
@@ -144,23 +135,30 @@ if __name__ == '__main__':
         batch_size=args.batch_size, gpu=args.gpu,
         fitted=True)
 
-    print(' * number of train batches. %d' % len(train))
     stdlogger = StdLogger(outputfile='.multitarget.log')
     trainer = EncoderDecoderTrainer(
         model, {'train': train, 'valid': valid, 'test': test}, criterion, optimizer)
     trainer.add_loggers(stdlogger, VisdomLogger(env='multitarget', title='general'))
     num_checkpoints = max(len(train) // (args.checkpoint * args.hooks_per_epoch), 1)
     trainer.add_hook(hook, num_checkpoints=num_checkpoints)
+
+    trainer.log('info', ' * vocabulary size. %d' % len(src_dict))
+    trainer.log('info', ' * maximum batch size. %d' % args.batch_size)
+    trainer.log('info', ' * number of train batches. %d' % len(train))
+    trainer.log('info', ' * number of parameters. %d' % model.n_params())
+    trainer.log('info', str(model))
+    trainer.log('info', "**********************")
+    trainer.log('info', "Training general model")
     trainer.train(args.epochs, args.checkpoint, shuffle=True, gpu=args.gpu)
 
     # train decoders
     for target in datasets:
         fork = model.fork_target(rnn={'type': 'orthogonal', 'args': {'gain': 1.0}})
         train = datasets[target]['train']
-        print('\n**********************\n')
-        print('Training for target: %s' % target)
-        print(' * number of unfrozen parameters: %d.' % fork.n_params())
-        print(' * number of train batches. %d' % len(train))
+        trainer.log('info', '**********************')
+        trainer.log('info', 'Training for target: %s' % target)
+        trainer.log('info', ' * number of unfrozen parameters: %d.' % fork.n_params())
+        trainer.log('info', ' * number of train batches. %d' % len(train))
         trainer = EncoderDecoderTrainer(model, datasets[target], criterion, optimizer)
         trainer.add_loggers(stdlogger, VisdomLogger(env='multitarget', title=target))
         num_checkpoints = max(1, len(train) // (args.checkpoint * args.hooks_per_epoch))

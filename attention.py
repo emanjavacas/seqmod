@@ -16,7 +16,10 @@ class GlobalAttention(nn.Module):
 
     def forward(self, dec_out, enc_outs, mask=None, **kwargs):
         """
+        Parameters:
+        -----------
         dec_out: (batch x hid_dim)
+
         enc_outs: (seq_len x batch x hid_dim (== att_dim))
         """
         # (batch x att x 1)
@@ -71,10 +74,14 @@ class BahdanauAttention(nn.Module):
 
         enc_att: see self.project_enc_outs(self, enc_outs)
 
-        Returns:
+        Returns: contexts, weights
         --------
-        context: torch.Tensor (batch x hid_dim), weights (batch x seq_len)
-            Batch-first matrix of context vectors (for each input in batch)
+        context: torch.Tensor (batch x hid_dim)
+            Matrix of context vectors, which are then combined in the
+            computation of the model output at the present timestep
+
+        weights: torch.Tensor (batch x seq_len)
+            Attention weights in range [0, 1] for each input term
         """
         enc_att = enc_att or self.project_enc_outs(enc_outs)
         # enc_outputs * weights

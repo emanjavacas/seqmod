@@ -147,6 +147,8 @@ class VisdomLogger(Logger):
 
     def attention(self, payload):
         title = "epoch {epoch}/ batch {batch_num}".format(**payload)
+        if 'title' in self.opts:
+            title = self.opts['title'] + ": " + title
         self.viz.heatmap(
             X=np.array(payload["att"]),
             env=self.env,
