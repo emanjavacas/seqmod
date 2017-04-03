@@ -248,12 +248,13 @@ class LMTrainer(Trainer):
                 return          # skip batch
             hidden = self.batch_state.get('hidden', {}).get(head, None)
             output, hidden = self.model(source, hidden=hidden, head=head)
-            # dettach hidden from graph
             if 'hidden' not in self.batch_state:
                 self.batch_state['hidden'] = {}
+            # dettach hidden from graph
             self.batch_state['hidden'][head] = repackage_hidden(hidden)
         else:
             source, targets = batch_data
+            print(targets.nelement())
             hidden = self.batch_state.get('hidden', None)
             output, hidden = self.model(source, hidden=hidden)
             # detach hidden from graph

@@ -78,7 +78,7 @@ class VisdomLogger(Logger):
     - env: str, name of the visdom environment
     - log_checkpoints: bool, whether to use checkpoints or epoch averages
         for training loss
-    - legend: tuple, names of the different learning curves that will be 
+    - legend: tuple, names of the different learning curves that will be
         plotted.
     """
     def __init__(self,
