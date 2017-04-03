@@ -84,6 +84,7 @@ if __name__ == '__main__':
     parser.add_argument('--cell', default='LSTM')
     parser.add_argument('--emb_dim', default=200, type=int)
     parser.add_argument('--hid_dim', default=200, type=int)
+    parser.add_argument('--att_dim', default=0, type=int)
     parser.add_argument('--dropout', default=0.3, type=float)
     parser.add_argument('--early_stopping', default=-1, type=int)
     parser.add_argument('--tie_weights', action='store_true')
@@ -135,6 +136,7 @@ if __name__ == '__main__':
     print('Building model...')
     model = LM(len(d), args.emb_dim, args.hid_dim,
                num_layers=args.layers, cell=args.cell,
+               add_attn=args.att_dim > 0, att_dim=args.att_dim,
                dropout=args.dropout, tie_weights=args.tie_weights,
                project_on_tied_weights=args.project_on_tied_weights)
 

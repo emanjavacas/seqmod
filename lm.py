@@ -1,4 +1,6 @@
 
+import logging
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -10,12 +12,12 @@ from beam_search import Beam
 
 
 class Attention(nn.Module):
-    def __init__(self, att_dim, hid_dim, emb_dim, num_layers=1):
-        self.att_dim = att_dim * num_layers
+    def __init__(self, att_dim, hid_dim, emb_dim):
+        self.att_dim = att_dim
         self.hid_dim = hid_dim
         self.emb_dim = emb_dim
         super(Attention, self).__init__()
-        self.hidden2att = nn.Linear(hid_dim, att_dim)    # W
+        self.hid2att = nn.Linear(hid_dim, att_dim)    # W
         self.emb2att = nn.Linear(emb_dim, att_dim)       # U
         self.att_v = nn.Parameter(torch.Tensor(att_dim))  # b
 
@@ -25,39 +27,59 @@ class Attention(nn.Module):
         --------
         torch.Tensor: (seq_len x batch_size x att_dim)
         """
-        return torch.cat([self.emb2att(i).unsqueeze(0) for i in emb])
+        return torch.stack([self.emb2att(i) for i in emb])
 
-    def forward(hidden, emb):
+    def forward(self, hid, emb, emb_att=None):
         """
         Parameters:
         -----------
-        TODO: this should actually take outs (seq_len x batch_size x hid_dim)
-        TODO: instead of hidden
-        hidden: torch.Tensor
-            (num_layers * num_dirs x batch_size x hid_dim)
+        hid: torch.Tensor (batch_size x hid_dim)
             Hidden state at step h_{t-1}
         emb: torch.Tensor (seq_len x batch_size x emb_dim)
             Embeddings of input words up to step t-1
 
         Returns: context, weights
         --------
-        context: torch.Tensor
-        weights: torch.Tensor
+        context: torch.Tensor (batch_size x emb_dim)
+        weights: torch.Tensor (batch_size x seq_len)
         """
         seq_len, batch_size, _ = emb.size()
-        # need to sum over num_layers to recover hid_dim
-        # alternatively, we could consider only the last layer
-        # hidden_att: (batch_size x hid_dim)
-        hidden_att = self.hidden2att(hidden.sum(0).squeeze(0))
-        emb_att = self.project_emb(emb)
+        # hid_att: (batch_size x hid_dim)
+        hid_att = self.hid2att(hid)
+        emb_att = emb_att or self.project_emb(emb)
         # att: (seq_len x batch_size x att_dim)
-        att = F.tanh(emb_att + u.tile(hidden_att, seq_len))
+        att = F.tanh(emb_att + u.tile(hid_att, seq_len))
         # weights: (batch_size x seq_len)
-        weights = F.softmax(u.bmv(att, self.att_v).squeeze(2))
+        weights = F.softmax(u.bmv(att.t(), self.att_v).squeeze(2))
         # context: (batch_size x emb_dim)
         context = weights.unsqueeze(1).bmm(emb.t()).squeeze(1)
-        # TODO: context should be (seq_len x batch_size x emb_dim)
         return context, weights
+
+
+class AttentiveProjection(nn.Module):
+    def __init__(self, att_dim, hid_dim, emb_dim):
+        super(AttentiveProjection, self).__init__()
+        self.attn = Attention(att_dim, hid_dim, emb_dim)
+        self.hid2hid = nn.Linear(hid_dim, hid_dim)
+        self.emb2hid = nn.Linear(emb_dim, hid_dim)
+
+    def forward(self, outs, emb):
+        """
+        Runs attention for a given input sequence
+
+        Returns: output, weights
+        --------
+        output: torch.Tensor (seq_len x batch_size x hid_dim)
+        weights: list of torch.Tensor(batch_size x 0:t-1) of length seq_len
+        """
+        emb_att = self.attn.project_emb(emb)
+        output, weights = [], []
+        for idx, hid in enumerate(outs):
+            prev_hid = outs[max(0, idx - 1)]  # use same hid at t=0
+            context, weight = self.attn(prev_hid, emb, emb_att=emb_att)
+            output.append(self.hid2hid(hid) + self.emb2hid(context))
+            weights.append(weight)
+        return torch.stack(output), weights
 
 
 class LM(nn.Module):
@@ -73,7 +95,7 @@ class LM(nn.Module):
         embedding dimensions wouldn't match and weights cannot be tied.
     - hid_dim: int, hidden dimension of the RNN.
     - num_layers: int, number of layers of the RNN.
-    - cell: str, one of GRU, LSTM.
+    - cell: str, one of GRU, LSTM, RNN.
     - bias: bool, whether to include bias in the RNN.
     - dropout: float, amount of dropout to apply in between layers.
     - tie_weights: bool, whether to tie input and output embedding layers.
@@ -85,7 +107,7 @@ class LM(nn.Module):
     def __init__(self, vocab, emb_dim, hid_dim, num_layers=1,
                  cell='GRU', bias=True, dropout=0.0,
                  tie_weights=False, project_on_tied_weights=False,
-                 add_attn=False, att_type=None, att_dim=None):
+                 add_attn=False, att_dim=None):
         self.vocab = vocab
         self.emb_dim = emb_dim
         self.hid_dim = hid_dim
@@ -114,22 +136,22 @@ class LM(nn.Module):
                 "currently only RNN supports attention"
             assert att_dim is not None, "Need to specify att_dim"
             self.att_dim = att_dim
-            self.attn = Attention(self.att_dim, self.hid_dim, self.emb_dim)
+            self.attn = AttentiveProjection(
+                self.att_dim, self.hid_dim, self.emb_dim)
         # output embeddings
-        proj_dim = self.hid_dim + self.emb_dim if add_attn else self.hid_dim
         if tie_weights:
-            if self.emb_dim == proj_dim:
-                self.project = nn.Linear(proj_dim, vocab)
+            if self.emb_dim == self.hid_dim:
+                self.project = nn.Linear(self.hid_dim, self.vocab)
                 self.project.weight = self.embeddings.weight
             else:
                 assert project_on_tied_weights, \
                     "Unequal tied layer dims but no projection layer"
-                project = nn.Linear(self.emb_dim, vocab)
+                project = nn.Linear(self.emb_dim, self.vocab)
                 project.weight = self.embeddings.weight
                 self.project = nn.Sequential(
-                    nn.Linear(proj_dim, self.emb_dim), project)
+                    nn.Linear(self.hid_dim, self.emb_dim), project)
         else:
-            self.project = nn.Linear(proj_dim, vocab)
+            self.project = nn.Linear(self.hid_dim, self.vocab)
 
     def parameters(self):
         for p in super(LM, self).parameters():
@@ -147,11 +169,11 @@ class LM(nn.Module):
         batch = inp.size(1)
         size = (self.num_layers, batch, self.hid_dim)
         h_0 = Variable(inp.data.new(*size).zero_(), requires_grad=False)
-        if self.cell.startswith('GRU'):
-            return h_0
-        else:
+        if self.cell.startswith('LSTM'):
             c_0 = Variable(inp.data.new(*size).zero_(), requires_grad=False)
             return h_0, c_0
+        else:
+            return h_0
 
     def generate_beam(
             self, bos, eos, max_seq_len=20, width=5, gpu=False, **kwargs):
@@ -162,7 +184,7 @@ class LM(nn.Module):
         while beam.active and len(beam) < max_seq_len:
             prev = Variable(
                 beam.get_current_state().unsqueeze(0), volatile=True)
-            outs, hidden = self(prev, hidden=hidden, **kwargs)
+            outs, hidden, _ = self(prev, hidden=hidden, **kwargs)
             logs = F.log_softmax(outs)
             beam.advance(logs.data)
             if self.cell.startswith('LSTM'):
@@ -180,7 +202,7 @@ class LM(nn.Module):
         if gpu: prev = prev.cuda()
         hidden, hyp, scores = None, [], []
         for _ in range(max_seq_len):
-            outs, hidden = self(prev, hidden=hidden, **kwargs)
+            outs, hidden, _ = self(prev, hidden=hidden, **kwargs)
             outs = F.log_softmax(outs)
             best_score, prev = outs.max(1)
             prev = prev.t()
@@ -195,7 +217,7 @@ class LM(nn.Module):
         inp_vec = Variable(torch.LongTensor([inp]), volatile=True)
         if gpu:
             inp_vec.cuda()
-        outs, hidden = self(inp_vec, **kwargs)
+        outs, hidden, _ = self(inp_vec, **kwargs)
         outs = u.select_cols(F.log_softmax(outs), inp).sum()
         return outs.data[0] / len(inp)
 
@@ -204,6 +226,13 @@ class LM(nn.Module):
         Parameters:
         -----------
         inp: torch.Tensor (seq_len x batch_size)
+
+        Returns:
+        --------
+        outs: torch.Tensor (seq_len * batch_size x vocab)
+        hidden: see output of RNN, GRU, LSTM in torch.nn
+        weights: None or list of weights (batch_size x 0:n),
+            It will only be not None if attention is provided.
         """
         emb = self.embeddings(inp)
         if self.has_dropout:
@@ -211,11 +240,12 @@ class LM(nn.Module):
         outs, hidden = self.rnn(emb, hidden or self.init_hidden_for(emb))
         if self.has_dropout:
             outs = F.dropout(outs, p=self.dropout, training=self.training)
-        seq_len, batch, hid_dim = outs.size()
+        weights = None
         if hasattr(self, 'attn'):
-            context, weights = self.attn(hidden, emb)
+            outs, weights = self.attn(outs, emb)
+        seq_len, batch, hid_dim = outs.size()
         outs = self.project(outs.view(seq_len * batch, hid_dim))
-        return outs, hidden
+        return outs, hidden, weights
 
 
 class ForkableLM(LM):
@@ -248,8 +278,9 @@ class ForkableLM(LM):
             if layer.startswith('project') and \
                self.tie_weights and \
                self.project_on_tied_weights:
-                print("Warning: Forked model couldn't use projection layer " +
-                      "of parent for the initialization of layer [%s]" % layer)
+                logging.warn(
+                    "Warning: Forked model couldn't use projection layer " +
+                    "of parent for the initialization of layer [%s]" % layer)
                 continue
             else:
                 target_dict[layer] = p
@@ -291,10 +322,13 @@ class MultiheadLM(LM):
         outs, hidden = self.rnn(emb, hidden or self.init_hidden_for(emb))
         if self.has_dropout:
             outs = F.dropout(outs, p=self.dropout, training=self.training)
+        weights = None
+        if hasattr(self, 'attn'):
+            outs, weights = self.attn[head](outs, emb)
         seq_len, batch, hid_dim = outs.size()
         # (seq_len x batch x hid) -> (seq_len * batch x hid)
         outs = self.project[head](outs.view(seq_len * batch, hid_dim))
-        return outs, hidden
+        return outs, hidden, weights
 
     @classmethod
     def from_pretrained_model(cls, that_model, heads):

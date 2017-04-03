@@ -247,16 +247,15 @@ class LMTrainer(Trainer):
                 # if subset is given, skip all other subsets
                 return          # skip batch
             hidden = self.batch_state.get('hidden', {}).get(head, None)
-            output, hidden = self.model(source, hidden=hidden, head=head)
+            output, hidden, *_ = self.model(source, hidden=hidden, head=head)
             if 'hidden' not in self.batch_state:
                 self.batch_state['hidden'] = {}
             # dettach hidden from graph
             self.batch_state['hidden'][head] = repackage_hidden(hidden)
         else:
             source, targets = batch_data
-            print(targets.nelement())
             hidden = self.batch_state.get('hidden', None)
-            output, hidden = self.model(source, hidden=hidden)
+            output, hidden, *_ = self.model(source, hidden=hidden)
             # detach hidden from graph
             self.batch_state['hidden'] = repackage_hidden(hidden)
         loss = self.criterion(output, targets)
