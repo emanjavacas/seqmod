@@ -1,5 +1,4 @@
 
-import os
 import string
 
 seed = 1001
@@ -74,7 +73,7 @@ if __name__ == '__main__':
             args.train_len, args.vocab, args.min_len, args.max_len, sample_fn))
         src, trg = list(map(list, src)), list(map(list, trg))
         datasets[target] = {'src': src, 'trg': trg}
-    
+
     src_dict = Dict(pad_token=u.PAD, eos_token=u.EOS, bos_token=u.BOS)
     src_dict.fit(*[data
                    for target in datasets
@@ -117,29 +116,32 @@ if __name__ == '__main__':
 
     # train general model
     train = PairedDataset(
-        [s for target in datasets for s in datasets[target]['train'].data['src']],
-        [s for target in datasets for s in datasets[target]['train'].data['trg']],
+        [s for t in datasets for s in datasets[t]['train'].data['src']],
+        [s for t in datasets for s in datasets[t]['train'].data['trg']],
         {'src': src_dict, 'trg': src_dict},
         batch_size=args.batch_size, gpu=args.gpu,
         fitted=True)
     valid = PairedDataset(
-        [s for target in datasets for s in datasets[target]['valid'].data['src']],
-        [s for target in datasets for s in datasets[target]['valid'].data['trg']],
+        [s for t in datasets for s in datasets[t]['valid'].data['src']],
+        [s for t in datasets for s in datasets[t]['valid'].data['trg']],
         {'src': src_dict, 'trg': src_dict},
         batch_size=args.batch_size, gpu=args.gpu,
         fitted=True)
     test = PairedDataset(
-        [s for target in datasets for s in datasets[target]['test'].data['src']],
-        [s for target in datasets for s in datasets[target]['test'].data['trg']],
+        [s for t in datasets for s in datasets[t]['test'].data['src']],
+        [s for t in datasets for s in datasets[t]['test'].data['trg']],
         {'src': src_dict, 'trg': src_dict},
         batch_size=args.batch_size, gpu=args.gpu,
         fitted=True)
 
     stdlogger = StdLogger(outputfile='.multitarget.log')
     trainer = EncoderDecoderTrainer(
-        model, {'train': train, 'valid': valid, 'test': test}, criterion, optimizer)
-    trainer.add_loggers(stdlogger, VisdomLogger(env='multitarget', title='general'))
-    num_checkpoints = max(len(train) // (args.checkpoint * args.hooks_per_epoch), 1)
+        model, {'train': train, 'valid': valid, 'test': test},
+        criterion, optimizer)
+    trainer.add_loggers(
+        stdlogger, VisdomLogger(env='multitarget', title='general'))
+    num_checkpoints = \
+        max(len(train) // (args.checkpoint * args.hooks_per_epoch), 1)
     trainer.add_hook(hook, num_checkpoints=num_checkpoints)
 
     trainer.log('info', ' * vocabulary size. %d' % len(src_dict))
@@ -153,15 +155,20 @@ if __name__ == '__main__':
 
     # train decoders
     for target in datasets:
-        fork = model.fork_target(rnn={'type': 'orthogonal', 'args': {'gain': 1.0}})
+        fork = model.fork_target(
+            rnn={'type': 'orthogonal', 'args': {'gain': 1.0}})
         train = datasets[target]['train']
         trainer.log('info', '**********************')
         trainer.log('info', 'Training for target: %s' % target)
-        trainer.log('info', ' * number of unfrozen parameters: %d.' % fork.n_params())
+        trainer.log(
+            'info', ' * number of unfrozen parameters: %d.' % fork.n_params())
         trainer.log('info', ' * number of train batches. %d' % len(train))
-        trainer = EncoderDecoderTrainer(model, datasets[target], criterion, optimizer)
-        trainer.add_loggers(stdlogger, VisdomLogger(env='multitarget', title=target))
-        num_checkpoints = max(1, len(train) // (args.checkpoint * args.hooks_per_epoch))
+        trainer = EncoderDecoderTrainer(
+            model, datasets[target], criterion, optimizer)
+        trainer.add_loggers(
+            stdlogger, VisdomLogger(env='multitarget', title=target))
+        num_checkpoints = \
+            max(1, len(train) // (args.checkpoint * args.hooks_per_epoch))
         trainer.add_hook(hook, num_checkpoints=num_checkpoints)
         trainer.add_hook(make_att_hook(args.target, args.gpu),
                          num_checkpoints=num_checkpoints)

@@ -1,7 +1,6 @@
 
 import os
 import sys
-import time
 
 seed = 1001
 import random                   # nopep8

@@ -45,6 +45,7 @@ def viz_lm(**kwargs):
     from lm import LM
     vocab, emb_dim, hid_dim = 10, 12, 16
     m = LM(vocab, emb_dim, hid_dim, **kwargs)
-    out, _ = m(Variable(torch.LongTensor([[0, 1]])))
+    out, _, _ = m(Variable(torch.LongTensor([[0, 1]])))
     dot = make_dot(out)
     return dot
+

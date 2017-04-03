@@ -3,6 +3,7 @@ import math
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 import utils as u
 
@@ -44,7 +45,6 @@ class BahdanauAttention(nn.Module):
         self.enc2att = nn.Linear(enc_hid_dim, att_dim, bias=False)
         self.dec2att = nn.Linear(dec_hid_dim, att_dim, bias=False)
         self.att_v = nn.Parameter(torch.Tensor(att_dim))
-        self.softmax = nn.Softmax()
 
     def project_enc_outs(self, enc_outs):
         """
@@ -96,7 +96,7 @@ class BahdanauAttention(nn.Module):
         dec_enc_att = nn.functional.tanh(enc_att + u.tile(dec_att, seq_len))
         # dec_enc_att (seq_len x batch x att_dim) * att_v (att_dim)
         #   -> weights (batch x seq_len)
-        weights = self.softmax(u.bmv(dec_enc_att.t(), self.att_v).squeeze(2))
+        weights = F.softmax(u.bmv(dec_enc_att.t(), self.att_v).squeeze(2))
         if mask is not None:
             weights.data.masked_fill_(mask, -math.inf)
         # enc_outs: (seq_len x batch x hid_dim) * weights (batch x seq_len)
