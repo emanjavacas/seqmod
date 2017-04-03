@@ -15,14 +15,24 @@ class Attention(nn.Module):
         self.hid_dim = hid_dim
         self.emb_dim = emb_dim
         super(Attention, self).__init__()
-        self.hidden_att = nn.Linear(hid_dim, att_dim)    # W
-        self.emb_att = nn.Linear(emb_dim, att_dim)       # U
+        self.hidden2att = nn.Linear(hid_dim, att_dim)    # W
+        self.emb2att = nn.Linear(emb_dim, att_dim)       # U
         self.att_v = nn.Parameter(torch.Tensor(att_dim))  # b
+
+    def project_emb(self, emb):
+        """
+        Returns:
+        --------
+        torch.Tensor: (seq_len x batch_size x att_dim)
+        """
+        return torch.cat([self.emb2att(i).unsqueeze(0) for i in emb])
 
     def forward(hidden, emb):
         """
         Parameters:
         -----------
+        TODO: this should actually take outs (seq_len x batch_size x hid_dim)
+        TODO: instead of hidden
         hidden: torch.Tensor
             (num_layers * num_dirs x batch_size x hid_dim)
             Hidden state at step h_{t-1}
@@ -31,12 +41,23 @@ class Attention(nn.Module):
 
         Returns: context, weights
         --------
-        context: torch.Tensor 
+        context: torch.Tensor
         weights: torch.Tensor
         """
-        # hidden                  # need to reshape this to account for num_layers
-        hidden_att, emb_att = self.hidden_att(hidden), self.emb_att(emb)
-
+        seq_len, batch_size, _ = emb.size()
+        # need to sum over num_layers to recover hid_dim
+        # alternatively, we could consider only the last layer
+        # hidden_att: (batch_size x hid_dim)
+        hidden_att = self.hidden2att(hidden.sum(0).squeeze(0))
+        emb_att = self.project_emb(emb)
+        # att: (seq_len x batch_size x att_dim)
+        att = F.tanh(emb_att + u.tile(hidden_att, seq_len))
+        # weights: (batch_size x seq_len)
+        weights = F.softmax(u.bmv(att, self.att_v).squeeze(2))
+        # context: (batch_size x emb_dim)
+        context = weights.unsqueeze(1).bmm(emb.t()).squeeze(1)
+        # TODO: context should be (seq_len x batch_size x emb_dim)
+        return context, weights
 
 
 class LM(nn.Module):
@@ -95,7 +116,7 @@ class LM(nn.Module):
             self.att_dim = att_dim
             self.attn = Attention(self.att_dim, self.hid_dim, self.emb_dim)
         # output embeddings
-        proj_dim = self.hid_dim if add_attn else self.hid_dim
+        proj_dim = self.hid_dim + self.emb_dim if add_attn else self.hid_dim
         if tie_weights:
             if self.emb_dim == proj_dim:
                 self.project = nn.Linear(proj_dim, vocab)
@@ -246,7 +267,7 @@ class MultiheadLM(LM):
     output distribution on different datasets.
     """
     def __init__(self, *args, heads=(), **kwargs):
-        super(MultiheadLM, self).__init__(*args, **kwargs):
+        super(MultiheadLM, self).__init__(*args, **kwargs)
         assert heads, "MultiheadLM requires at least 1 head but got 0"
         import copy
         if hasattr(self, 'attn'):
@@ -276,7 +297,7 @@ class MultiheadLM(LM):
         return outs, hidden
 
     @classmethod
-    def from_pretrained_model(cls, that_model, heads, **kwargs):
+    def from_pretrained_model(cls, that_model, heads):
         """
         Create a multihead model from a pretrained LM initializing all weights
         to the LM states and all heads to the same output projection layer
@@ -287,7 +308,7 @@ class MultiheadLM(LM):
             that_model.vocab, that_model.emb_dim, that_model.hid_dim,
             num_layers=that_model.num_layers, cell=that_model.cell,
             bias=that_model.bias, dropout=that_model.dropout, heads=heads,
-            **kwargs)
+            add_attn=hasattr(that_model, 'attn'), att_dim=that_model.att_dim)
         this_state_dict = this_model.state_dict()
         for p, w in that_model.state_dict().items():
             if p in this_state_dict:
