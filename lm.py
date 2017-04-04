@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 
 import utils as u
-import attention
+from modules import word_dropout
 from beam_search import Beam
 
 
@@ -56,9 +56,9 @@ class Attention(nn.Module):
         return context, weights
 
 
-class AttentiveProjection(nn.Module):
+class AttentionalProjection(nn.Module):
     def __init__(self, att_dim, hid_dim, emb_dim):
-        super(AttentiveProjection, self).__init__()
+        super(AttentionalProjection, self).__init__()
         self.attn = Attention(att_dim, hid_dim, emb_dim)
         self.hid2hid = nn.Linear(hid_dim, hid_dim)
         self.emb2hid = nn.Linear(emb_dim, hid_dim)
@@ -105,9 +105,10 @@ class LM(nn.Module):
         inserted after the RNN to match back to the embedding dimension.
     """
     def __init__(self, vocab, emb_dim, hid_dim, num_layers=1,
-                 cell='GRU', bias=True, dropout=0.0,
-                 tie_weights=False, project_on_tied_weights=False,
-                 add_attn=False, att_dim=None):
+                 cell='GRU', bias=True, dropout=0.0, word_dropout=0.0,
+                 target_code=None, reserved_codes=(),
+                 add_attn=False, att_dim=None,
+                 tie_weights=False, project_on_tied_weights=False):
         self.vocab = vocab
         self.emb_dim = emb_dim
         self.hid_dim = hid_dim
@@ -124,6 +125,10 @@ class LM(nn.Module):
         self.dropout = dropout
         super(LM, self).__init__()
 
+        # word dropout
+        self.word_dropout = word_dropout
+        self.target_code = target_code
+        self.reserved_codes = reserved_codes
         # input embeddings
         self.embeddings = nn.Embedding(vocab, self.emb_dim)
         # rnn
@@ -132,11 +137,11 @@ class LM(nn.Module):
             num_layers=num_layers, bias=bias, dropout=dropout)
         # attention
         if add_attn:
-            assert self.cell == 'RNN', \
-                "currently only RNN supports attention"
+            assert self.cell == 'RNN' or self.cell == 'GRU', \
+                "currently only RNN, GRU supports attention"
             assert att_dim is not None, "Need to specify att_dim"
             self.att_dim = att_dim
-            self.attn = AttentiveProjection(
+            self.attn = AttentionalProjection(
                 self.att_dim, self.hid_dim, self.emb_dim)
         # output embeddings
         if tie_weights:
@@ -177,7 +182,14 @@ class LM(nn.Module):
 
     def generate_beam(
             self, bos, eos, max_seq_len=20, width=5, gpu=False, **kwargs):
-        "Generate text using beam search decoding"
+        """
+        Generate text using beam search decoding
+
+        Returns:
+        --------
+        scores: list of floats, unnormalized scores, one for each hypothesis
+        hyps: list of lists, decoded hypotheses in integer form
+        """
         self.eval()
         beam = Beam(width, bos, eos, gpu=gpu)
         hidden = None
@@ -196,7 +208,14 @@ class LM(nn.Module):
         return scores, hyps
 
     def generate(self, bos, eos, max_seq_len=20, gpu=False, **kwargs):
-        "Generate text using simple argmax decoding"
+        """
+        Generate text using simple argmax decoding
+
+        Returns:
+        --------
+        scores: list of floats, unnormalized scores, one for each hypothesis
+        hyps: list of lists, decoded hypotheses in integer form
+        """
         self.eval()
         prev = Variable(torch.LongTensor([bos]).unsqueeze(0), volatile=True)
         if gpu: prev = prev.cuda()
@@ -210,7 +229,7 @@ class LM(nn.Module):
             scores.append(best_score.squeeze().data[0])
             if prev.data.eq(eos).nonzero().nelement() > 0:
                 break
-        return [scores], [hyp]
+        return [sum(scores)], [hyp]
 
     def predict_proba(self, inp, gpu=False, **kwargs):
         self.eval()
@@ -234,6 +253,9 @@ class LM(nn.Module):
         weights: None or list of weights (batch_size x 0:n),
             It will only be not None if attention is provided.
         """
+        inp = word_dropout(
+            inp, self.target_code, dropout=self.word_dropout,
+            reserved_codes=self.reserved_codes, training=self.training)
         emb = self.embeddings(inp)
         if self.has_dropout:
             emb = F.dropout(emb, p=self.dropout, training=self.training)

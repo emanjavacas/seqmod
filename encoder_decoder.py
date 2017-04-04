@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 from torch.autograd import Variable
 
+from modules import word_dropout
 from encoder import Encoder
 from decoder import Decoder
 from beam_search import Beam
@@ -73,10 +74,16 @@ class EncoderDecoder(nn.Module):
         self.add_prev = add_prev
         self.src_dict = src_dict
         self.trg_dict = trg_dict or src_dict
-        src_vocab_size = len(src_dict)
+        src_vocab_size = len(self.src_dict)
         trg_vocab_size = len(self.trg_dict)
         self.bilingual = bool(trg_dict)
+
+        # word_dropout
         self.word_dropout = word_dropout
+        self.target_code = self.src_dict.get_unk()
+        self.reserved = (self.src_dict.get_eos(),
+                         self.src_dict.get_bos(),
+                         self.src_dict.get_pad())
 
         # embedding layer(s)
         self.src_embeddings = nn.Embedding(
@@ -209,16 +216,9 @@ class EncoderDecoder(nn.Module):
             c_t: torch.Tensor (batch x dec_hid_dim)
         att_weights: (batch x seq_len)
         """
-        # TODO: this could be abstracted away into its own layer
-        if self.training and self.word_dropout > 0:
-            reserved = (self.src_dict.get_eos(),
-                        self.src_dict.get_bos(),
-                        self.src_dict.get_pad())
-            mask = u.variable_length_dropout_mask(
-                inp.data, self.word_dropout, reserved)
-            inp = inp.data.new(*inp.size()).copy_(inp.data)
-            inp = Variable(inp, volatile=not self.training)
-            inp.masked_fill_(Variable(mask), self.src_dict.get_unk())
+        inp = word_dropout(
+            inp, self.target_code, reserved_codes=self.reserved_codes
+            dropout=self.word_dropout, training=self.training)
         emb_inp = self.src_embeddings(inp)
         enc_outs, enc_hidden = self.encoder(emb_inp)
         dec_outs, dec_out, dec_hidden = [], None, None

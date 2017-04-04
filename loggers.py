@@ -85,15 +85,24 @@ class VisdomLogger(Logger):
                  env=None,
                  log_checkpoints=True,
                  legend=('train', 'valid'),
+                 server='http://localhost',
+                 port=8097,
                  **opts):
-        self.viz = Visdom()
+        self.viz = Visdom(server=server, port=port, env=env)
         self.env = env
-        self.pane = None
         self.legend = legend
         self.opts = opts
         self.opts.update({'legend': list(legend)})
+        self.pane = self._init_pane()
         self.log_checkpoints = log_checkpoints
         self.last = {'train': None, 'valid': None}
+
+    def _init_pane(self):
+        nan = np.array([np.NAN, np.NAN])
+        X = np.column_stack([nan] * len(self.legend))
+        Y = np.column_stack([nan] * len(self.legend))
+        return self.viz.line(
+            X=X, Y=Y, env=self.env, opts=self.opts)
 
     def _update_last(self, epoch, loss, name):
         self.last[name] = {'X': epoch, 'Y': loss}
@@ -101,16 +110,8 @@ class VisdomLogger(Logger):
     def _line(self, X, Y, name):
         X = np.array([self.last[name]['X'], X])
         Y = np.array([self.last[name]['Y'], Y])
-        if self.pane is None:
-            nan = np.array([np.NAN, np.NAN])
-            X = np.column_stack([X] + [nan] * (len(self.legend) - 1))
-            Y = np.column_stack([Y] + [nan] * (len(self.legend) - 1))
-            self.pane = self.viz.line(
-                X=X, Y=Y, env=self.env, opts=self.opts)
-        else:
-            self.viz.updateTrace(
-                X=X, Y=Y, name=name, append=True,
-                win=self.pane, env=self.env)
+        self.viz.updateTrace(
+            X=X, Y=Y, name=name, append=True, win=self.pane, env=self.env)
 
     def epoch_end(self, payload):
         if self.log_checkpoints:
