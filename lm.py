@@ -75,8 +75,9 @@ class AttentionalProjection(nn.Module):
         emb_att = self.attn.project_emb(emb)
         output, weights = [], []
         for idx, hid in enumerate(outs):
-            prev_hid = outs[max(0, idx - 1)]  # use same hid at t=0
-            context, weight = self.attn(prev_hid, emb, emb_att=emb_att)
+            t = max(0, idx-1)  # use same hid at t=0
+            context, weight = self.attn(
+                outs[t], emb[:max(1, t)], emb_att=emb_att[:max(1, t)])
             output.append(self.hid2hid(hid) + self.emb2hid(context))
             weights.append(weight)
         return torch.stack(output), weights
