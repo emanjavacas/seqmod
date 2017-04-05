@@ -26,11 +26,11 @@ class Encoder(nn.Module):
         batch = inp.size(1)
         size = (self.dirs * self.num_layers, batch, self.hid_dim)
         h_0 = Variable(inp.data.new(*size).zero_(), requires_grad=False)
-        if self.cell.startswith('GRU'):
-            return h_0
-        else:
+        if self.cell.startswith('LSTM'):
             c_0 = Variable(inp.data.new(*size).zero_(), requires_grad=False)
             return h_0, c_0
+        else:
+            return h_0
 
     def forward(self, inp, hidden=None, compute_mask=False, mask_symbol=None):
         """
@@ -62,11 +62,11 @@ class Encoder(nn.Module):
                 mask_t = inp_t.data.squeeze(0).eq(mask_symbol).nonzero()
                 if mask_t.nelement() > 0:
                     mask_t = mask_t.squeeze(1)
-                    if self.cell.startswith('GRU'):
-                        hidden.data.index_fill_(1, mask_t, 0)
-                    else:
+                    if self.cell.startswith('LSTM'):
                         hidden[0].data.index_fill_(1, mask_t, 0)
                         hidden[1].data.index_fill_(1, mask_t, 0)
+                    else:
+                        hidden.data.index_fill_(1, mask_t, 0)
                 outs.append(out_t)
             outs = torch.cat(outs)
         else:
@@ -74,9 +74,9 @@ class Encoder(nn.Module):
         if self.bidi:
             # BiRNN encoder outputs (num_layers * 2 x batch x enc_hid_dim)
             # but decoder expects   (num_layers x batch x dec_hid_dim)
-            if self.cell.startswith('GRU'):
-                hidden = u.repackage_bidi(hidden)
-            else:
+            if self.cell.startswith('LSTM'):
                 hidden = (u.repackage_bidi(hidden[0]),
                           u.repackage_bidi(hidden[1]))
+            else:
+                hidden = u.repackage_bidi(hidden)
         return outs, hidden

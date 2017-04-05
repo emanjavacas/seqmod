@@ -30,7 +30,7 @@ def get_splits(length, test, dev=None):
     return cumsum(int(length * i) for i in [train, dev, test] if i)
 
 
-def batchify(examples, pad_token=None, align_right=False):
+def pad(examples, pad_token=None, align_right=False):
     max_length = max(len(x) for x in examples)
     out = torch.LongTensor(len(examples), max_length).fill_(pad_token or 0)
     for i in range(len(examples)):
@@ -198,21 +198,21 @@ class PairedDataset(Dataset):
     def __len__(self):
         return self.num_batches
 
-    def _batchify(self, batch_data, pad_token):
-        out = batchify(batch_data, pad_token, align_right=self.align_right)
+    def _pad(self, batch_data, pad_token, sequential):
+        out = pad(batch_data, pad_token, align_right=self.align_right)
         if self.gpu:
             out = out.cuda()
         return Variable(out, volatile=self.evaluation)
 
     def __getitem__(self, idx):
         assert idx < self.num_batches, "%d >= %d" % (idx, self.num_batches)
-        batch_from = idx * self.batch_size
-        batch_to = (idx+1) * self.batch_size
-        trg_pad, src_pad = self.d['trg'].get_pad(), self.d['src'].get_pad()
-        src_batch = self._batchify(
-            self.data['src'][batch_from: batch_to], src_pad)
-        trg_batch = self._batchify(
-            self.data['trg'][batch_from: batch_to], trg_pad)
+        b_from, b_to = idx * self.batch_size, (idx+1) * self.batch_size
+        src_batch = self.data['src'][b_from: b_to]
+        if self.d['src'].sequential:
+            src_batch = self._pad(src_batch, self.d['src'].get_pad())
+        trg_batch = self.data['trg'][b_from: b_to]
+        if self.d['trg'].sequential:
+            trg_batch = self._pad(trg_batch, self.d['trg'].get_pad())
         return src_batch, trg_batch
 
     def sort_(self, sort_key=None):
