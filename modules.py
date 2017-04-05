@@ -142,7 +142,7 @@ def word_dropout(
     - dropout: float, dropout rate
     - reserved_codes: tuple of ints, ints in the input that should never
         be dropped
-    - training: bool, whether 
+    - training: bool
     """
     if not training or not dropout > 0:
         return inp
