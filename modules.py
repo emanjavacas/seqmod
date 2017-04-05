@@ -2,9 +2,10 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.autograd import Variable
 
 
-# Legacy classes
+# Legacy Modules
 class TiedEmbedding(nn.Embedding):
     def __init__(self, num_embeddings, embedding_dim, weight, **kwargs):
         super(TiedEmbedding, self).__init__(
@@ -20,6 +21,7 @@ class TiedLinear(nn.Linear):
         self.weight = weight
 
 
+# Stateful Modules
 class StackedRNN(nn.Module):
     def __init__(self, num_layers, in_dim, hid_dim, cell='LSTM', dropout=0.0):
         self.num_layers = num_layers
@@ -113,3 +115,39 @@ class MaxOut(nn.Module):
         out = self.projection(inp).view(batch, self.out_dim, self.k)
         out, _ = out.max(2)
         return out.squeeze(2)
+
+
+# Stateless modules
+def variable_length_dropout_mask(X, dropout, reserved_codes=()):
+    """
+    Computes a binary mask across batch examples based on a
+    bernoulli distribution with mean equal to dropout
+    """
+    probs = X.new(*X.size()).float().zero_() + dropout
+    # zeroth reserved_codes
+    probs[sum((X == x) for x in reserved_codes)] = 0
+    return probs.bernoulli().byte()
+
+
+def word_dropout(
+        inp, target_code, dropout=0.0, reserved_codes=(), training=True):
+    """
+    Applies word dropout to an input Variable. Dropout isn't constant
+    across batch examples.
+
+    Parameters:
+    -----------
+    - inp: torch.Tensor
+    - target_code: int, code to use as replacement for dropped timesteps
+    - dropout: float, dropout rate
+    - reserved_codes: tuple of ints, ints in the input that should never
+        be dropped
+    - training: bool, whether 
+    """
+    if not training or not dropout > 0:
+        return inp
+    inp = Variable(inp.data.new(*inp.size()).copy_(inp.data))
+    mask = variable_length_dropout_mask(
+        inp.data, dropout, reserved_codes)
+    inp.masked_fill_(Variable(mask), target_code)
+    return inp

@@ -142,14 +142,6 @@ def select_cols(t, vec):
     return t[rows == vec]
 
 
-def variable_length_dropout_mask(X, dropout, reserved_codes=()):
-    # assumes that X is in format (seq_len x batch_size)
-    probs = X.new(*X.size()).float().zero_() + dropout
-    # zero reserved_codes
-    probs[sum((X == x) for x in reserved_codes)] = 0
-    return probs.bernoulli().byte()
-
-
 # Initializers
 def default_weight_init(m, init_range=0.05):
     for p in m.parameters():

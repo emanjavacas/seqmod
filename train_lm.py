@@ -62,7 +62,7 @@ def make_lm_check_hook(d, gpu, early_stopping):
         if early_stopping is not None:
             early_stopping.add_checkpoint(loss)
         trainer.log("info", "Generating text...")
-        scores, hyps = trainer.model.generate_beam(
+        scores, hyps = trainer.model.generate(
             d.get_bos(), d.get_eos(), gpu=gpu, max_seq_len=100)
         hyps = [u.format_hyp(score, hyp, hyp_num + 1, d)
                 for hyp_num, (score, hyp) in enumerate(zip(scores, hyps))]
@@ -86,6 +86,7 @@ if __name__ == '__main__':
     parser.add_argument('--hid_dim', default=200, type=int)
     parser.add_argument('--att_dim', default=0, type=int)
     parser.add_argument('--dropout', default=0.3, type=float)
+    parser.add_argument('--word_dropout', default=0.0, type=float)
     parser.add_argument('--early_stopping', default=-1, type=int)
     parser.add_argument('--tie_weights', action='store_true')
     parser.add_argument('--project_on_tied_weights', action='store_true')
@@ -94,6 +95,8 @@ if __name__ == '__main__':
     parser.add_argument('--epochs', default=10, type=int)
     parser.add_argument('--checkpoint', default=200, type=int)
     parser.add_argument('--hooks_per_epoch', default=5, type=int)
+    parser.add_argument('--log_checkpoints', action='store_true')
+    parser.add_argument('--visdom_server', default='localhost')
     parser.add_argument('--optim', default='RMSprop', type=str)
     parser.add_argument('--learning_rate', default=0.01, type=float)
     parser.add_argument('--learning_rate_decay', default=0.5, type=float)
@@ -118,7 +121,7 @@ if __name__ == '__main__':
         valid_data = load_lines(args.path + 'valid.txt')
         test_data = load_lines(args.path + 'test.txt')
         d = Dict(max_size=args.max_size, min_freq=args.min_freq,
-                 eos_token=u.EOS, bos_token=u.EOS)
+                 eos_token=u.EOS, bos_token=u.BOS)
         d.fit(train_data, valid_data, test_data)
         train = BlockDataset(
             train_data, d, args.batch_size, args.bptt, gpu=args.gpu)
@@ -138,6 +141,7 @@ if __name__ == '__main__':
                num_layers=args.layers, cell=args.cell,
                add_attn=args.att_dim > 0, att_dim=args.att_dim,
                dropout=args.dropout, tie_weights=args.tie_weights,
+               word_dropout=args.word_dropout, target_code=d.get_unk(),
                project_on_tied_weights=args.project_on_tied_weights)
 
     model.apply(u.make_initializer())
@@ -166,7 +170,10 @@ if __name__ == '__main__':
     trainer.add_hook(model_check_hook, num_checkpoints=num_checkpoints)
 
     # loggers
-    trainer.add_loggers(StdLogger(), VisdomLogger(log_checkpoints=False))
+    visdom_logger = VisdomLogger(
+        log_checkpoints=args.log_checkpoints, title=args.prefix, env='lm',
+        server='http://' + args.visdom_server)
+    trainer.add_loggers(StdLogger(), visdom_logger)
 
     trainer.train(args.epochs, args.checkpoint, gpu=args.gpu)
 
