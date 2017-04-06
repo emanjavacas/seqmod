@@ -1,6 +1,6 @@
 
 import random
-from collections import Counter
+from collections import Counter, Sequence
 
 import torch
 import torch.utils.data
@@ -14,7 +14,8 @@ def shuffled(data):
 
 
 def shuffle_pairs(pair1, pair2):
-    return zip(*shuffled(zip(pair1, pair2)))
+    pair1, pair2 = zip(*shuffled(zip(pair1, pair2)))
+    return list(pair1), list(pair2)
 
 
 def cumsum(seq):
@@ -30,7 +31,10 @@ def get_splits(length, test, dev=None):
     return cumsum(int(length * i) for i in [train, dev, test] if i)
 
 
-def pad(examples, pad_token=None, align_right=False):
+def pack(examples, pad_token=None, align_right=False):
+    if pad_token is None:
+        assert all(len(examples[0]) == len(x) for x in examples), \
+            "No pad token was supported but need to pad (unequal lengths)"
     max_length = max(len(x) for x in examples)
     out = torch.LongTensor(len(examples), max_length).fill_(pad_token or 0)
     for i in range(len(examples)):
@@ -73,6 +77,7 @@ class Dict(object):
                  sequential=True):
         self.counter = Counter()
         self.fitted = False
+        # TODO: warn if pad, eos or bos token are given and sequential is False
         self.pad_token = pad_token
         self.eos_token = eos_token
         self.bos_token = bos_token
@@ -121,7 +126,7 @@ class Dict(object):
     def partial_fit(self, *args):
         for dataset in args:
             for example in dataset:
-                self.counter.update(example if self.sequential else [example])
+                self.counter.update(example)  # example should always be a list
 
     def fit(self, *args):
         if self.fitted:
@@ -141,14 +146,24 @@ class Dict(object):
             if self.sequential:
                 example = bos + [self.index(s) for s in example] + eos
             else:
-                example = self.index(example)
+                example = [self.index(s) for s in example]
             yield example
 
 
-class Dataset(torch.utils.data.Dataset):
+class Dataset(Sequence, torch.utils.data.Dataset):
     """
     Abstract class wrapping torch.utils.data.Dataset
     """
+    def __len__(self):
+        raise NotImplementedError
+
+    def __getitem__(self):
+        raise NotImplementedError
+
+    def __iter__(self):
+        for i in range(len(self)):
+            yield self[i]
+
     @classmethod
     def from_disk(cls, path):
         with open(path, 'rb') as f:
@@ -188,6 +203,12 @@ class PairedDataset(Dataset):
         self.align_right = align_right
         self.num_batches = len(self.data['src']) // batch_size
 
+    def _pack(self, batch_data, pad_token=None):
+        out = pack(batch_data, pad_token=pad_token, align_right=self.align_right)
+        if self.gpu:
+            out = out.cuda()
+        return Variable(out, volatile=self.evaluation)
+
     def set_batch_size(self, new_batch_size):
         self.batch_size = new_batch_size
         self.num_batches = len(self.data['src']) // self.batch_size
@@ -198,28 +219,20 @@ class PairedDataset(Dataset):
     def __len__(self):
         return self.num_batches
 
-    def _pad(self, batch_data, pad_token, sequential):
-        out = pad(batch_data, pad_token, align_right=self.align_right)
-        if self.gpu:
-            out = out.cuda()
-        return Variable(out, volatile=self.evaluation)
-
     def __getitem__(self, idx):
         assert idx < self.num_batches, "%d >= %d" % (idx, self.num_batches)
         b_from, b_to = idx * self.batch_size, (idx+1) * self.batch_size
-        src_batch = self.data['src'][b_from: b_to]
-        if self.d['src'].sequential:
-            src_batch = self._pad(src_batch, self.d['src'].get_pad())
-        trg_batch = self.data['trg'][b_from: b_to]
-        if self.d['trg'].sequential:
-            trg_batch = self._pad(trg_batch, self.d['trg'].get_pad())
+        src_pad = self.d['src'].get_pad() if self.d['src'].sequential else None
+        src_batch = self._pack(self.data['src'][b_from: b_to], pad_token=src_pad)
+        trg_pad = self.d['trg'].get_pad() if self.d['trg'].sequential else None
+        trg_batch = self._pack(self.data['trg'][b_from: b_to], pad_token=trg_pad)
         return src_batch, trg_batch
 
     def sort_(self, sort_key=None):
         sort = sorted(zip(self.data['src'], self.data['trg']), key=sort_key)
         src, trg = zip(*sort)
-        self.data['src'] = src
-        self.data['trg'] = trg
+        self.data['src'] = list(src)
+        self.data['trg'] = list(trg)
         return self
 
     def splits(self, test=0.1, dev=0.2, shuffle=False, sort_key=None):
@@ -281,13 +294,6 @@ class BlockDataset(Dataset):
         self.gpu = gpu
         self.evaluation = evaluation
 
-    def __len__(self):
-        """
-        The length of the dataset is computed as the number of bptt'ed batches
-        to conform the way batches are computed. See __getitem__.
-        """
-        return len(self.data) // self.bptt
-
     def _getitem(self, data, idx):
         """
         General function to get the source data to compute the batch. This
@@ -297,11 +303,17 @@ class BlockDataset(Dataset):
         idx *= self.bptt
         seq_len = min(self.bptt, len(data) - 1 - idx)
         src = Variable(data[idx:idx+seq_len], volatile=self.evaluation)
-        trg = Variable(data[idx+1:idx+seq_len+1].view(-1),
-                       volatile=self.evaluation)
+        trg = Variable(data[idx+1:idx+seq_len+1], volatile=self.evaluation)
         if self.gpu:
             src, trg = src.cuda(), trg.cuda()
         return src, trg
+
+    def __len__(self):
+        """
+        The length of the dataset is computed as the number of bptt'ed batches
+        to conform the way batches are computed. See __getitem__.
+        """
+        return len(self.data) // self.bptt
 
     def __getitem__(self, idx):
         """

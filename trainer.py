@@ -121,9 +121,10 @@ class Trainer(object):
     # training code
     def num_batch_examples(self, batch_data):
         """
-        By default consider all elements in batch tensor.
+        By default consider all target elements in batch.
         """
-        return batch_data.n_element()
+        source, target = batch_data
+        return target.nelement()
 
     def validate_model(self, test=False, **kwargs):
         self.model.eval()
@@ -146,8 +147,8 @@ class Trainer(object):
         loss in torch tensor form.
         """
         source, targets = batch_data
-        outs = self.model(source, targets)
-        loss = self.criterion(outs, targets)
+        outs = self.model(source)
+        loss = self.criterion(outs, targets.view(-1))
         if dataset == 'train':
             loss.backward(), self.optimizer_step()
         return loss
@@ -258,7 +259,7 @@ class LMTrainer(Trainer):
             output, hidden, *_ = self.model(source, hidden=hidden)
             # detach hidden from graph
             self.batch_state['hidden'] = repackage_hidden(hidden)
-        loss = self.criterion(output, targets)
+        loss = self.criterion(output, targets.view(-1))
         # optimize
         if dataset == 'train':
             loss.backward(), self.optimizer_step()
@@ -274,7 +275,7 @@ class LMTrainer(Trainer):
 
     def num_batch_examples(self, batch_data):
         src, trg, *_ = batch_data
-        return len(src)
+        return len(trg)
 
 
 class EncoderDecoderTrainer(Trainer):
