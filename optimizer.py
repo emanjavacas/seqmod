@@ -1,5 +1,7 @@
+
 import math
 import torch.optim as optim
+from torch.nn.utils import clip_grad_norm
 
 
 def root(x, nth=1):
@@ -10,11 +12,11 @@ def root(x, nth=1):
 
 
 class Optimizer(object):
-    def __init__(self, params, method, lr=1., threshold=5.,
+    def __init__(self, params, method, lr=1., max_norm=5.,
                  lr_decay=1, start_decay_at=None):
         self.params = list(params)
         self.lr = lr
-        self.threshold = threshold
+        self.max_norm = max_norm
         self.lr_decay = lr_decay
         self.start_decay_at = start_decay_at
         self.method = method
@@ -22,35 +24,15 @@ class Optimizer(object):
         self.start_decay = False
         self.optim = getattr(optim, self.method)(self.params, lr=self.lr)
 
-    def LP(self, p=1):
-        """
-        Computes the l_p norm over gradients l_p norms
-        """
-        norms = sum(math.pow(pm.grad.data.norm(p=p), p) for pm in self.params)
-        return root(norms, nth=p)
+    def set_params(self, params):
+        self.params = list(params)
+        self.optim = getattr(optim, self.method)(self.params, lr=self.lr)
 
-    def L2(self):
-        return self.LP(p=2)
-
-    def L1(self):
-        return self.LP(p=1)
-
-    def clip_gradients(self, norm):
-        """
-        Clips gradients down whenever the total model gradient norm
-        exceeds a given threshold
-        """
-        grad_norm = getattr(self, norm)()
-        if grad_norm > self.threshold:
-            shrinkage = self.threshold / grad_norm
-            for param in self.params:
-                param.grad.data.mul_(shrinkage)
-
-    def step(self, norm='L2'):
+    def step(self, norm_type=2):
         """
         Run an update eventually clipping the gradients
         """
-        self.clip_gradients(norm)
+        clip_grad_norm(self.params, self.max_norm, norm_type=norm_type)
         self.optim.step()
 
     def zero_grad(self):
