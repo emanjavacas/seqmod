@@ -326,8 +326,10 @@ class MultiheadLM(LM):
         import copy
         if hasattr(self, 'attn'):
             attn = self.attn
+            del self.attn
             self.attn = {}
         project = self.project
+        del self.project
         self.project = {}
         for head in heads:
             project_module = copy.deepcopy(project)

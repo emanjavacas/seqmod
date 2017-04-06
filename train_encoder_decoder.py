@@ -78,7 +78,6 @@ def make_att_hook(target, gpu, beam=False):
                      "batch_num": batch_num})
 
     return hook
-    
 
 
 def make_criterion(vocab_size, pad):
