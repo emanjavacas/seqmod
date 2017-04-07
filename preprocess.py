@@ -11,13 +11,16 @@ def text_processor(language='en', num=True, lower=True):
     try:
         from normalizr import Normalizr
     except ImportError:
-        print("Try installing normalizr")
-        return lambda sent: sent
+        try:
+            from cucco import Cucco as Normalizr
+        except ImportError:
+            print("Try installing normalizr or cucco")
+            return lambda sent: sent
 
     normalizations = [
         ('replace_emails', {'replacement': '<email>'}),
         ('replace_emojis', {'replacement': '<emoji>'}),
-        ('replace_urls', {'replacement': ''})]
+        ('replace_urls', {'replacement': '<url>'})]
     normalizr = Normalizr(language=language)
 
     import re
