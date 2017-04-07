@@ -127,7 +127,6 @@ class Trainer(object):
         return target.nelement()
 
     def validate_model(self, test=False, **kwargs):
-        self.model.eval()
         loss, num_examples = 0, 0
         dataset = self.datasets[self.test_name if test else self.valid_name]
         for batch_num in range(len(dataset)):
@@ -137,7 +136,6 @@ class Trainer(object):
             batch_loss = self.run_batch(
                 batch, dataset=self.valid_name, **kwargs)
             loss += batch_loss * (batch_examples if self.size_average else 1)
-        self.model.train()
         return self.format_loss(loss.data[0] / num_examples)
 
     def run_batch(self, batch_data, dataset='train', **kwargs):
@@ -180,6 +178,7 @@ class Trainer(object):
             check_examples += num_examples
             # checkpoint
             if checkpoint and batch_num > 0 and batch_num % checkpoint == 0:
+                self.model.eval()
                 self.log('checkpoint', {
                     'epoch': epoch,
                     'batch': batch_num,
@@ -188,6 +187,7 @@ class Trainer(object):
                     'duration': time.time() - start,
                     'loss': self.format_loss(check_loss / check_examples)})
                 self.run_hooks(epoch, batch_num, checkpoint)
+                self.model.train()
                 check_loss, check_examples, start = 0, 0, time.time()
         return epoch_loss, epoch_examples
 
@@ -202,18 +202,20 @@ class Trainer(object):
         start = time.time()
         for epoch in range(1, epochs + 1):
             start_epoch = time.time()
+            self.model.train()
             self.on_epoch_begin(epoch)
-            try:  # TODO: EarlyStopping might come from train or valid
+            try:
                 # train
-                self.model.train()
                 epoch_loss, epoch_examples = self.train_epoch(
                     epoch, checkpoint, shuffle, **kwargs)
                 epoch_loss = self.format_loss(epoch_loss / epoch_examples)
                 epoch_time = time.time() - start_epoch
                 # valid
                 if self.valid_name in self.datasets:
+                    self.model.eval()
                     valid_loss = self.validate_model(**kwargs)
                     self.on_validation_end(epoch, valid_loss)
+                    self.model.train()
                 self.on_epoch_end(
                     epoch, epoch_loss, epoch_examples, epoch_time)
             except EarlyStoppingException as e:
@@ -226,6 +228,7 @@ class Trainer(object):
         self.log("info", "Trained for [%.3f sec]" % (time.time() - start))
         # test
         if self.test_name in self.datasets:
+            self.model.eval()
             self.on_test_begin(epoch)
             test_loss = self.validate_model(test=True, **kwargs)
             self.on_test_end(test_loss)
