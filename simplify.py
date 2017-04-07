@@ -13,14 +13,16 @@ except:
     print('no NVIDIA driver found')
 torch.manual_seed(seed)
 
-import utils as u
-from preprocess import text_processor
-from dataset import PairedDataset, Dict
-from encoder_decoder import EncoderDecoder
-from optimizer import Optimizer
-from trainer import EncoderDecoderTrainer
-from loggers import StdLogger, VisdomLogger
 from train_encoder_decoder import make_encdec_hook, make_criterion
+
+from modules.encoder_decoder import EncoderDecoder
+from modules import utils as u
+
+from misc.dataset import PairedDataset, Dict
+from misc.optimizer import Optimizer
+from misc.trainer import EncoderDecoderTrainer
+from misc.loggers import StdLogger, VisdomLogger
+from misc.preprocess import text_processor
 
 
 def load_data(path, exts, text_processor=text_processor()):

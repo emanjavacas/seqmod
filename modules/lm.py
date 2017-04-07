@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 
 import utils as u
-from modules import word_dropout
+from custom import word_dropout
 from beam_search import Beam
 
 

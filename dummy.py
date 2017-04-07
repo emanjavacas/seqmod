@@ -1,7 +1,9 @@
 
 from random import choice, randrange
-from dataset import PairedDataset, Dict
-import utils as u
+
+from misc.dataset import PairedDataset, Dict
+
+from modules import utils as u
 
 
 # string generator functions

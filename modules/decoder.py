@@ -4,9 +4,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 
-import utils as u
-from modules import StackedRNN, MaxOut
-import attention as attn
+from modules import utils as u
+from modules import attention as attn
+from modules.custom import StackedRNN, MaxOut
 
 
 class Decoder(nn.Module):

@@ -4,11 +4,12 @@ import torch
 import torch.nn as nn
 from torch.autograd import Variable
 
-from modules import word_dropout
-from encoder import Encoder
-from decoder import Decoder
-from beam_search import Beam
-import utils as u
+from modules.custom import word_dropout
+from modules.encoder import Encoder
+from modules.decoder import Decoder
+from modules import utils as u
+
+from misc.beam_search import Beam
 
 
 class EncoderDecoder(nn.Module):
@@ -194,11 +195,6 @@ class EncoderDecoder(nn.Module):
         for p in getattr(self, module).parameters():
             p.requires_grad = False
 
-    def parameters(self):
-        for p in super(EncoderDecoder, self).parameters():
-            if p.requires_grad is not False:
-                yield p
-
     def forward(self, inp, trg):
         """
         Parameters:
@@ -217,7 +213,7 @@ class EncoderDecoder(nn.Module):
         att_weights: (batch x seq_len)
         """
         inp = word_dropout(
-            inp, self.target_code, reserved_codes=self.reserved_codes
+            inp, self.target_code, reserved_codes=self.reserved,
             dropout=self.word_dropout, training=self.training)
         emb_inp = self.src_embeddings(inp)
         enc_outs, enc_hidden = self.encoder(emb_inp)

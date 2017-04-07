@@ -1,5 +1,4 @@
 
-import time
 import string
 
 seed = 1005
@@ -20,26 +19,20 @@ np.random.seed(seed)
 from torch import nn            # nopep8
 from torch.autograd import Variable  # nopep8
 
-# from hinton_diagram import hinton  # nopep8
-from encoder_decoder import EncoderDecoder  # nopep8
-from optimizer import Optimizer             # nopep8
+from modules.encoder_decoder import EncoderDecoder  # nopep8
+from modules import utils as u                      # nopep8
 
-from trainer import EncoderDecoderTrainer   # nopep8
-from loggers import StdLogger, VisdomLogger  # nopep8
-from dataset import PairedDataset, Dict      # nopep8
-import dummy as d                            # nopep8
-import utils as u                            # nopep8
+from misc.optimizer import Optimizer             # nopep8
+from misc.trainer import EncoderDecoderTrainer   # nopep8
+from misc.loggers import StdLogger, VisdomLogger  # nopep8
+from misc.dataset import PairedDataset, Dict      # nopep8
 
-
-# def plot_weights(att_weights, target, hyp, epoch, batch):
-#     fig = hinton(att_weights.squeeze(1).t().data.cpu().numpy(),
-#                  ylabels=list(target),
-#                  xlabels=list(hyp.replace(u.EOS, '')))
-#     fig.savefig('./img/{epoch}_{batch}'.format(epoch=epoch, batch=batch))
+import dummy as d                                 # nopep8
 
 
 def translate(model, target, gpu, beam=False):
-    target = torch.LongTensor(list(model.src_dict.transform([target], bos=False)))
+    target = torch.LongTensor(
+        list(model.src_dict.transform([target], bos=False)))
     batch = Variable(target.t(), volatile=True)
     batch = batch.cuda() if gpu else batch
     if beam:
@@ -55,8 +48,8 @@ def make_encdec_hook(target, gpu, beam=False):
     def hook(trainer, epoch, batch_num, checkpoint):
         trainer.log("info", "Translating %s" % target)
         scores, hyps, atts = translate(trainer.model, target, gpu, beam=beam)
-        hyps = [u.format_hyp(sum(score), hyp, hyp_num + 1, trainer.model.trg_dict)
-                for hyp_num, (score, hyp) in enumerate(zip(scores, hyps))]
+        hyps = [u.format_hyp(sum(score), hyp, num + 1, trainer.model.trg_dict)
+                for num, (score, hyp) in enumerate(zip(scores, hyps))]
         trainer.log("info", '\n***' + ''.join(hyps) + '\n***')
 
     return hook

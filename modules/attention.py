@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-import utils as u
+from modules import utils as u
 
 
 class GlobalAttention(nn.Module):

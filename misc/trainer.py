@@ -5,9 +5,10 @@ import torch
 import numpy as np
 from torch.autograd import Variable
 
-import utils as u
-from dataset import CyclicBlockDataset
-from early_stopping import EarlyStopping, EarlyStoppingException
+from misc.dataset import CyclicBlockDataset
+from misc.early_stopping import EarlyStopping, EarlyStoppingException
+
+from modules import utils as u
 
 
 # Utility functions (repackage_hidden, memory effective loss, etc.)

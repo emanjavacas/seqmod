@@ -3,8 +3,8 @@ import os
 import time
 import numpy as np
 import pickle as p
-from dataset import Dict
-import utils as u
+
+from misc.dataset import Dict
 
 
 def text_processor(language='en', num=True, lower=True):
@@ -57,8 +57,8 @@ if __name__ == '__main__':
     parser.add_argument('--output_file', type=str, default="processed")
     parser.add_argument('--min_freq', type=int, default=1)
     parser.add_argument('--max_size', type=int, default=None)
-    parser.add_argument('--bos_token', type=str, default=u.BOS)
-    parser.add_argument('--eos_token', type=str, default=u.EOS)
+    parser.add_argument('--bos_token', type=str, default='<bos>')
+    parser.add_argument('--eos_token', type=str, default='<eos>')
     parser.add_argument('--max_buffer_size', type=int, default=100000)
     args = parser.parse_args()
 
