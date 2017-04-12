@@ -13,16 +13,20 @@ def root(x, nth=1):
 
 class Optimizer(object):
     def __init__(self, params, method, lr=1., max_norm=5.,
-                 lr_decay=1, start_decay_at=None):
+                 weight_decay=0, lr_decay=1, start_decay_at=None):
         self.params = list(params)
+        self.method = method
         self.lr = lr
-        self.max_norm = max_norm
+        self.max_norm = max_norm if max_norm > 0 else None
+        self.weight_decay = weight_decay
+        # lr decay for vanilla SGD
         self.lr_decay = lr_decay
         self.start_decay_at = start_decay_at
-        self.method = method
+        # attributes
         self.last_ppl = None
         self.start_decay = False
-        self.optim = getattr(optim, self.method)(self.params, lr=self.lr)
+        self.optim = getattr(optim, self.method)(
+            self.params, lr=self.lr, weight_decay=self.weight_decay)
 
     def set_params(self, params):
         self.params = list(params)
@@ -32,7 +36,8 @@ class Optimizer(object):
         """
         Run an update eventually clipping the gradients
         """
-        clip_grad_norm(self.params, self.max_norm, norm_type=norm_type)
+        if self.max_norm is not None:
+            clip_grad_norm(self.params, self.max_norm, norm_type=norm_type)
         self.optim.step()
 
     def zero_grad(self):
@@ -52,5 +57,6 @@ class Optimizer(object):
             if self.start_decay:
                 self.lr = self.lr * self.lr_decay
             self.last_ppl = ppl
-            self.optim = getattr(optim, self.method)(self.params, lr=self.lr)
+            self.optim = getattr(optim, self.method)(
+                self.params, lr=self.lr, weight_decay=self.weight_decay)
             return last_lr, self.lr
