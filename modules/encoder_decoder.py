@@ -294,11 +294,9 @@ class EncoderDecoder(nn.Module):
         else:
             enc_hidden = enc_hidden.repeat(1, beam_width, 1)
         beam = Beam(beam_width, bos, eos, gpu=gpu)
-        dec_out, dec_hidden = None, None
+        dec_out, dec_hidden, enc_att = None, None, None
         if self.decoder.att_type == 'Bahdanau':
             enc_att = self.decoder.attn.project_enc_outs(enc_outs)
-        else:
-            enc_att = None
         while beam.active and len(beam) < len(src) * max_decode_len:
             # add seq_len singleton dim (1 x width)
             prev = Variable(
