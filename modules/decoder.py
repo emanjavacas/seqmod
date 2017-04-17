@@ -24,8 +24,8 @@ class Decoder(nn.Module):
                  att_type='Bahdanau', dropout=0.0, maxout=2,
                  add_prev=True, project_init=False):
         enc_hid_dim, dec_hid_dim = hid_dim
-        in_dim = enc_hid_dim if not add_prev else enc_hid_dim + emb_dim
         enc_num_layers, dec_num_layers = num_layers
+        in_dim = emb_dim if not add_prev else enc_hid_dim + emb_dim
         self.num_layers = dec_num_layers
         self.cell = cell
         self.hid_dim = dec_hid_dim
@@ -151,12 +151,11 @@ class Decoder(nn.Module):
         if self.add_prev:
             inp = torch.cat([out, prev], 1)
         else:
-            inp = out
+            inp = prev
         out, hidden = self.rnn_step(inp, hidden)
         out, att_weight = self.attn(out, enc_outs, enc_att=enc_att, mask=mask)
         # out (batch x att_dim)
-        if self.has_dropout:
-            out = F.dropout(out, p=self.dropout, training=self.training)
+        out = F.dropout(out, p=self.dropout, training=self.training)
         if self.has_maxout:
             out = self.maxout(torch.cat([out, prev], 1))
         return out, hidden, att_weight
