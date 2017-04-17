@@ -92,8 +92,9 @@ if __name__ == '__main__':
     parser.add_argument('--max_len', default=15, type=int)
     parser.add_argument('--sample_fn', default='reverse', type=str)
     parser.add_argument('--dev', default=0.1, type=float)
-    parser.add_argument('--bidi', action='store_true')
+    parser.add_argument('--non_bidi', action='store_true')
     parser.add_argument('--layers', default=1, type=int)
+    parser.add_argument('--dec_layers', default=1, type=int)
     parser.add_argument('--cell', default='LSTM', type=str)
     parser.add_argument('--emb_dim', default=4, type=int)
     parser.add_argument('--hid_dim', default=64, type=int)
@@ -102,6 +103,7 @@ if __name__ == '__main__':
     parser.add_argument('--maxout', default=0, type=int)
     parser.add_argument('--tie_weights', action='store_true')
     parser.add_argument('--project_on_tied_weights', action='store_true')
+    parser.add_argument('--project_init', action='store_true')
     parser.add_argument('--epochs', default=5, type=int)
     parser.add_argument('--prefix', default='model', type=str)
     parser.add_argument('--vocab', default=list(string.ascii_letters) + [' '])
@@ -149,10 +151,10 @@ if __name__ == '__main__':
     print('Building model...')
 
     model = EncoderDecoder(
-        (args.layers, args.layers), args.emb_dim, (args.hid_dim, args.hid_dim),
+        (args.layers, args.dec_layers), args.emb_dim, args.hid_dim,
         args.att_dim, src_dict, att_type=args.att_type, dropout=args.dropout,
-        bidi=args.bidi, cell=args.cell, maxout=args.maxout,
-        tie_weights=args.tie_weights,
+        bidi=not args.non_bidi, cell=args.cell, maxout=args.maxout,
+        tie_weights=args.tie_weights, project_init=args.project_init,
         project_on_tied_weights=args.project_on_tied_weights)
 
     # model.freeze_submodule('encoder')

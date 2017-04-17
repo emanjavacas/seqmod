@@ -39,11 +39,11 @@ class GlobalAttention(nn.Module):
 
 
 class BahdanauAttention(nn.Module):
-    def __init__(self, att_dim, enc_hid_dim, dec_hid_dim):
+    def __init__(self, att_dim, hid_dim):
         super(BahdanauAttention, self).__init__()
         self.att_dim = att_dim
-        self.enc2att = nn.Linear(enc_hid_dim, att_dim, bias=False)
-        self.dec2att = nn.Linear(dec_hid_dim, att_dim, bias=False)
+        self.enc2att = nn.Linear(hid_dim, att_dim, bias=False)
+        self.dec2att = nn.Linear(hid_dim, att_dim, bias=False)
         self.att_v = nn.Parameter(torch.Tensor(att_dim))
 
     def project_enc_outs(self, enc_outs):
@@ -66,10 +66,10 @@ class BahdanauAttention(nn.Module):
         """
         Parameters:
         -----------
-        dec_out: torch.Tensor (batch x dec_hid_dim)
+        dec_out: torch.Tensor (batch x hid_dim)
             Output of decoder at current step
 
-        enc_outs: torch.Tensor (seq_len x batch x enc_hid_dim)
+        enc_outs: torch.Tensor (seq_len x batch x hid_dim)
             Output of encoder over the entire sequence
 
         enc_att: see self.project_enc_outs(self, enc_outs)

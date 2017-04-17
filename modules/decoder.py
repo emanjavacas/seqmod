@@ -23,44 +23,42 @@ class Decoder(nn.Module):
     def __init__(self, emb_dim, hid_dim, num_layers, cell, att_dim,
                  att_type='Bahdanau', dropout=0.0, maxout=2,
                  add_prev=True, project_init=False):
-        enc_hid_dim, dec_hid_dim = hid_dim
-        enc_num_layers, dec_num_layers = num_layers
-        in_dim = emb_dim if not add_prev else enc_hid_dim + emb_dim
+        in_dim = emb_dim if not add_prev else hid_dim + emb_dim
+        if isinstance(num_layers, tuple):
+            enc_num_layers, dec_num_layers = num_layers
+        else:
+            enc_num_layers, dec_num_layers = num_layers, num_layers
         self.num_layers = dec_num_layers
+        self.hid_dim = hid_dim
         self.cell = cell
-        self.hid_dim = dec_hid_dim
         self.add_prev = add_prev
-        self.project_init = project_init
         self.dropout = dropout
+        self.project_init = project_init
         super(Decoder, self).__init__()
 
         # rnn layers
         self.rnn_step = StackedRNN(
-            dec_num_layers, in_dim, dec_hid_dim, cell=cell, dropout=dropout)
+            self.num_layers, in_dim, hid_dim, cell=cell, dropout=dropout)
 
         # attention network
         self.att_type = att_type
         if att_type == 'Bahdanau':
-            self.attn = attn.BahdanauAttention(
-                att_dim, dec_hid_dim, dec_hid_dim)
+            self.attn = attn.BahdanauAttention(att_dim, hid_dim)
         elif att_type == 'Global':
-            assert att_dim == dec_hid_dim, \
+            assert att_dim == hid_dim, \
                 "For global, Encoder, Decoder & Attention must have same size"
-            self.attn = attn.GlobalAttention(dec_hid_dim)
+            self.attn = attn.GlobalAttention(hid_dim)
         else:
             raise ValueError("unknown attention network [%s]" % att_type)
-        # init state matrix (Bahdanau)
         if self.project_init:
             assert self.att_type != "Global", \
                 "GlobalAttention doesn't support project_init yet"
             # normally dec_hid_dim == enc_hid_dim, but if not we project
-            self.W_h = nn.Parameter(torch.Tensor(
-                enc_hid_dim * enc_num_layers,
-                dec_hid_dim * dec_num_layers))
+            self.project_h = nn.Linear(hid_dim * enc_num_layers,
+                                       hid_dim * dec_num_layers)
             if self.cell.startswith('LSTM'):
-                self.W_c = nn.Parameter(torch.Tensor(
-                    enc_hid_dim * enc_num_layers,
-                    dec_hid_dim * dec_num_layers))
+                self.project_c = nn.Linear(hid_dim * enc_num_layers,
+                                           hid_dim * dec_num_layers)
 
         # maxout
         self.has_maxout = False
@@ -70,38 +68,39 @@ class Decoder(nn.Module):
 
     def init_hidden_for(self, enc_hidden):
         """
-        Creates a variable at decoding step 0 to be fed as init hidden step
+        Creates a variable at decoding step 0 to be fed as init hidden step.
 
         Returns (h_0, c_0):
         --------
-        h_0: torch.Tensor (dec_num_layers x batch x dec_hid_dim)
-        c_0: torch.Tensor (dec_num_layers x batch x dec_hid_dim)
+        h_0: torch.Tensor (dec_num_layers x batch x hid_dim)
+        c_0: torch.Tensor (dec_num_layers x batch x hid_dim)
         """
         if self.cell.startswith('LSTM'):
             h_t, c_t = enc_hidden
         else:
             h_t = enc_hidden
-        num_layers, bs, hid_dim = h_t.size()
-        size = self.num_layers, bs, self.hid_dim
-        # use a projection of last encoder hidden state
-        if self.project_init:
-            # -> (batch x 1 x num_layers * enc_hid_dim)
-            h_t = h_t.t().contiguous().view(-1, num_layers * hid_dim)
-            h_t = h_t.unsqueeze(1)
-            dec_h0 = torch.bmm(h_t, u.tile(self.W_h, bs)).view(*size)
-            if self.cell.startswith('LSTM'):
-                c_t = c_t.t().contiguous().view(-1, num_layers * hid_dim)
-                c_t = c_t.unsqueeze(1)
-                dec_c0 = torch.bmm(c_t, u.tile(self.W_c, bs)).view(*size)
-        else:
-            assert num_layers == self.num_layers, \
+        enc_num_layers, bs, hid_dim = h_t.size()
+
+        if not self.project_init:
+            # use last encoder hidden state
+            assert enc_num_layers == self.num_layers, \
                 "encoder and decoder need equal depth if project_init not set"
-            assert hid_dim == self.hid_dim, \
-                "encoder and decoder need equal size if project_init not set"
             if self.cell.startswith('LSTM'):
                 dec_h0, dec_c0 = enc_hidden
             else:
                 dec_h0 = enc_hidden
+        else:
+            # use a projection of last encoder hidden state
+            # TODO: alternatively we could use state at lastest encoder layer
+            # -> (batch x 1 x enc_num_layers * hid_dim)
+            h_t = h_t.t().contiguous().view(-1, enc_num_layers * hid_dim)
+            dec_h0 = self.project_h(h_t)
+            dec_h0 = dec_h0.view(bs, self.num_layers, self.hid_dim).t()
+            if self.cell.startswith('LSTM'):
+                c_t = c_t.t().contiguous().view(-1, enc_num_layers * hid_dim)
+                dec_c0 = self.project_c(c_t)
+                dec_c0 = dec_c0.view(bs, self.num_layers, self.hid_dim).t()
+
         if self.cell.startswith('LSTM'):
             return dec_h0, dec_c0
         else:
@@ -109,19 +108,19 @@ class Decoder(nn.Module):
 
     def init_output_for(self, dec_hidden):
         """
-        Creates a variable to be concatenated with previous target embedding
-        as input for the current rnn step. This is normally used for the first
-        decoding step.
+        Creates a variable to be concatenated with previous target
+        embedding as input for the first rnn step. This is used
+        for the first decoding step when using the add_prev flag.
 
         Parameters:
         -----------
         hidden: tuple (h_0, c_0)
-        h_0: torch.Tensor (num_layers x batch x hid_dim)
-        c_0: torch.Tensor (num_layers x batch x hid_dim)
+        h_0: torch.Tensor (dec_num_layers x batch x hid_dim)
+        c_0: torch.Tensor (dec_num_layers x batch x hid_dim)
 
         Returns:
         --------
-        torch.Tensor (batch x dec_hid_dim)
+        torch.Tensor (batch x hid_dim)
         """
         if self.cell.startswith('LSTM'):
             dec_hidden = dec_hidden[0]
@@ -141,15 +140,14 @@ class Decoder(nn.Module):
             Output of the encoder at the last layer for all encoding steps.
 
         enc_hidden: tuple (h_t, c_t)
-            h_t: (num_layers x batch x hid_dim)
-            c_t: (num_layers x batch x hid_dim)
+            h_t: (enc_num_layers x batch x hid_dim)
+            c_t: (enc_num_layers x batch x hid_dim)
             Can be used to use to specify an initial hidden state for the
             decoder (e.g. the hidden state at the last encoding step.)
         """
         hidden = hidden or self.init_hidden_for(enc_hidden)
-        out = out or self.init_output_for(hidden)
         if self.add_prev:
-            inp = torch.cat([out, prev], 1)
+            inp = torch.cat([out or self.init_output_for(hidden), prev], 1)
         else:
             inp = prev
         out, hidden = self.rnn_step(inp, hidden)

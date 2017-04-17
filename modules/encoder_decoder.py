@@ -20,29 +20,24 @@ class EncoderDecoder(nn.Module):
     num_layers: tuple(enc_num_layers, dec_num_layers) or int,
         Number of layers for both the encoder and the decoder.
     emb_dim: int, embedding dimension
-    hid_dim: tuple(enc_hid_dim, dec_hid_dim) or int,
-        Hidden state size for the encoder and the decoder
-    att_dim: int, hidden state for the attention network.
+    hid_dim: int, Hidden state size for the encoder and the decoder
+    att_dim: int, Hidden state for the attention network.
         Note that it has to be equal to the encoder/decoder hidden
         size when using GlobalAttention.
-    src_dict: Dict,
-        A fitted Dict used to encode the data into integers.
-    trg_dict: Dict,
-        Same as src_dict in case of bilingual training.
-    cell: string,
-        Cell type to use. One of (LSTM, GRU).
-    att_type: string,
-        Attention mechanism to use. One of (Global, Bahdanau).
+    src_dict: Dict, A fitted Dict used to encode the data into integers.
+    trg_dict: Dict, Same as src_dict in case of bilingual training.
+    cell: string, Cell type to use. One of (LSTM, GRU).
+    att_type: string, Attention mechanism to use. One of (Global, Bahdanau).
     dropout: float
     word_dropout: float
-    bidi: bool,
-        Whether to use bidirection encoder or not.
+    bidi: bool, Whether to use bidirectional.
     add_prev: bool,
-        Whether to feed back the last decoder prediction as input to
-        the decoder for the next step together with the hidden state.
+        Whether to feed back the last decoder state as input to
+        the decoder for the next step together with the last
+        predicted word embedding.
     project_init: bool,
-        Whether to use an extra projection on last encoder hidden state to
-        initialize decoder hidden state.
+        Whether to use an extra projection on last encoder hidden
+        state to initialize decoder hidden state.
     """
     def __init__(self,
                  num_layers,
@@ -62,10 +57,6 @@ class EncoderDecoder(nn.Module):
                  project_on_tied_weights=False,
                  project_init=False):
         super(EncoderDecoder, self).__init__()
-        if isinstance(hid_dim, tuple):
-            enc_hid_dim, dec_hid_dim = hid_dim
-        else:
-            enc_hid_dim, dec_hid_dim = hid_dim, hid_dim
         if isinstance(num_layers, tuple):
             enc_num_layers, dec_num_layers = num_layers
         else:
@@ -81,9 +72,9 @@ class EncoderDecoder(nn.Module):
         # word_dropout
         self.word_dropout = word_dropout
         self.target_code = self.src_dict.get_unk()
-        self.reserved = (self.src_dict.get_eos(),
-                         self.src_dict.get_bos(),
-                         self.src_dict.get_pad())
+        self.reserved_codes = (self.src_dict.get_eos(),
+                               self.src_dict.get_bos(),
+                               self.src_dict.get_pad())
 
         # embedding layer(s)
         self.src_embeddings = nn.Embedding(
@@ -96,13 +87,12 @@ class EncoderDecoder(nn.Module):
 
         # encoder
         self.encoder = Encoder(
-            emb_dim, enc_hid_dim, enc_num_layers,
+            emb_dim, hid_dim, enc_num_layers,
             cell=cell, bidi=bidi, dropout=dropout)
 
         # decoder
         self.decoder = Decoder(
-            emb_dim, (enc_hid_dim, dec_hid_dim),
-            (enc_num_layers, dec_num_layers), cell, att_dim,
+            emb_dim, hid_dim, (enc_num_layers, dec_num_layers), cell, att_dim,
             dropout=dropout, maxout=maxout, add_prev=add_prev,
             project_init=project_init, att_type=att_type)
 
@@ -112,17 +102,17 @@ class EncoderDecoder(nn.Module):
             project = nn.Linear(emb_dim, output_size)
             project.weight = self.trg_embeddings.weight
             if not project_on_tied_weights:
-                assert emb_dim == dec_hid_dim, \
+                assert emb_dim == hid_dim, \
                     "When tying weights, output projection and " + \
                     "embedding layer should have equal size"
                 self.project = nn.Sequential(project, nn.LogSoftmax())
             else:
-                project_tied = nn.Linear(dec_hid_dim, emb_dim)
+                project_tied = nn.Linear(hid_dim, emb_dim)
                 self.project = nn.Sequential(
                     project_tied, project, nn.LogSoftmax())
         else:
             self.project = nn.Sequential(
-                nn.Linear(dec_hid_dim, output_size),
+                nn.Linear(hid_dim, output_size),
                 nn.LogSoftmax())
 
     # General utility functions
@@ -205,8 +195,8 @@ class EncoderDecoder(nn.Module):
         --------
         outs: torch.Tensor (batch x vocab_size),
         hidden: (h_t, c_t)
-            h_t: torch.Tensor (batch x dec_hid_dim)
-            c_t: torch.Tensor (batch x dec_hid_dim)
+            h_t: torch.Tensor (batch x hid_dim)
+            c_t: torch.Tensor (batch x hid_dim)
         att_weights: (batch x seq_len)
         """
         inp = word_dropout(
