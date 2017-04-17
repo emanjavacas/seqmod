@@ -35,9 +35,9 @@ class EncoderDecoder(nn.Module):
         Whether to feed back the last decoder state as input to
         the decoder for the next step together with the last
         predicted word embedding.
-    project_init: bool,
-        Whether to use an extra projection on last encoder hidden
-        state to initialize decoder hidden state.
+    init_hidden: one of 'last', 'project', optional
+        Whether to use the last layer or an extra projection
+        of the last encoder hidden state to initialize decoder hidden state.
     """
     def __init__(self,
                  num_layers,
@@ -55,7 +55,7 @@ class EncoderDecoder(nn.Module):
                  add_prev=True,
                  tie_weights=False,
                  project_on_tied_weights=False,
-                 project_init=False):
+                 init_hidden='last'):
         super(EncoderDecoder, self).__init__()
         if isinstance(num_layers, tuple):
             enc_num_layers, dec_num_layers = num_layers
@@ -94,7 +94,7 @@ class EncoderDecoder(nn.Module):
         self.decoder = Decoder(
             emb_dim, hid_dim, (enc_num_layers, dec_num_layers), cell, att_dim,
             dropout=dropout, maxout=maxout, add_prev=add_prev,
-            project_init=project_init, att_type=att_type)
+            init_hidden=init_hidden, att_type=att_type)
 
         # output projection
         output_size = trg_vocab_size if self.bilingual else src_vocab_size

@@ -103,7 +103,7 @@ if __name__ == '__main__':
     parser.add_argument('--maxout', default=0, type=int)
     parser.add_argument('--tie_weights', action='store_true')
     parser.add_argument('--project_on_tied_weights', action='store_true')
-    parser.add_argument('--project_init', action='store_true')
+    parser.add_argument('--init_hidden', default='last')
     parser.add_argument('--epochs', default=5, type=int)
     parser.add_argument('--prefix', default='model', type=str)
     parser.add_argument('--vocab', default=list(string.ascii_letters) + [' '])
@@ -154,7 +154,7 @@ if __name__ == '__main__':
         (args.layers, args.dec_layers), args.emb_dim, args.hid_dim,
         args.att_dim, src_dict, att_type=args.att_type, dropout=args.dropout,
         bidi=not args.non_bidi, cell=args.cell, maxout=args.maxout,
-        tie_weights=args.tie_weights, project_init=args.project_init,
+        tie_weights=args.tie_weights, init_hidden=args.init_hidden,
         project_on_tied_weights=args.project_on_tied_weights)
 
     # model.freeze_submodule('encoder')

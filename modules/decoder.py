@@ -16,13 +16,13 @@ class Decoder(nn.Module):
     Parameters:
     -----------
     num_layers: tuple (enc_num_layers, dec_num_layers)
-    project_init: bool, optional
-        Whether to use an extra projection on last encoder hidden state to
-        initialize decoder hidden state.
+    init_hidden: one of 'last', 'project', optional
+        Whether to use the last layer or an extra projection
+        of the last encoder hidden state to initialize decoder hidden state.
     """
     def __init__(self, emb_dim, hid_dim, num_layers, cell, att_dim,
                  att_type='Bahdanau', dropout=0.0, maxout=2,
-                 add_prev=True, project_init=False):
+                 add_prev=True, init_hidden='last'):
         in_dim = emb_dim if not add_prev else hid_dim + emb_dim
         if isinstance(num_layers, tuple):
             enc_num_layers, dec_num_layers = num_layers
@@ -33,7 +33,7 @@ class Decoder(nn.Module):
         self.cell = cell
         self.add_prev = add_prev
         self.dropout = dropout
-        self.project_init = project_init
+        self.init_hidden = init_hidden
         super(Decoder, self).__init__()
 
         # rnn layers
@@ -50,9 +50,9 @@ class Decoder(nn.Module):
             self.attn = attn.GlobalAttention(hid_dim)
         else:
             raise ValueError("unknown attention network [%s]" % att_type)
-        if self.project_init:
+        if self.init_hidden == 'project':
             assert self.att_type != "Global", \
-                "GlobalAttention doesn't support project_init yet"
+                "GlobalAttention doesn't support projection"
             # normally dec_hid_dim == enc_hid_dim, but if not we project
             self.project_h = nn.Linear(hid_dim * enc_num_layers,
                                        hid_dim * dec_num_layers)
@@ -81,25 +81,27 @@ class Decoder(nn.Module):
             h_t = enc_hidden
         enc_num_layers, bs, hid_dim = h_t.size()
 
-        if not self.project_init:
-            # use last encoder hidden state
-            assert enc_num_layers == self.num_layers, \
-                "encoder and decoder need equal depth if project_init not set"
+        if enc_num_layers == self.num_layers:
             if self.cell.startswith('LSTM'):
                 dec_h0, dec_c0 = enc_hidden
             else:
                 dec_h0 = enc_hidden
         else:
-            # use a projection of last encoder hidden state
-            # TODO: alternatively we could use state at lastest encoder layer
-            # -> (batch x 1 x enc_num_layers * hid_dim)
-            h_t = h_t.t().contiguous().view(-1, enc_num_layers * hid_dim)
-            dec_h0 = self.project_h(h_t)
-            dec_h0 = dec_h0.view(bs, self.num_layers, self.hid_dim).t()
-            if self.cell.startswith('LSTM'):
-                c_t = c_t.t().contiguous().view(-1, enc_num_layers * hid_dim)
-                dec_c0 = self.project_c(c_t)
-                dec_c0 = dec_c0.view(bs, self.num_layers, self.hid_dim).t()
+            if self.init_hidden == 'project':
+                # use a projection of last encoder hidden state
+                h_t = h_t.t().contiguous().view(-1, enc_num_layers * hid_dim)
+                dec_h0 = self.project_h(h_t)
+                dec_h0 = dec_h0.view(bs, self.num_layers, self.hid_dim).t()
+                if self.cell.startswith('LSTM'):
+                    c_t = c_t.t().contiguous()\
+                                 .view(-1, enc_num_layers * hid_dim)
+                    dec_c0 = self.project_c(c_t)
+                    dec_c0 = dec_c0.view(bs, self.num_layers, self.hid_dim).t()
+            else:
+                # pick last layer of last hidden state
+                dec_h0 = h_t[-1, :, :].unsqueeze(0)
+                if self.cell.startswith('LSTM'):
+                    dec_c0 = c_t[-1, :, :].unsqueeze(0)
 
         if self.cell.startswith('LSTM'):
             return dec_h0, dec_c0
