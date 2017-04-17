@@ -8,7 +8,6 @@ from modules.custom import word_dropout
 from modules.encoder import Encoder
 from modules.decoder import Decoder
 from modules import utils as u
-
 from misc.beam_search import Beam
 
 
@@ -102,7 +101,7 @@ class EncoderDecoder(nn.Module):
 
         # decoder
         self.decoder = Decoder(
-            emb_dim, enc_hid_dim, dec_hid_dim,
+            emb_dim, (enc_hid_dim, dec_hid_dim),
             (enc_num_layers, dec_num_layers), cell, att_dim,
             dropout=dropout, maxout=maxout, add_prev=add_prev,
             project_init=project_init, att_type=att_type)
@@ -199,10 +198,8 @@ class EncoderDecoder(nn.Module):
         """
         Parameters:
         -----------
-        inp: torch.Tensor (seq_len x batch),
-            Train data for a single batch.
-        trg: torch.Tensor (seq_len x batch)
-            Desired output for a single batch
+        inp: torch.Tensor (seq_len x batch), Train data for a single batch.
+        trg: torch.Tensor (seq_len x batch), Desired output for a single batch.
 
         Returns: outs, hidden, att_ws
         --------
@@ -213,16 +210,14 @@ class EncoderDecoder(nn.Module):
         att_weights: (batch x seq_len)
         """
         inp = word_dropout(
-            inp, self.target_code, reserved_codes=self.reserved,
+            inp, self.target_code, reserved_codes=self.reserved_codes,
             dropout=self.word_dropout, training=self.training)
         emb_inp = self.src_embeddings(inp)
         enc_outs, enc_hidden = self.encoder(emb_inp)
-        dec_outs, dec_out, dec_hidden = [], None, None
+        dec_outs, dec_hidden, enc_att, dec_out = [], None, None, None
         # cache encoder att projection for bahdanau
         if self.decoder.att_type == 'Bahdanau':
             enc_att = self.decoder.attn.project_enc_outs(enc_outs)
-        else:
-            enc_att = None
         for prev in trg.chunk(trg.size(0)):
             emb_prev = self.trg_embeddings(prev).squeeze(0)
             dec_out, dec_hidden, att_weight = self.decoder(
@@ -232,6 +227,14 @@ class EncoderDecoder(nn.Module):
         return torch.stack(dec_outs)
 
     def translate(self, src, max_decode_len=2):
+        """
+        Translate a single input sequence using greedy decoding..
+
+        Parameters:
+        -----------
+
+        src: torch.LongTensor (seq_len x 1)
+        """
         pad = self.src_dict.get_pad()
         eos = self.src_dict.get_eos()
         bos = self.src_dict.get_bos()
@@ -241,11 +244,9 @@ class EncoderDecoder(nn.Module):
         enc_outs, enc_hidden = self.encoder(
             emb, compute_mask=False, mask_symbol=pad)
         # decode
-        dec_out, dec_hidden = None, None
+        dec_out, dec_hidden, enc_att = None, None, None
         if self.decoder.att_type == 'Bahdanau':
             enc_att = self.decoder.attn.project_enc_outs(enc_outs)
-        else:
-            enc_att = None
         scores, hyp, atts = [], [], []
         prev = Variable(src.data.new([bos]), volatile=True).unsqueeze(0)
         if gpu: prev = prev.cuda()

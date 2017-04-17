@@ -10,39 +10,43 @@ from modules.custom import StackedRNN, MaxOut
 
 
 class Decoder(nn.Module):
-    def __init__(self, emb_dim, enc_hid_dim, hid_dim, num_layers, cell,
-                 att_dim, att_type='Bahdanau', dropout=0.0, maxout=2,
+    """
+    Attentional decoder for the EncoderDecoder architecture.
+
+    Parameters:
+    -----------
+    num_layers: tuple (enc_num_layers, dec_num_layers)
+    project_init: bool, optional
+        Whether to use an extra projection on last encoder hidden state to
+        initialize decoder hidden state.
+    """
+    def __init__(self, emb_dim, hid_dim, num_layers, cell, att_dim,
+                 att_type='Bahdanau', dropout=0.0, maxout=2,
                  add_prev=True, project_init=False):
-        """
-        Parameters:
-        -----------
-        project_init: bool, optional
-            Whether to use an extra projection on last encoder hidden state to
-            initialize decoder hidden state.
-        """
+        enc_hid_dim, dec_hid_dim = hid_dim
         in_dim = enc_hid_dim if not add_prev else enc_hid_dim + emb_dim
         enc_num_layers, dec_num_layers = num_layers
         self.num_layers = dec_num_layers
         self.cell = cell
-        self.hid_dim = hid_dim
+        self.hid_dim = dec_hid_dim
         self.add_prev = add_prev
         self.project_init = project_init
-
+        self.dropout = dropout
         super(Decoder, self).__init__()
+
         # rnn layers
         self.rnn_step = StackedRNN(
-            dec_num_layers, in_dim, hid_dim, cell=cell, dropout=dropout)
-        # dropout
-        self.has_dropout = bool(dropout)
-        self.dropout = dropout
+            dec_num_layers, in_dim, dec_hid_dim, cell=cell, dropout=dropout)
+
         # attention network
         self.att_type = att_type
         if att_type == 'Bahdanau':
-            self.attn = attn.BahdanauAttention(att_dim, hid_dim, hid_dim)
+            self.attn = attn.BahdanauAttention(
+                att_dim, dec_hid_dim, dec_hid_dim)
         elif att_type == 'Global':
-            assert att_dim == hid_dim, \
+            assert att_dim == dec_hid_dim, \
                 "For global, Encoder, Decoder & Attention must have same size"
-            self.attn = attn.GlobalAttention(hid_dim)
+            self.attn = attn.GlobalAttention(dec_hid_dim)
         else:
             raise ValueError("unknown attention network [%s]" % att_type)
         # init state matrix (Bahdanau)
@@ -51,10 +55,13 @@ class Decoder(nn.Module):
                 "GlobalAttention doesn't support project_init yet"
             # normally dec_hid_dim == enc_hid_dim, but if not we project
             self.W_h = nn.Parameter(torch.Tensor(
-                enc_hid_dim * enc_num_layers, hid_dim * dec_num_layers))
+                enc_hid_dim * enc_num_layers,
+                dec_hid_dim * dec_num_layers))
             if self.cell.startswith('LSTM'):
                 self.W_c = nn.Parameter(torch.Tensor(
-                    enc_hid_dim * enc_num_layers, hid_dim * dec_num_layers))
+                    enc_hid_dim * enc_num_layers,
+                    dec_hid_dim * dec_num_layers))
+
         # maxout
         self.has_maxout = False
         if bool(maxout):
@@ -79,12 +86,12 @@ class Decoder(nn.Module):
         # use a projection of last encoder hidden state
         if self.project_init:
             # -> (batch x 1 x num_layers * enc_hid_dim)
-            h_t = h_t.t().contiguous().view(
-                -1, num_layers * hid_dim).unsqueeze(1)
+            h_t = h_t.t().contiguous().view(-1, num_layers * hid_dim)
+            h_t = h_t.unsqueeze(1)
             dec_h0 = torch.bmm(h_t, u.tile(self.W_h, bs)).view(*size)
             if self.cell.startswith('LSTM'):
-                c_t = c_t.t().contiguous().view(
-                    -1, num_layers * hid_dim).unsqueeze(1)
+                c_t = c_t.t().contiguous().view(-1, num_layers * hid_dim)
+                c_t = c_t.unsqueeze(1)
                 dec_c0 = torch.bmm(c_t, u.tile(self.W_c, bs)).view(*size)
         else:
             assert num_layers == self.num_layers, \
@@ -103,7 +110,8 @@ class Decoder(nn.Module):
     def init_output_for(self, dec_hidden):
         """
         Creates a variable to be concatenated with previous target embedding
-        as input for the current rnn step
+        as input for the current rnn step. This is normally used for the first
+        decoding step.
 
         Parameters:
         -----------
@@ -116,10 +124,8 @@ class Decoder(nn.Module):
         torch.Tensor (batch x dec_hid_dim)
         """
         if self.cell.startswith('LSTM'):
-            h_0, c_0 = dec_hidden
-        else:
-            h_0 = dec_hidden
-        data = h_0.data.new(h_0.size(1), self.hid_dim).zero_()
+            dec_hidden = dec_hidden[0]
+        data = dec_hidden.data.new(dec_hidden.size(1), self.hid_dim).zero_()
         return Variable(data, requires_grad=False)
 
     def forward(self, prev, enc_outs, enc_hidden, out=None,

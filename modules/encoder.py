@@ -7,6 +7,10 @@ from modules import utils as u
 
 
 class Encoder(nn.Module):
+    """
+    RNN Encoder that computes a sentence matrix representation
+    of the input using an RNN.
+    """
     def __init__(self, in_dim, hid_dim, num_layers, cell,
                  dropout=0.0, bidi=True):
         self.cell = cell
@@ -44,15 +48,9 @@ class Encoder(nn.Module):
 
         Returns: output, (h_t, c_t)
         --------
-        output : (seq_len x batch x hidden_size * num_directions)
-            tensor with output features (h_t) in last layer, for each t
-            hidden_size = hidden_size * 2 if bidirectional
-
-        h_t : (num_layers * num_directions x batch x hidden_size)
-            tensor with hidden state for t=seq_len
-
-        c_t : (num_layers * num_directions x batch x hidden_size)
-            tensor containing the cell state for t=seq_len
+        output: (seq_len x batch x hidden_size * num_directions)
+        h_t: (num_layers x batch x hidden_size * num_directions)
+        c_t: (num_layers x batch x hidden_size * num_directions)
         """
         if compute_mask:        # fixme, somehow not working
             seqlen, batch, _ = inp.size()
@@ -73,7 +71,7 @@ class Encoder(nn.Module):
             outs, hidden = self.rnn(inp, hidden or self.init_hidden_for(inp))
         if self.bidi:
             # BiRNN encoder outputs (num_layers * 2 x batch x enc_hid_dim)
-            # but decoder expects   (num_layers x batch x dec_hid_dim)
+            # but decoder expects   (num_layers x batch x enc_hid_dim * 2)
             if self.cell.startswith('LSTM'):
                 hidden = (u.repackage_bidi(hidden[0]),
                           u.repackage_bidi(hidden[1]))
