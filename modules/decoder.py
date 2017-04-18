@@ -129,8 +129,8 @@ class Decoder(nn.Module):
         data = dec_hidden.data.new(dec_hidden.size(1), self.hid_dim).zero_()
         return Variable(data, requires_grad=False)
 
-    def forward(self, prev, enc_outs, enc_hidden, out=None,
-                hidden=None, enc_att=None, mask=None):
+    def forward(self, prev, hidden, enc_outs,
+                out=None, enc_att=None, mask=None):
         """
         Parameters:
         -----------
@@ -141,20 +141,19 @@ class Decoder(nn.Module):
         enc_outs: torch.Tensor (seq_len x batch x enc_hid_dim),
             Output of the encoder at the last layer for all encoding steps.
 
-        enc_hidden: tuple (h_t, c_t)
+        enc_hidden: Used to seed the initial hidden state of the decoder.
             h_t: (enc_num_layers x batch x hid_dim)
             c_t: (enc_num_layers x batch x hid_dim)
-            Can be used to use to specify an initial hidden state for the
-            decoder (e.g. the hidden state at the last encoding step.)
         """
-        hidden = hidden or self.init_hidden_for(enc_hidden)
         if self.add_prev:
-            inp = torch.cat([out or self.init_output_for(hidden), prev], 1)
+            # include last out as input for the prediction of the next item
+            inp = torch.cat([prev, out or self.init_output_for(hidden)], 1)
         else:
             inp = prev
+        # out ()
         out, hidden = self.rnn_step(inp, hidden)
-        out, att_weight = self.attn(out, enc_outs, enc_att=enc_att, mask=mask)
         # out (batch x att_dim)
+        out, att_weight = self.attn(out, enc_outs, enc_att=enc_att, mask=mask)
         out = F.dropout(out, p=self.dropout, training=self.training)
         if self.has_maxout:
             out = self.maxout(torch.cat([out, prev], 1))

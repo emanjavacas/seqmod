@@ -204,15 +204,15 @@ class EncoderDecoder(nn.Module):
             dropout=self.word_dropout, training=self.training)
         emb_inp = self.src_embeddings(inp)
         enc_outs, enc_hidden = self.encoder(emb_inp)
-        dec_outs, dec_hidden, enc_att, dec_out = [], None, None, None
+        dec_hidden = self.decoder.init_hidden_for(enc_hidden)
+        dec_outs, dec_out, enc_att = [], None, None
         # cache encoder att projection for bahdanau
         if self.decoder.att_type == 'Bahdanau':
             enc_att = self.decoder.attn.project_enc_outs(enc_outs)
         for prev in trg.chunk(trg.size(0)):
             emb_prev = self.trg_embeddings(prev).squeeze(0)
             dec_out, dec_hidden, att_weight = self.decoder(
-                emb_prev, enc_outs, enc_hidden, out=dec_out,
-                hidden=dec_hidden, enc_att=enc_att)
+                emb_prev, dec_hidden, enc_outs, out=dec_out, enc_att=enc_att)
             dec_outs.append(dec_out)
         return torch.stack(dec_outs)
 
@@ -234,7 +234,8 @@ class EncoderDecoder(nn.Module):
         enc_outs, enc_hidden = self.encoder(
             emb, compute_mask=False, mask_symbol=pad)
         # decode
-        dec_out, dec_hidden, enc_att = None, None, None
+        dec_hidden = self.decoder.init_hidden_for(enc_hidden)
+        dec_out, enc_att = None, None
         if self.decoder.att_type == 'Bahdanau':
             enc_att = self.decoder.attn.project_enc_outs(enc_outs)
         scores, hyp, atts = [], [], []
@@ -243,8 +244,7 @@ class EncoderDecoder(nn.Module):
         for _ in range(len(src) * max_decode_len):
             prev_emb = self.trg_embeddings(prev).squeeze(0)
             dec_out, dec_hidden, att_weights = self.decoder(
-                prev_emb, enc_outs, enc_hidden, enc_att=enc_att,
-                hidden=dec_hidden, out=dec_out)
+                prev_emb, dec_hidden, enc_outs, out=dec_out, enc_att=enc_att)
             # (batch x vocab_size)
             outs = self.project(dec_out)
             # (1 x batch) argmax over log-probs (take idx across batch dim)
@@ -284,18 +284,18 @@ class EncoderDecoder(nn.Module):
                           enc_hidden[1].repeat(1, beam_width, 1))
         else:
             enc_hidden = enc_hidden.repeat(1, beam_width, 1)
-        beam = Beam(beam_width, bos, eos, gpu=gpu)
-        dec_out, dec_hidden, enc_att = None, None, None
+        dec_hidden = self.decoder.init_hidden_for(enc_hidden)
+        dec_out, enc_att = None, None
         if self.decoder.att_type == 'Bahdanau':
             enc_att = self.decoder.attn.project_enc_outs(enc_outs)
+        beam = Beam(beam_width, bos, eos, gpu=gpu)
         while beam.active and len(beam) < len(src) * max_decode_len:
             # add seq_len singleton dim (1 x width)
             prev = Variable(
                 beam.get_current_state().unsqueeze(0), volatile=True)
             prev_emb = self.trg_embeddings(prev).squeeze(0)
             dec_out, dec_hidden, att_weights = self.decoder(
-                prev_emb, enc_outs, enc_hidden, enc_att=enc_att,
-                hidden=dec_hidden, out=dec_out)
+                prev_emb, dec_hidden, enc_outs, out=dec_out, enc_att=enc_att)
             # (width x vocab_size)
             outs = self.project(dec_out)
             beam.advance(outs.data)
