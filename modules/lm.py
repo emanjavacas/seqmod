@@ -255,7 +255,7 @@ class LM(nn.Module):
             It will only be not None if attention is provided.
         """
         inp = word_dropout(
-            inp, self.target_code, dropout=self.word_dropout,
+            inp, self.target_code, p=self.word_dropout,
             reserved_codes=self.reserved_codes, training=self.training)
         emb = self.embeddings(inp)
         if self.has_dropout:

@@ -113,6 +113,7 @@ if __name__ == '__main__':
     parser.add_argument('--plot', action='store_true')
     parser.add_argument('--learning_rate', default=0.01, type=float)
     parser.add_argument('--dropout', default=0.0, type=float)
+    parser.add_argument('--word_dropout', default=0.0, type=float)
     parser.add_argument('--learning_rate_decay', default=0.5, type=float)
     parser.add_argument('--start_decay_at', default=8, type=int)
     parser.add_argument('--max_grad_norm', default=5., type=float)
@@ -153,6 +154,7 @@ if __name__ == '__main__':
     model = EncoderDecoder(
         (args.layers, args.dec_layers), args.emb_dim, args.hid_dim,
         args.att_dim, src_dict, att_type=args.att_type, dropout=args.dropout,
+        word_dropout=args.word_dropout,
         bidi=not args.non_bidi, cell=args.cell, maxout=args.maxout,
         tie_weights=args.tie_weights, init_hidden=args.init_hidden,
         project_on_tied_weights=args.project_on_tied_weights)

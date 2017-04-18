@@ -201,7 +201,7 @@ class EncoderDecoder(nn.Module):
         """
         inp = word_dropout(
             inp, self.target_code, reserved_codes=self.reserved_codes,
-            dropout=self.word_dropout, training=self.training)
+            p=self.word_dropout, training=self.training)
         emb_inp = self.src_embeddings(inp)
         enc_outs, enc_hidden = self.encoder(emb_inp)
         dec_hidden = self.decoder.init_hidden_for(enc_hidden)

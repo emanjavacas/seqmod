@@ -118,19 +118,19 @@ class MaxOut(nn.Module):
 
 
 # Stateless modules
-def variable_length_dropout_mask(X, dropout, reserved_codes=()):
+def variable_length_dropout_mask(X, dropout_rate, reserved_codes=()):
     """
     Computes a binary mask across batch examples based on a
     bernoulli distribution with mean equal to dropout
     """
-    probs = X.new(*X.size()).float().zero_() + dropout
+    probs = X.new(*X.size()).float().zero_() + dropout_rate
     # zeroth reserved_codes
     probs[sum((X == x) for x in reserved_codes)] = 0
     return probs.bernoulli().byte()
 
 
 def word_dropout(
-        inp, target_code, dropout=0.0, reserved_codes=(), training=True):
+        inp, target_code, p=0.0, reserved_codes=(), training=True):
     """
     Applies word dropout to an input Variable. Dropout isn't constant
     across batch examples.
@@ -144,10 +144,10 @@ def word_dropout(
         be dropped
     - training: bool
     """
-    if not training or not dropout > 0:
+    if not training or not p > 0:
         return inp
     inp = Variable(inp.data.new(*inp.size()).copy_(inp.data))
     mask = variable_length_dropout_mask(
-        inp.data, dropout, reserved_codes)
+        inp.data, dropout_rate=p, reserved_codes=reserved_codes)
     inp.masked_fill_(Variable(mask), target_code)
     return inp
