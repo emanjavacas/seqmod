@@ -199,15 +199,17 @@ class EncoderDecoder(nn.Module):
             c_t: torch.Tensor (batch x hid_dim)
         att_weights: (batch x seq_len)
         """
+        # encoder
         inp = word_dropout(
             inp, self.target_code, reserved_codes=self.reserved_codes,
             p=self.word_dropout, training=self.training)
         emb_inp = self.src_embeddings(inp)
         enc_outs, enc_hidden = self.encoder(emb_inp)
+        # decoder
         dec_hidden = self.decoder.init_hidden_for(enc_hidden)
         dec_outs, dec_out, enc_att = [], None, None
-        # cache encoder att projection for bahdanau
         if self.decoder.att_type == 'Bahdanau':
+            # cache encoder att projection for bahdanau
             enc_att = self.decoder.attn.project_enc_outs(enc_outs)
         for prev in trg.chunk(trg.size(0)):
             emb_prev = self.trg_embeddings(prev).squeeze(0)

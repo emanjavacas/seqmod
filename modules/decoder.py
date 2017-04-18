@@ -137,10 +137,8 @@ class Decoder(nn.Module):
 
         prev: torch.Tensor (batch x emb_dim),
             Previously decoded output.
-
         enc_outs: torch.Tensor (seq_len x batch x enc_hid_dim),
             Output of the encoder at the last layer for all encoding steps.
-
         enc_hidden: Used to seed the initial hidden state of the decoder.
             h_t: (enc_num_layers x batch x hid_dim)
             c_t: (enc_num_layers x batch x hid_dim)

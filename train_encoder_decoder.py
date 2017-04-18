@@ -180,7 +180,8 @@ if __name__ == '__main__':
 
     trainer = EncoderDecoderTrainer(
         model, {'train': train, 'valid': valid}, criterion, optimizer)
-    trainer.add_loggers(StdLogger(), VisdomLogger(env='encdec'))
+    trainer.add_loggers(StdLogger())
+    # trainer.add_loggers(VisdomLogger(env='encdec'))
 
     hook = make_encdec_hook(args.target, args.gpu)
     num_checkpoints = len(train) // (args.checkpoint * args.hooks_per_epoch)
