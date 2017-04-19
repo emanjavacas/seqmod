@@ -203,7 +203,8 @@ class SequenceVAE(nn.Module):
                 emb_t, hidden, out=dec_out, z=z_cond)
             dec_outs.append(dec_out)
         # (batch_size x hid_dim * seq_len)
-        dec_outs = torch.stack(dec_outs).view(src.size(1), -1)
+        batch = src.size(1)
+        dec_outs = torch.stack(dec_outs).view(batch, -1)
         return self.project(dec_outs), z
 
     def generate(self, inp=None, z_params=None, max_decode_len=2, **kwargs):
@@ -237,10 +238,50 @@ class SequenceVAE(nn.Module):
         return self.project(dec_outs)
 
 
+def make_vae_criterion(vocab_size, pad):
+    # Reconstruction loss
+    weight = torch.ones(vocab_size)
+    weight[pad] = 0
+    log_loss = nn.NLLLoss(weight, size_average=False)
+
+    # KL-divergence loss
+    def KL_loss(mu, logvar):
+        """
+        https://arxiv.org/abs/1312.6114
+        0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
+        """
+        element = mu.pow(2).mul_(-1).add_(-logvar.exp_()).add_(1).add_(logvar)
+        return torch.sum(element).mul_(-0.5)
+
+    # loss function
+    def loss(logs, targets, mu, logvar):
+        return log_loss(logs, targets), KL_loss(mu, logvar)
+
+    return loss
+
+
+def generic_sigmoid(a=1, b=1, c=1):
+    return lambda x: a/(1 + b * math.exp(-x * c))
+
+
+def kl_annealing_schedule(inflection):
+    # TODO: figure the params to get the right inflection point
+    sigmoid = generic_sigmoid()
+
+    def func(step):
+        unshifted = sigmoid(step)
+        return (unshifted - 0.5) * 2
+
+    return func
+
+
 class VAETrainer(Trainer):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, inflection_point=5000, **kwargs):
         super(VAETrainer, self).__init__(*args, **kwargs)
-        self.size_average = True
+        self.kl_weight = 0.0    # start at 0
+        self.kl_schedule = kl_annealing_schedule(inflection_point)
+        self.epoch = 1
+        self.size_average = False
 
     def format_loss(self, loss):
         return math.exp(min(loss, 100))
@@ -248,18 +289,29 @@ class VAETrainer(Trainer):
     def run_batch(self, batch_data, dataset='train', **kwargs):
         valid = dataset != 'train'
         pad, eos = self.model.src_dict.get_pad(), self.model.src_dict.get_eos()
-        src, labels = batch_data
+        source, labels = batch_data
         # remove <eos> from decoder targets dealing with different <pad> sizes
-        trg = Variable(u.map_index(src[:-1].data, eos, pad))
+        decode_targets = Variable(u.map_index(source[:-1].data, eos, pad))
         # remove <bos> from loss targets
-        targets = src[1:]
-        preds = self.model(src, trg, labels=labels)
-        loss = self.criterion(preds, targets.view(-1))  # TODO: add KL loss
+        loss_targets = source[1:].view(-1)
+        # preds: (batch * seq_len x vocab)
+        preds, mu, logvar = self.model(source, decode_targets, labels=labels)
+        log_loss, kl_loss = self.criterion(preds, loss_targets, mu, logvar)
         if not valid:
-            loss.backward(preds.size(1))
+            batch_size = source.size(1)
+            log_loss.div(batch_size)
+            loss = self.kl_weight * kl_loss + log_loss
+            loss.backward()
             self.optimizer_step()
-        return loss
+        return log_loss, kl_loss
 
     def num_batch_examples(self, batch_data):
-        src, _ = batch_data
-        return src[1:].data.ne(self.model.src_dict.get_pad()).sum()
+        source, _ = batch_data
+        return source[1:].data.ne(self.model.src_dict.get_pad()).sum()
+
+    def on_batch_end(self, batch, loss):
+        # reset kl weight
+        self.kl_weight = self.kl_schedule(batch * self.epoch)
+
+    def on_epoch_end(self, epoch, *args):
+        self.epoch += 1
