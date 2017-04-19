@@ -158,7 +158,7 @@ class Trainer(object):
 
     def average_loss(self, epoch_loss, num_epoch_examples):
         """
-        Computes average loss after epoch.
+        Computes average loss per instance after epoch.
         """
         if isinstance(epoch_loss, tuple):
             return tuple([l / num_epoch_examples for l in loss])
@@ -197,15 +197,16 @@ class Trainer(object):
 
     def run_batch(self, batch_data, dataset='train', **kwargs):
         """
-        Method in charge of computing batch loss and (eventually)
-        running optimizations on the model. It should return the
-        loss in torch tensor form.
+        Compute batch loss and (eventually) run optimizations on the model.
+        It should return the loss in torch tensor form. It can return None
+        if the batch has to be skipped.
         """
         source, targets = batch_data
         outs = self.model(source)
         loss = self.criterion(outs, targets.view(-1))
         if dataset == 'train':
-            self.merge_loss(loss).backward(), self.optimizer_step()
+            self.merge_loss(loss).backward()
+            self.optimizer_step()
         return loss
 
     def train_epoch(self, epoch, checkpoint, shuffle, **kwargs):
@@ -219,7 +220,6 @@ class Trainer(object):
         epoch_examples, check_examples = 0, 0
         for batch_num, batch in enumerate(batch_order):
             self.zero_grad()
-            # TODO: loss might be complex (perhaps use np.array?)
             batch_data = dataset[batch]
             loss = self.run_batch(batch_data, dataset='train', **kwargs)
             if loss is None:  # to skip a batch run_batch might return None
@@ -227,7 +227,8 @@ class Trainer(object):
             self.on_batch_end(batch, self.format_loss(loss))
             # report
             num_examples = self.num_batch_examples(batch_data)
-            # depending on loss being averaged. See `size_average`.
+            # for reporting purposes we need the total loss per batch,
+            # but it can be just the average loss depending on `size_average`
             batch_loss = self.reweight_loss(loss, num_examples)
             epoch_loss = self.update_loss(epoch_loss, batch_loss)
             check_loss = self.update_loss(check_loss, batch_loss)
@@ -345,6 +346,7 @@ class LMTrainer(Trainer):
 class EncoderDecoderTrainer(Trainer):
     def __init__(self, *args, **kwargs):
         super(EncoderDecoderTrainer, self).__init__(*args, **kwargs)
+        # sum loss over batch samples instead of average
         self.size_average = False
 
     def format_loss(self, loss):
@@ -360,14 +362,16 @@ class EncoderDecoderTrainer(Trainer):
         loss_targets = targets[1:]
         # compute model output
         outs = self.model(source, decode_targets)
+        seq_len, batch, hid_dim = outs.size()
         # dettach outs from computational graph
         det_outs = Variable(outs.data, requires_grad=not valid, volatile=valid)
         for out, trg in zip(det_outs.split(split), loss_targets.split(split)):
-            # (batch x seq_len * vocab_size)
-            pred = self.model.project(out.view(-1, out.size(2)))
+            # (seq_len x batch x hid_dim) -> (seq_len * batch x hid_dim)
+            out = out.view(-1, out.size(2))
+            pred = self.model.project(out)
             loss += self.criterion(pred, trg.view(-1))
         if not valid:
-            loss.div(outs.size(1)).backward()
+            loss.div(batch).backward()
             grad = None if det_outs.grad is None else det_outs.grad.data
             outs.backward(grad)
             self.optimizer_step()

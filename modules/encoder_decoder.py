@@ -193,11 +193,11 @@ class EncoderDecoder(nn.Module):
 
         Returns: outs, hidden, att_ws
         --------
-        outs: torch.Tensor (batch x vocab_size),
+        outs: torch.Tensor (seq_len x batch x hid_dim)
         hidden: (h_t, c_t)
             h_t: torch.Tensor (batch x hid_dim)
             c_t: torch.Tensor (batch x hid_dim)
-        att_weights: (batch x seq_len)
+        att_weights: (batch x seq_len x target_len)
         """
         # encoder
         inp = word_dropout(

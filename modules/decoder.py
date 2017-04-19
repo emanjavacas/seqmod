@@ -137,20 +137,19 @@ class Decoder(nn.Module):
 
         prev: torch.Tensor (batch x emb_dim),
             Previously decoded output.
-        enc_outs: torch.Tensor (seq_len x batch x enc_hid_dim),
-            Output of the encoder at the last layer for all encoding steps.
-        enc_hidden: Used to seed the initial hidden state of the decoder.
+        hidden: Used to seed the initial hidden state of the decoder.
             h_t: (enc_num_layers x batch x hid_dim)
             c_t: (enc_num_layers x batch x hid_dim)
+        enc_outs: torch.Tensor (seq_len x batch x enc_hid_dim),
+            Output of the encoder at the last layer for all encoding steps.
         """
         if self.add_prev:
             # include last out as input for the prediction of the next item
             inp = torch.cat([prev, out or self.init_output_for(hidden)], 1)
         else:
             inp = prev
-        # out ()
         out, hidden = self.rnn_step(inp, hidden)
-        # out (batch x att_dim)
+        # out (batch x hid_dim), att_weight (batch x seq_len)
         out, att_weight = self.attn(out, enc_outs, enc_att=enc_att, mask=mask)
         out = F.dropout(out, p=self.dropout, training=self.training)
         if self.has_maxout:
