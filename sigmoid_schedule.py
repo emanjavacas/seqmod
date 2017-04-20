@@ -1,4 +1,18 @@
 
+"""
+Script to visualize the effects of different parameters
+on a generalize version of the sigmoid function.
+
+For a given `b` (or a given `c`) and a desired inflection point
+(point at which the y-axis reaches 0.5), `b` can be computed
+as a function of `c` (or viceversa).
+
+The formulas are derived from setting the second derivative
+to 0 and solving for x, which gives:
+
+    x = log(b) / c
+"""
+
 import math
 
 
