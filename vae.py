@@ -1,6 +1,4 @@
 
-import math
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -11,7 +9,6 @@ from modules.encoder import Encoder
 from modules import utils as u
 
 from misc.beam_search import Beam
-from misc.trainer import Trainer
 
 
 class EncoderVAE(Encoder):
@@ -23,15 +20,6 @@ class EncoderVAE(Encoder):
         self.Q_mu = nn.Linear(self.enc_dim, self.z_dim)
         self.Q_logvar = nn.Linear(self.enc_dim, self.z_dim)
 
-    def encode(self, inp, hidden=None, **kwargs):
-        _, hidden = super(EncoderVAE, self)(inp, hidden=hidden, **kwargs)
-        if self.cell.startswith('LSTM'):
-            h_t, c_t = hidden
-        else:
-            h_t = hidden
-        mu, logvar = self.Q_mu(h_t), self.Q_logvar(h_t)
-        return mu, logvar, hidden
-
     def reparametrize(self, mu, logvar):
         """
         z = mu + eps *. sqrt(exp(log(s^2)))
@@ -40,14 +28,20 @@ class EncoderVAE(Encoder):
         and observing that sqrt(exp(s^2)) == exp(s^2/2)
         """
         std = logvar.mul(0.5).exp_()
-        eps = Variable(std.data.new(*std.size())).normal_()
+        eps = Variable(std.data.new(*std.size()).normal_())
         z = eps.mul(std).add_(mu)
         return z
 
     def forward(self, inp, hidden=None, **kwargs):
-        mu, logvar, hidden = self.encode(inp, hidden=hidden)
-        z = self.reparametrize(mu, logvar)
-        return z, hidden
+        _, hidden = super(EncoderVAE, self).forward(inp, hidden, **kwargs)
+        if self.cell.startswith('LSTM'):
+            h_t, c_t = hidden
+        else:
+            h_t = hidden
+        batch = h_t.size(1)
+        h_t = h_t.t().view(batch, -1)
+        mu, logvar = self.Q_mu(h_t), self.Q_logvar(h_t)
+        return mu, logvar
 
 
 class DecoderVAE(nn.Module):
@@ -109,6 +103,7 @@ class DecoderVAE(nn.Module):
             of each item in the sequence.
         """
         if self.add_prev:
+            print(prev.size())
             inp = torch.cat([prev, out or self.init_output_for(hidden)])
         else:
             inp = prev
@@ -133,6 +128,7 @@ class SequenceVAE(nn.Module):
         self.add_z = add_z
         self.src_dict = src_dict
         vocab_size = len(src_dict)
+        super(SequenceVAE, self).__init__()
 
         # word_dropout
         self.word_dropout = word_dropout
@@ -153,7 +149,7 @@ class SequenceVAE(nn.Module):
         # decoder
         self.decoder = DecoderVAE(
             z_dim, emb_dim, dec_hid_dim, dec_num_layers, cell,
-            add_prev=add_prev, dropout=dropout, word_dropout=word_dropout)
+            add_prev=add_prev, dropout=dropout)
 
         # projection
         if tie_weights:
@@ -184,28 +180,29 @@ class SequenceVAE(nn.Module):
 
         Returns:
         --------
-        out: (batch x vocab_size * seq_len)
-        z: (batch x z_dim)
+        preds: (batch x vocab_size * seq_len)
+        mu: (batch x z_dim)
+        logvar: (batch x z_dim)
         """
         # encoder
         src = word_dropout(
             src, self.target_code, p=self.word_dropout,
             reserved_codes=self.reserved_codes, training=self.training)
-        trg_emb = self.embeddings(trg)  # TODO: make this efficient
         emb = self.embeddings(src)
-        z, hidden = self.encoder(emb)
+        mu, logvar = self.encoder(emb)
+        z = self.encoder.reparametrize(mu, logvar)
         # decoder
-        hidden = self.decoder.init_hidden_for(hidden)
+        hidden = self.decoder.init_hidden_for(z)
         dec_outs, dec_out = [], None
         z_cond = z if self.add_z else None
-        for emb_t in trg_emb.chunk(trg_emb.size(0)):
+        for emb_t in self.embeddings(trg).chunk(trg.size(0)):
             dec_out, hidden = self.decoder(
-                emb_t, hidden, out=dec_out, z=z_cond)
+                emb_t.squeeze(0), hidden, out=dec_out, z=z_cond)
             dec_outs.append(dec_out)
         # (batch_size x hid_dim * seq_len)
         batch = src.size(1)
         dec_outs = torch.stack(dec_outs).view(batch, -1)
-        return self.project(dec_outs), z
+        return self.project(dec_outs), mu, logvar
 
     def generate(self, inp=None, z_params=None, max_decode_len=2, **kwargs):
         """
@@ -218,11 +215,14 @@ class SequenceVAE(nn.Module):
         """
         assert inp or z_params, "At least one of (inp, z_params) must be given"
         # encoder
-        if z_params is not None:
-            mu, logvar = z_params
-            z = torch.randn(self.z_dim).mul(logvar.mul(0.5).exp_()).add_(mu)
+        if z_params is None:
+            emb = self.embeddings(inp)
+            mu, logvar = self.encoder(inp)
         else:
-            z, _ = self.encoder(inp)
+            mu, logvar = z_params
+        # sample from the hidden code
+        z_data = inp.data.new(self.z_dim).normal_(mu, logvar.mul(0.5).exp_())
+        z = Variable(z_data, volatile=True)
         # decoder
         hidden = self.decoder.init_hidden_for(z)
         dec_outs, dec_out = [], None
@@ -236,76 +236,3 @@ class SequenceVAE(nn.Module):
             dec_outs.append(dec_out)
         dec_outs = torch.stack(dec_outs).view(1, -1)
         return self.project(dec_outs)
-
-
-def make_vae_criterion(vocab_size, pad):
-    # Reconstruction loss
-    weight = torch.ones(vocab_size)
-    weight[pad] = 0
-    log_loss = nn.NLLLoss(weight, size_average=False)
-
-    # KL-divergence loss
-    def KL_loss(mu, logvar):
-        """
-        https://arxiv.org/abs/1312.6114
-        0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
-        """
-        element = mu.pow(2).mul_(-1).add_(-logvar.exp_()).add_(1).add_(logvar)
-        return torch.sum(element).mul_(-0.5)
-
-    # loss function
-    def loss(logs, targets, mu, logvar):
-        return log_loss(logs, targets), KL_loss(mu, logvar)
-
-    return loss
-
-
-def generic_sigmoid(a=1, b=1, c=1):
-    return lambda x: a/(1 + b * math.exp(-x * c))
-
-
-def kl_annealing_schedule(inflection, steepness=4):
-    b = 10 ** steepness
-    return generic_sigmoid(b=b, c=math.log(b) / inflection)
-
-
-class VAETrainer(Trainer):
-    def __init__(self, *args, inflection_point=5000, **kwargs):
-        super(VAETrainer, self).__init__(*args, **kwargs)
-        self.size_average = False
-        self.kl_weight = 0.0    # start at 0
-        self.kl_schedule = kl_annealing_schedule(inflection_point)
-        self.epoch = 1
-
-    def format_loss(self, loss):
-        return math.exp(min(loss, 100))
-
-    def run_batch(self, batch_data, dataset='train', **kwargs):
-        valid = dataset != 'train'
-        pad, eos = self.model.src_dict.get_pad(), self.model.src_dict.get_eos()
-        source, labels = batch_data
-        # remove <eos> from decoder targets dealing with different <pad> sizes
-        decode_targets = Variable(u.map_index(source[:-1].data, eos, pad))
-        # remove <bos> from loss targets
-        loss_targets = source[1:].view(-1)
-        # preds: (batch * seq_len x vocab)
-        preds, mu, logvar = self.model(source, decode_targets, labels=labels)
-        log_loss, kl_loss = self.criterion(preds, loss_targets, mu, logvar)
-        if not valid:
-            batch_size = source.size(1)
-            log_loss.div(batch_size)
-            loss = self.kl_weight * kl_loss + log_loss
-            loss.backward()
-            self.optimizer_step()
-        return log_loss, kl_loss
-
-    def num_batch_examples(self, batch_data):
-        source, _ = batch_data
-        return source[1:].data.ne(self.model.src_dict.get_pad()).sum()
-
-    def on_batch_end(self, batch, loss):
-        # reset kl weight
-        self.kl_weight = self.kl_schedule(batch * self.epoch)
-
-    def on_epoch_end(self, epoch, *args):
-        self.epoch += 1
