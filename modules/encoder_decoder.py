@@ -257,7 +257,7 @@ class EncoderDecoder(nn.Module):
             if prev.data.eq(eos).nonzero().nelement() > 0:
                 break
         # add singleton dimension for compatibility with other decoding
-        return [scores], [hyp], [atts]
+        return [sum(scores)], [hyp], [atts]
 
     def translate_beam(self, src, max_decode_len=2, beam_width=5):
         """

@@ -48,7 +48,7 @@ def make_encdec_hook(target, gpu, beam=False):
     def hook(trainer, epoch, batch_num, checkpoint):
         trainer.log("info", "Translating %s" % target)
         scores, hyps, atts = translate(trainer.model, target, gpu, beam=beam)
-        hyps = [u.format_hyp(sum(score), hyp, num + 1, trainer.model.trg_dict)
+        hyps = [u.format_hyp(score, hyp, num + 1, trainer.model.trg_dict)
                 for num, (score, hyp) in enumerate(zip(scores, hyps))]
         trainer.log("info", '\n***' + ''.join(hyps) + '\n***')
 
@@ -62,10 +62,11 @@ def make_att_hook(target, gpu, beam=False):
         scores, hyps, atts = translate(trainer.model, target, gpu, beam=beam)
         # grab first hyp (only one in translate modus)
         hyp = ' '.join([trainer.model.trg_dict.vocab[i] for i in hyps[0]])
+        target = [trainer.model.trg_dict.bos_token] + list(target)
         trainer.log("attention",
                     {"att": atts[0],
                      "score": sum(scores[0]) / len(hyps[0]),
-                     "target": [trainer.model.trg_dict.bos_token] + list(target),
+                     "target": target,
                      "hyp": hyp.split(),
                      "epoch": epoch,
                      "batch_num": batch_num})
@@ -183,7 +184,7 @@ if __name__ == '__main__':
     trainer.add_loggers(StdLogger())
     trainer.add_loggers(VisdomLogger(env='encdec'))
 
-    hook = make_encdec_hook(args.target, args.gpu)
+    hook = make_encdec_hook(args.target, args.gpu, beam=args.beam)
     num_checkpoints = len(train) // (args.checkpoint * args.hooks_per_epoch)
     trainer.add_hook(hook, num_checkpoints=num_checkpoints)
 
