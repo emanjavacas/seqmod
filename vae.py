@@ -264,24 +264,18 @@ def generic_sigmoid(a=1, b=1, c=1):
     return lambda x: a/(1 + b * math.exp(-x * c))
 
 
-def kl_annealing_schedule(inflection):
-    # TODO: figure the params to get the right inflection point
-    sigmoid = generic_sigmoid()
-
-    def func(step):
-        unshifted = sigmoid(step)
-        return (unshifted - 0.5) * 2
-
-    return func
+def kl_annealing_schedule(inflection, steepness=4):
+    b = 10 ** steepness
+    return generic_sigmoid(b=b, c=math.log(b) / inflection)
 
 
 class VAETrainer(Trainer):
     def __init__(self, *args, inflection_point=5000, **kwargs):
         super(VAETrainer, self).__init__(*args, **kwargs)
+        self.size_average = False
         self.kl_weight = 0.0    # start at 0
         self.kl_schedule = kl_annealing_schedule(inflection_point)
         self.epoch = 1
-        self.size_average = False
 
     def format_loss(self, loss):
         return math.exp(min(loss, 100))
