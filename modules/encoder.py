@@ -15,10 +15,10 @@ class Encoder(nn.Module):
                  dropout=0.0, bidi=True):
         self.cell = cell
         self.num_layers = num_layers
-        self.dirs = 2 if bidi else 1
+        self.num_dirs = 2 if bidi else 1
         self.bidi = bidi
-        self.hid_dim = hid_dim // self.dirs
-        assert hid_dim % self.dirs == 0, \
+        self.hid_dim = hid_dim // self.num_dirs
+        assert hid_dim % self.num_dirs == 0, \
             "Hidden dimension must be even for BiRNNs"
         super(Encoder, self).__init__()
         self.rnn = getattr(nn, cell)(in_dim, self.hid_dim,
@@ -28,7 +28,7 @@ class Encoder(nn.Module):
 
     def init_hidden_for(self, inp):
         batch = inp.size(1)
-        size = (self.dirs * self.num_layers, batch, self.hid_dim)
+        size = (self.num_dirs * self.num_layers, batch, self.hid_dim)
         h_0 = Variable(inp.data.new(*size).zero_(), requires_grad=False)
         if self.cell.startswith('LSTM'):
             c_0 = Variable(inp.data.new(*size).zero_(), requires_grad=False)
