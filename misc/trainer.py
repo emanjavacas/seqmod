@@ -107,7 +107,7 @@ class Trainer(object):
         self.log("test_end", {"loss": dict(zip(self.loss_labels, loss))})
 
     def format_loss(self, loss):
-        return tuple(l.data[0] for l in loss)
+        return loss
 
     # optimizer
     def zero_grad(self):
@@ -187,7 +187,7 @@ class Trainer(object):
     def run_batch(self, batch_data, dataset='train', **kwargs):
         """
         Compute batch loss and (eventually) run optimizations on the model.
-        It should return the loss in torch tensor form. It can return None
+        It should return the loss as a tuple of floats. It can return None
         if the batch has to be skipped.
         """
         source, targets = batch_data
@@ -196,7 +196,7 @@ class Trainer(object):
         if dataset == 'train':
             self.merge_loss(loss).backward()
             self.optimizer_step()
-        return loss
+        return (loss.data[0], )
 
     def train_epoch(self, epoch, checkpoint, shuffle, **kwargs):
         # compute batch order
@@ -291,7 +291,7 @@ class LMTrainer(Trainer):
         """
         Turn loss into perplexity.
         """
-        return tuple(math.exp(min(l.data[0], 100)) for l in loss)
+        return tuple(math.exp(min(l, 100)) for l in loss)
 
     def run_batch(self, batch_data, dataset='train', subset=None, **kwargs):
         # get dataset
@@ -318,7 +318,7 @@ class LMTrainer(Trainer):
         # optimize
         if dataset == 'train':
             loss.backward(), self.optimizer_step()
-        return (loss, )
+        return (loss.data[0], )
 
     def on_batch_end(self, batch, loss):
         if hasattr(self, 'reset_hidden'):
@@ -340,7 +340,7 @@ class EncoderDecoderTrainer(Trainer):
         self.size_average = False
 
     def format_loss(self, loss):
-        return tuple(math.exp(min(l.data[0], 100)) for l in loss)
+        return tuple(math.exp(min(l, 100)) for l in loss)
 
     def run_batch(self, batch_data, dataset='train', split=52, **kwargs):
         valid, loss = dataset != 'train', self.init_loss()
@@ -365,7 +365,7 @@ class EncoderDecoderTrainer(Trainer):
             grad = None if det_outs.grad is None else det_outs.grad.data
             outs.backward(grad)
             self.optimizer_step()
-        return loss
+        return tuple(l.data[0] for l in loss)
 
     def num_batch_examples(self, batch_data):
         _, targets = batch_data
