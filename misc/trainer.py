@@ -352,7 +352,6 @@ class EncoderDecoderTrainer(Trainer):
         loss_targets = targets[1:]
         # compute model output
         outs = self.model(source, decode_targets)
-        seq_len, batch, hid_dim = outs.size()
         # dettach outs from computational graph
         det_outs = Variable(outs.data, requires_grad=not valid, volatile=valid)
         for out, trg in zip(det_outs.split(split), loss_targets.split(split)):
@@ -361,6 +360,7 @@ class EncoderDecoderTrainer(Trainer):
             pred = self.model.project(out)
             loss = self.update_loss(loss, self.criterion(pred, trg.view(-1)))
         if not valid:
+            batch = outs.size(1)
             loss[0].div(batch).backward()
             grad = None if det_outs.grad is None else det_outs.grad.data
             outs.backward(grad)
@@ -369,4 +369,4 @@ class EncoderDecoderTrainer(Trainer):
 
     def num_batch_examples(self, batch_data):
         _, targets = batch_data
-        return targets[1:].data.ne(self.model.src_dict.get_pad()).sum()
+        return targets.data.ne(self.model.src_dict.get_pad()).sum()

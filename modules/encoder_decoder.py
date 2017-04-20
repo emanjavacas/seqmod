@@ -189,14 +189,11 @@ class EncoderDecoder(nn.Module):
         Parameters:
         -----------
         inp: torch.Tensor (seq_len x batch), Train data for a single batch.
-        trg: torch.Tensor (seq_len x batch), Desired output for a single batch.
+        trg: torch.Tensor (seq_len x batch), Target output for a single batch.
 
-        Returns: outs, hidden, att_ws
+        Returns: outs, att_weights
         --------
         outs: torch.Tensor (seq_len x batch x hid_dim)
-        hidden: (h_t, c_t)
-            h_t: torch.Tensor (batch x hid_dim)
-            c_t: torch.Tensor (batch x hid_dim)
         att_weights: (batch x seq_len x target_len)
         """
         # encoder
