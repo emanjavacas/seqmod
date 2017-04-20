@@ -351,7 +351,7 @@ class EncoderDecoderTrainer(Trainer):
         # remove <bos> from loss targets
         loss_targets = targets[1:]
         # compute model output
-        outs = self.model(source, decode_targets)
+        outs = self.model(source[1:], decode_targets)
         # dettach outs from computational graph
         det_outs = Variable(outs.data, requires_grad=not valid, volatile=valid)
         for out, trg in zip(det_outs.split(split), loss_targets.split(split)):
