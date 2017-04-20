@@ -10,6 +10,10 @@ class Logger(object):
             getattr(self, event)(payload)
 
 
+def loss_str(loss, phase):
+    return "; ".join([phase + " %s: %g" % (k, v) for (k, v) in loss.items()])
+
+
 class StdLogger(Logger):
     """
     Standard python logger.
@@ -41,27 +45,27 @@ class StdLogger(Logger):
         self.logger.info("Starting epoch [%d]" % payload['epoch'])
 
     def epoch_end(self, payload):
-        tokens_sec = payload["examples"] / payload["duration"]
-        self.logger.info(
-            "Epoch [%d], train loss: %g, processed: %d tokens/sec" %
-            (payload['epoch'], payload["loss"], tokens_sec))
+        speed = payload["examples"] / payload["duration"]
+        loss = loss_str(payload['loss'], 'train')
+        self.logger.info("Epoch [%d]; %s; speed: %d tokens/sec" %
+                         (payload['epoch'], loss, speed))
 
     def validation_end(self, payload):
-        self.logger.info("Epoch [%d], valid loss: %g" %
-                         (payload['epoch'], payload['loss']))
+        loss = loss_str(payload['loss'], 'valid')
+        self.logger.info("Epoch [%d]; %s" % (payload['epoch'], loss))
 
     def test_begin(self, payload):
         self.logger.info("Testing...")
 
     def test_end(self, payload):
-        self.logger.info("Test loss: %g" % payload["loss"])
+        self.logger.info(loss_str(payload['loss'], 'Test'))
 
     def checkpoint(self, payload):
-        tokens_sec = payload["examples"] / payload["duration"]
-        self.logger.info(
-            "Epoch[%d], batch [%d/%d], loss: %g, processed %d tokens/sec" %
-            (payload["epoch"], payload["batch"], payload["total_batches"],
-             payload["loss"], tokens_sec))
+        e, b, bs = payload['epoch'], payload['batch'], payload['total_batches']
+        speed = payload["examples"] / payload["duration"]
+        loss = loss_str(payload['loss'], 'train')
+        self.logger.info("Epoch[%d]; batch [%d/%d]; %s; speed %d tokens/sec" %
+                         (e, b, bs, loss, speed))
 
     def info(self, payload):
         if isinstance(payload, dict):

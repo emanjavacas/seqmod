@@ -27,6 +27,9 @@ class Trainer(object):
         """
         Parameter:
         ==========
+        - loss_labels: tuple of str, a tuple specifying the names of the
+            losses return by run_batch (typically this is useful to tell
+            apart the different losses in a complex loss function)
         - size_average: bool,
             whether the loss is already averaged over examples.
             See `size_average` in the torch.nn criterion functions.
@@ -89,21 +92,22 @@ class Trainer(object):
 
     def on_epoch_end(self, epoch, loss, num_examples, duration):
         self.log("epoch_end", {"epoch": epoch,
-                               "loss": loss,
+                               "loss": dict(zip(self.loss_labels, loss)),
                                "examples": num_examples,
                                "duration": duration})
 
     def on_validation_end(self, epoch, loss):
-        self.log("validation_end", {"epoch": epoch, "loss": loss})
+        self.log("validation_end", {"epoch": epoch,
+                                    "loss": dict(zip(self.loss_labels, loss))})
 
     def on_test_begin(self, epoch):
         self.log("test_begin", {"epoch": epoch})
 
     def on_test_end(self, loss):
-        self.log("test_end", {"loss": loss})
+        self.log("test_end", {"loss": dict(zip(self.loss_labels, loss))})
 
     def format_loss(self, loss):
-        return loss.data[0]
+        return tuple(l.data[0] for l in loss)
 
     # optimizer
     def zero_grad(self):
@@ -131,48 +135,33 @@ class Trainer(object):
         """
         Function defining the shape of the loss before training.
         """
-        if len(self.loss_labels) > 1:
-            return tuple([0] * len(self.loss_labels))
-        else:
-            return 0
+        return tuple([0] * len(self.loss_labels))
 
     def reweight_loss(self, loss, num_examples):
         """
         Reweight the loss to account for all instances in batch (deaveraging).
         """
         weight = (num_examples if self.size_average else 1)
-        if isinstance(loss, tuple):
-            return tuple([l * weight for l in loss])
-        else:
-            return loss * weight
+        return tuple([l * weight for l in loss])
 
     def update_loss(self, acc_loss, loss):
         """
         Updates loss across batches given an accumulated loss `acc_loss`
         and the current new loss `loss`
         """
-        if isinstance(loss, tuple):
-            return tuple([acc + new for (acc, new) in zip(acc_loss, loss)])
-        else:
-            return acc_loss + loss
+        return tuple([acc + new for (acc, new) in zip(acc_loss, loss)])
 
     def average_loss(self, epoch_loss, num_epoch_examples):
         """
         Computes average loss per instance after epoch.
         """
-        if isinstance(epoch_loss, tuple):
-            return tuple([l / num_epoch_examples for l in loss])
-        else:
-            return epoch_loss / num_epoch_examples
+        return tuple([l / num_epoch_examples for l in epoch_loss])
 
     def merge_loss(self, loss):
         """
         Combine in case of complex loss.
         """
-        if isinstance(loss, tuple):
-            return sum(loss)
-        else:
-            return loss
+        return sum(loss)
 
     # training code
     def num_batch_examples(self, batch_data):
@@ -236,6 +225,8 @@ class Trainer(object):
             check_examples += num_examples
             # checkpoint
             if checkpoint and batch_num > 0 and batch_num % checkpoint == 0:
+                format_loss = self.average_loss(check_loss, check_examples)
+                format_loss = self.format_loss(format_loss)
                 self.model.eval()
                 self.log('checkpoint', {
                     'epoch': epoch,
@@ -243,8 +234,7 @@ class Trainer(object):
                     'total_batches': len(batch_order),
                     'examples': check_examples,
                     'duration': time.time() - start,
-                    'loss': self.format_loss(
-                        self.average_loss(check_loss, check_examples))})
+                    'loss': dict(zip(self.loss_labels, format_loss))})
                 self.run_hooks(epoch, batch_num, checkpoint)
                 self.model.train()
                 check_loss = self.init_loss()
@@ -301,7 +291,7 @@ class LMTrainer(Trainer):
         """
         Turn loss into perplexity.
         """
-        return math.exp(min(loss.data[0], 100))
+        return tuple(math.exp(min(l.data[0], 100)) for l in loss)
 
     def run_batch(self, batch_data, dataset='train', subset=None, **kwargs):
         # get dataset
@@ -328,7 +318,7 @@ class LMTrainer(Trainer):
         # optimize
         if dataset == 'train':
             loss.backward(), self.optimizer_step()
-        return loss
+        return (loss, )
 
     def on_batch_end(self, batch, loss):
         if hasattr(self, 'reset_hidden'):
@@ -350,7 +340,7 @@ class EncoderDecoderTrainer(Trainer):
         self.size_average = False
 
     def format_loss(self, loss):
-        return math.exp(min(loss.data[0], 100))
+        return tuple(math.exp(min(l.data[0], 100)) for l in loss)
 
     def run_batch(self, batch_data, dataset='train', split=52, **kwargs):
         valid, loss = dataset != 'train', self.init_loss()
@@ -369,9 +359,9 @@ class EncoderDecoderTrainer(Trainer):
             # (seq_len x batch x hid_dim) -> (seq_len * batch x hid_dim)
             out = out.view(-1, out.size(2))
             pred = self.model.project(out)
-            loss += self.criterion(pred, trg.view(-1))
+            loss = self.update_loss(loss, self.criterion(pred, trg.view(-1)))
         if not valid:
-            loss.div(batch).backward()
+            loss[0].div(batch).backward()
             grad = None if det_outs.grad is None else det_outs.grad.data
             outs.backward(grad)
             self.optimizer_step()

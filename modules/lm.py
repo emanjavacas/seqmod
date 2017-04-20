@@ -6,9 +6,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 
-import utils as u
-from custom import word_dropout
-from beam_search import Beam
+from modules import utils as u
+from modules.custom import word_dropout
+from misc.beam_search import Beam
 
 
 class Attention(nn.Module):
