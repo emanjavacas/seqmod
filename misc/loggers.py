@@ -82,24 +82,25 @@ class VisdomLogger(Logger):
     - env: str, name of the visdom environment
     - log_checkpoints: bool, whether to use checkpoints or epoch averages
         for training loss
-    - legend: tuple, names of the different learning curves that will be
-        plotted.
+    - legend: tuple, names of the different losses that will be plotted.
     """
     def __init__(self,
                  env=None,
                  log_checkpoints=True,
-                 legend=('train', 'valid'),
+                 losses=('loss', ),
+                 phases=('train', 'valid'),
                  server='http://localhost',
                  port=8097,
                  **opts):
         self.viz = Visdom(server=server, port=port, env=env)
-        self.env = env
-        self.legend = legend
+        self.legend = ['%s.%s' % (p, l) for p in phases for l in losses]
+        opts.update({'legend': self.legend})
         self.opts = opts
-        self.opts.update({'legend': list(legend)})
+        self.env = env
         self.pane = self._init_pane()
+        self.losses = set(losses)
         self.log_checkpoints = log_checkpoints
-        self.last = {'train': None, 'valid': None}
+        self.last = {p: {l: None for l in losses} for p in phases}
 
     def _init_pane(self):
         nan = np.array([np.NAN, np.NAN])
@@ -108,47 +109,39 @@ class VisdomLogger(Logger):
         return self.viz.line(
             X=X, Y=Y, env=self.env, opts=self.opts)
 
-    def _update_last(self, epoch, loss, name):
-        self.last[name] = {'X': epoch, 'Y': loss}
+    def _update_last(self, epoch, loss, phase, loss_label):
+        self.last[phase][loss_label] = {'X': epoch, 'Y': loss}
 
-    def _line(self, X, Y, name):
-        X = np.array([self.last[name]['X'], X])
-        Y = np.array([self.last[name]['Y'], Y])
+    def _line(self, X, Y, phase, loss_label):
+        name = "%s.%s" % (phase, loss_label)
+        X = np.array([self.last[phase][loss_label]['X'], X])
+        Y = np.array([self.last[phase][loss_label]['Y'], Y])
         self.viz.updateTrace(
             X=X, Y=Y, name=name, append=True, win=self.pane, env=self.env)
+
+    def _plot_payload(self, epoch, losses, phase):
+        for label, loss in losses.items():
+            if label not in self.losses:
+                continue
+            if self.last[phase][label] is not None:
+                self._line(epoch, loss, phase=phase, loss_label=label)
+            self._update_last(epoch, loss, phase, label)
 
     def epoch_end(self, payload):
         if self.log_checkpoints:
             # only use epoch end if checkpoint isn't being used
             return
-        loss, epoch = payload['loss'], payload['epoch'] + 1
-        if self.last['train'] is None:
-            self._update_last(epoch, loss, 'train')
-            return
-        else:
-            self._line(X=epoch, Y=loss, name='train')
-            self._update_last(epoch, loss, 'train')
+        losses, epoch = payload['loss'], payload['epoch'] + 1
+        self._plot_payload(epoch, losses, 'train')
 
     def validation_end(self, payload):
-        loss, epoch = payload['loss'], payload['epoch'] + 1
-        if self.last['valid'] is None:
-            self._update_last(epoch, loss, 'valid')
-            return
-        else:
-            self._line(X=epoch, Y=loss, name='valid')
-            self._update_last(epoch, loss, 'valid')
+        losses, epoch = payload['loss'], payload['epoch'] + 1
+        self._plot_payload(epoch, losses, 'valid')
 
     def checkpoint(self, payload):
-        if not self.log_checkpoints:
-            return
         epoch = payload['epoch'] + payload["batch"] / payload["total_batches"]
-        loss = payload['loss']
-        if self.last['train'] is None:
-            self._update_last(epoch, loss, 'train')
-            return
-        else:
-            self._line(X=epoch, Y=loss, name='train')
-            self._update_last(epoch, loss, 'train')
+        losses = payload['loss']
+        self._plot_payload(epoch, losses, 'train')
 
     def attention(self, payload):
         title = "epoch {epoch}/ batch {batch_num}".format(**payload)
