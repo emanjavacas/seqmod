@@ -213,7 +213,7 @@ class Trainer(object):
             loss = self.run_batch(batch_data, dataset='train', **kwargs)
             if loss is None:  # to skip a batch run_batch might return None
                 continue
-            self.on_batch_end(batch, self.format_loss(loss))
+            self.on_batch_end(batch_num, self.format_loss(loss))
             # report
             num_examples = self.num_batch_examples(batch_data)
             # for reporting purposes we need the total loss per batch,
