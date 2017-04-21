@@ -3,6 +3,8 @@ from graphviz import Digraph
 import torch
 from torch.autograd import Variable
 
+from misc.dataset import Dict
+
 
 def make_dot(var):
     node_attr = dict(style='filled',
@@ -31,21 +33,28 @@ def make_dot(var):
 
 
 def viz_encoder_decoder(**kwargs):
-    from encoder_decoder import EncoderDecoder
+    from modules.encoder_decoder import EncoderDecoder
     num_layers, emb_dim, hid_dim, att_dim = 1, 12, 16, 16
-    m = EncoderDecoder(num_layers, emb_dim, hid_dim, att_dim,
-                       {'<pad>': 0, 'a': 1}, **kwargs)
+    d = Dict(pad_token='<pad>').fit(['a'])
+    m = EncoderDecoder(num_layers, emb_dim, hid_dim, att_dim, d, **kwargs)
     src, trg = torch.LongTensor([[0, 1]]), torch.LongTensor([[0, 1]])
     out = m(Variable(src), Variable(trg))
-    dot = make_dot(out)
-    return dot
+    return make_dot(out)
 
 
 def viz_lm(**kwargs):
-    from lm import LM
+    from modules.lm import LM
     vocab, emb_dim, hid_dim = 10, 12, 16
     m = LM(vocab, emb_dim, hid_dim, **kwargs)
     out, _, _ = m(Variable(torch.LongTensor([[0, 1]])))
-    dot = make_dot(out)
-    return dot
+    return make_dot(out)
 
+
+def viz_vae(**kwargs):
+    from vae import SequenceVAE
+    d = Dict(pad_token='<pad>').fit(['a'])
+    num_layers, emb_dim, hid_dim, z_dim = 1, 12, 16, 16
+    m = SequenceVAE(num_layers, emb_dim, hid_dim, z_dim, d)
+    src = Variable(torch.LongTensor([[0, 1]]))
+    logs, mu, logvar = m(src, src)
+    return make_dot(logs), make_dot(mu), make_dot(logvar)
