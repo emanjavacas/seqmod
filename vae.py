@@ -29,8 +29,7 @@ class EncoderVAE(Encoder):
         """
         std = logvar.mul(0.5).exp_()
         eps = Variable(std.data.new(*std.size()).normal_())
-        z = eps.mul(std).add_(mu)
-        return z
+        return eps.mul(std).add_(mu)
 
     def forward(self, inp, hidden=None, **kwargs):
         _, hidden = super(EncoderVAE, self).forward(inp, hidden, **kwargs)
@@ -103,8 +102,7 @@ class DecoderVAE(nn.Module):
             of each item in the sequence.
         """
         if self.add_prev:
-            print(prev.size())
-            inp = torch.cat([prev, out or self.init_output_for(hidden)])
+            inp = torch.cat([prev, out or self.init_output_for(hidden)], 1)
         else:
             inp = prev
         out, hidden = self.rnn_step(inp, hidden)
@@ -116,7 +114,7 @@ class SequenceVAE(nn.Module):
     def __init__(self, num_layers, emb_dim, hid_dim, z_dim, src_dict,
                  cell='LSTM', bidi=True, dropout=0.0, word_dropout=0.0,
                  tie_weights=False, project_on_tied_weights=False,
-                 add_prev=True, add_z=False):
+                 add_prev=False, add_z=False):
         if isinstance(hid_dim, tuple):
             enc_hid_dim, dec_hid_dim = hid_dim
         else:
@@ -153,21 +151,24 @@ class SequenceVAE(nn.Module):
 
         # projection
         if tie_weights:
-            project = nn.Linear(emb_dim, vocab_size)
-            project.weight = self.embeddings.weight
+            projection = nn.Linear(emb_dim, vocab_size)
+            projection.weight = self.embeddings.weight
             if not project_on_tied_weights:
                 assert emb_dim == dec_hid_dim, \
                     "When tying weights, output projection and " + \
                     "embedding layer should have equal size"
-                self.project = nn.Sequential(project, nn.LogSoftmax())
+                self.out_proj = projection
             else:
-                project_tied = nn.Linear(dec_hid_dim, emb_dim)
-                self.project = nn.Sequential(
-                    project_tied, project, nn.LogSoftmax())
+                tied_projection = nn.Linear(dec_hid_dim, emb_dim)
+                self.out_proj = nn.Sequential(tied_projection, projection)
         else:
-            self.project = nn.Sequential(
-                nn.Linear(dec_hid_dim, vocab_size),
-                nn.LogSoftmax())
+            self.out_proj = nn.Linear(dec_hid_dim, vocab_size)
+
+    def project(self, dec_outs):
+        seq_len, batch, hid_dim = dec_outs.size()
+        dec_outs = self.out_proj(dec_outs.view(batch * seq_len, hid_dim))
+        dec_logs = F.log_softmax(dec_outs)
+        return dec_logs
 
     def forward(self, src, trg, labels=None):
         """
@@ -199,9 +200,7 @@ class SequenceVAE(nn.Module):
             dec_out, hidden = self.decoder(
                 emb_t.squeeze(0), hidden, out=dec_out, z=z_cond)
             dec_outs.append(dec_out)
-        # (batch_size x hid_dim * seq_len)
-        batch = src.size(1)
-        dec_outs = torch.stack(dec_outs).view(batch, -1)
+        dec_outs = torch.stack(dec_outs)
         return self.project(dec_outs), mu, logvar
 
     def generate(self, inp=None, z_params=None, max_decode_len=2, **kwargs):
@@ -221,8 +220,7 @@ class SequenceVAE(nn.Module):
         else:
             mu, logvar = z_params
         # sample from the hidden code
-        z_data = inp.data.new(self.z_dim).normal_(mu, logvar.mul(0.5).exp_())
-        z = Variable(z_data, volatile=True)
+        z = self.encoder.reparametrize(mu, logvar)
         # decoder
         hidden = self.decoder.init_hidden_for(z)
         dec_outs, dec_out = [], None
@@ -234,5 +232,5 @@ class SequenceVAE(nn.Module):
             dec_out, hidden = self.decoder(
                 prev_emb, hidden, out=dec_out, z=z_cond)
             dec_outs.append(dec_out)
-        dec_outs = torch.stack(dec_outs).view(1, -1)
+        dec_outs = torch.stack(dec_outs)
         return self.project(dec_outs)
