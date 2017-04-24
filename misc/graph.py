@@ -57,4 +57,5 @@ def viz_vae(**kwargs):
     m = SequenceVAE(num_layers, emb_dim, hid_dim, z_dim, d)
     src = Variable(torch.LongTensor([[0, 1]]))
     logs, mu, logvar = m(src, src)
-    return make_dot(logs), make_dot(mu), make_dot(logvar)
+    z = m.encoder.reparametrize(mu, logvar)
+    return make_dot(logs), make_dot(mu), make_dot(logvar), make_dot(z)
