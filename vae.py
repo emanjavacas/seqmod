@@ -15,7 +15,7 @@ class EncoderVAE(Encoder):
     def __init__(self, z_dim, *args, **kwargs):
         super(EncoderVAE, self).__init__(*args, **kwargs)
         # dimension of the hidden output of the encoder
-        self.enc_dim = self.hid_dim * self.num_dirs * self.num_layers
+        self.enc_dim = self.hid_dim * self.num_dirs
         self.z_dim = z_dim
         self.Q_mu = nn.Linear(self.enc_dim, self.z_dim)
         self.Q_logvar = nn.Linear(self.enc_dim, self.z_dim)
@@ -27,36 +27,36 @@ class EncoderVAE(Encoder):
         The second term obtains interpreting logvar as the log-var of z
         and observing that sqrt(exp(s^2)) == exp(s^2/2)
         """
+        eps = Variable(logvar.data.new(*logvar.size()).normal_())
         std = logvar.mul(0.5).exp_()
-        eps = Variable(std.data.new(*std.size()).normal_())
         return eps.mul(std).add_(mu)
 
     def forward(self, inp, hidden=None, **kwargs):
         _, hidden = super(EncoderVAE, self).forward(inp, hidden, **kwargs)
-        if self.cell.startswith('LSTM'):
-            h_t, c_t = hidden
-        else:
-            h_t = hidden
+        h_t = hidden[0] if self.cell.startswith('LSTM') else hidden
         batch = h_t.size(1)
-        h_t = h_t.t().view(batch, -1)
+        h_t = h_t.view(self.num_layers, self.num_dirs, batch, self.hid_dim)
+        # only use last layer activations
+        # h_t (batch, hid_dim)
+        h_t = h_t[-1].t().contiguous().view(batch, -1)
         mu, logvar = self.Q_mu(h_t), self.Q_logvar(h_t)
         return mu, logvar
 
 
 class DecoderVAE(nn.Module):
     def __init__(self, z_dim, emb_dim, hid_dim, num_layers, cell,
-                 dropout=0.0, maxout=0, add_prev=True, project_init=True):
-        in_dim = emb_dim if not add_prev else hid_dim + emb_dim
+                 dropout=0.0, maxout=0, add_z=False, project_init=False):
+        in_dim = emb_dim if not add_z else z_dim + emb_dim
         self.z_dim = z_dim
         self.emb_dim = emb_dim
         self.hid_dim = hid_dim
         self.num_layers = num_layers
         self.cell = cell
         self.dropout = dropout
-        self.add_prev = add_prev
+        self.add_z = add_z
         self.project_init = project_init
-        assert project_init or (num_layers * hid_dim != z_dim), \
-            "Cannot interpret z as initial hidden state. Use project_z."
+        assert project_init or (num_layers * hid_dim == z_dim), \
+            "Cannot interpret z as initial hidden state. Use project_init."
         super(DecoderVAE, self).__init__()
 
         # project_init
@@ -73,36 +73,28 @@ class DecoderVAE(nn.Module):
         if self.project_init:
             h_0 = self.project_z(z)
             h_0 = h_0.view(batch, self.num_layers, self.hid_dim).t()
-        else:
+        else:                 # rearrange z to match hidden cell shape
             h_0 = z.view(self.num_layers, batch, self.hid_dim)
         if self.cell.startswith('LSTM'):
-            c_0 = Variable(z.data.new(self.num_layers, batch, self.hid_dim))
+            c_0 = z.data.new(self.num_layers, batch, self.hid_dim)
+            c_0 = Variable(nn.init.xavier_uniform(c_0))
             return h_0, c_0
         else:
             return h_0
 
-    def init_output_for(self, hidden):
-        if self.cell.startswith('LSTM'):
-            hidden = hidden[0]
-        batch = hidden.size(1)
-        data = hidden.data.new(batch, self.hid_dim).zero_()
-        return Variable(data, requires_grad=False)
-
-    def forward(self, prev, hidden, out=None, z=None):
+    def forward(self, prev, hidden, z=None):
         """
         Parameters:
         -----------
         prev: (batch x emb_dim). Conditioning item at current step.
         hidden: (batch x hid_dim). Hidden state at current step.
-        out: None or (batch x hid_dim). Hidden state at previous step.
-            This should be provided for all steps except first
-            when `add_prev` is True.
         z: None or (batch x z_dim). Latent code for the input sequence.
             If it is provided, it will be used to condition the generation
             of each item in the sequence.
         """
-        if self.add_prev:
-            inp = torch.cat([prev, out or self.init_output_for(hidden)], 1)
+        if self.add_z:
+            assert z, "z must be given when add_z is set to True"
+            inp = torch.cat([prev, z], 1)
         else:
             inp = prev
         out, hidden = self.rnn_step(inp, hidden)
@@ -111,10 +103,9 @@ class DecoderVAE(nn.Module):
 
 
 class SequenceVAE(nn.Module):
-    def __init__(self, num_layers, emb_dim, hid_dim, z_dim, src_dict,
+    def __init__(self, emb_dim, hid_dim, z_dim, src_dict, num_layers=1,
                  cell='LSTM', bidi=True, dropout=0.0, word_dropout=0.0,
-                 tie_weights=False, project_on_tied_weights=False,
-                 add_prev=False, add_z=False):
+                 tie_weights=False, project_on_tied_weights=False, add_z=False):
         if isinstance(hid_dim, tuple):
             enc_hid_dim, dec_hid_dim = hid_dim
         else:
@@ -147,7 +138,7 @@ class SequenceVAE(nn.Module):
         # decoder
         self.decoder = DecoderVAE(
             z_dim, emb_dim, dec_hid_dim, dec_num_layers, cell,
-            add_prev=add_prev, dropout=dropout)
+            add_z=add_z, dropout=dropout)
 
         # projection
         if tie_weights:
@@ -194,11 +185,9 @@ class SequenceVAE(nn.Module):
         z = self.encoder.reparametrize(mu, logvar)
         # decoder
         hidden = self.decoder.init_hidden_for(z)
-        dec_outs, dec_out = [], None
-        z_cond = z if self.add_z else None
+        dec_outs, z_cond = [], z if self.add_z else None
         for emb_t in self.embeddings(trg).chunk(trg.size(0)):
-            dec_out, hidden = self.decoder(
-                emb_t.squeeze(0), hidden, out=dec_out, z=z_cond)
+            dec_out, hidden = self.decoder(emb_t.squeeze(0), hidden, z=z_cond)
             dec_outs.append(dec_out)
         dec_outs = torch.stack(dec_outs)
         return self.project(dec_outs), mu, logvar
@@ -223,14 +212,12 @@ class SequenceVAE(nn.Module):
         z = self.encoder.reparametrize(mu, logvar)
         # decoder
         hidden = self.decoder.init_hidden_for(z)
-        dec_outs, dec_out = [], None
-        z_cond = z if self.add_z else None
+        dec_outs, z_cond = [], z if self.add_z else None
         prev = Variable(inp.data.new([self.src_dict.get_bos()]), volatile=True)
         prev = prev.unsqueeze(0)
         for _ in range(len(inp) * max_decode_len):
             prev_emb = self.embeddings(prev).unsqueeze(0)
-            dec_out, hidden = self.decoder(
-                prev_emb, hidden, out=dec_out, z=z_cond)
+            dec_out, hidden = self.decoder(prev_emb, hidden, z=z_cond)
             dec_outs.append(dec_out)
         dec_outs = torch.stack(dec_outs)
         return self.project(dec_outs)

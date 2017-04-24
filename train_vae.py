@@ -80,8 +80,7 @@ class VAETrainer(Trainer):
 
     def on_batch_end(self, batch, loss):
         # reset kl weight
-        # self.kl_weight = self.kl_schedule(batch * self.epoch)
-        pass
+        self.kl_weight = self.kl_schedule(batch * self.epoch)
 
     def on_epoch_end(self, epoch, *args):
         self.epoch += 1
