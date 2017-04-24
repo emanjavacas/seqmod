@@ -276,8 +276,7 @@ class BlockDataset(Dataset):
     - d: Dict already fitted.
     - batch_size: int,
     - bptt: int,
-        Backpropagation through time (maximum context that the RNN should pay
-        attention to)
+        Backprop through time (max context the RNN conditions predictions on)
     """
     def __init__(self, examples, d, batch_size, bptt,
                  fitted=False, gpu=False, evaluation=False):

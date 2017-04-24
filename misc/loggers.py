@@ -91,12 +91,14 @@ class VisdomLogger(Logger):
                  phases=('train', 'valid'),
                  server='http://localhost',
                  port=8097,
+                 max_y=None,
                  **opts):
         self.viz = Visdom(server=server, port=port, env=env)
         self.legend = ['%s.%s' % (p, l) for p in phases for l in losses]
         opts.update({'legend': self.legend})
         self.opts = opts
         self.env = env
+        self.max_y = max_y
         self.pane = self._init_pane()
         self.losses = set(losses)
         self.log_checkpoints = log_checkpoints
@@ -116,6 +118,8 @@ class VisdomLogger(Logger):
         name = "%s.%s" % (phase, loss_label)
         X = np.array([self.last[phase][loss_label]['X'], X])
         Y = np.array([self.last[phase][loss_label]['Y'], Y])
+        if self.max_y:
+            Y = np.clip(Y, Y.min(), self.max_y)
         self.viz.updateTrace(
             X=X, Y=Y, name=name, append=True, win=self.pane, env=self.env)
 

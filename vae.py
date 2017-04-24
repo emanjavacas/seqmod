@@ -1,4 +1,6 @@
 
+import numpy as np
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -155,6 +157,16 @@ class SequenceVAE(nn.Module):
         else:
             self.out_proj = nn.Linear(dec_hid_dim, vocab_size)
 
+    def init_embeddings(self, weight):
+        if isinstance(weight, np.ndarray):
+            self.embeddings.weight.data = torch.Tensor(weight)
+        elif isinstance(weight, torch.Tensor):
+            self.embeddings.weight.data = weight
+        elif isinstance(weight, nn.Parameter):
+            self.embeddings.weight = weight
+        else:
+            raise ValueError("Unknown weight type [%s]" % type(weight))
+
     def project(self, dec_outs):
         seq_len, batch, hid_dim = dec_outs.size()
         dec_outs = self.out_proj(dec_outs.view(batch * seq_len, hid_dim))
@@ -201,7 +213,8 @@ class SequenceVAE(nn.Module):
             - mu: (1 x z_dim)
             - logvar: (1 x z_dim)
         """
-        assert inp or z_params, "At least one of (inp, z_params) must be given"
+        assert inp is not None or z_params is not None, \
+            "At least one of (inp, z_params) must be given"
         # encoder
         if z_params is None:
             emb = self.embeddings(inp)

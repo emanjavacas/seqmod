@@ -34,6 +34,10 @@ class vae_criterion(object):
         return self.log_loss(logs, targets), self.KL_loss(mu, logvar)
 
 
+def kl_weight_hook(trainer, epoch, batch, num_checkpoints):
+    trainer.log("info", "kl weight: [%g]" % trainer.kl_weight)
+
+
 def generic_sigmoid(a=1, b=1, c=1):
     return lambda x: a / (1 + b * math.exp(-x * c))
 
@@ -44,7 +48,7 @@ def kl_annealing_schedule(inflection, steepness=4):
 
 
 class VAETrainer(Trainer):
-    def __init__(self, *args, inflection_point=500, **kwargs):
+    def __init__(self, *args, inflection_point=5000, **kwargs):
         super(VAETrainer, self).__init__(*args, **kwargs)
         self.size_average = False
         self.loss_labels = ('rec', 'kl')
@@ -69,7 +73,7 @@ class VAETrainer(Trainer):
         log_loss, kl_loss = self.criterion(preds, loss_targets, mu, logvar)
         if not valid:
             batch = source.size(1)
-            loss = log_loss + (self.kl_weight * kl_loss)
+            loss = log_loss.div(batch) + (self.kl_weight * kl_loss.div(batch))
             loss.backward()
             self.optimizer_step()
         return log_loss.data[0], kl_loss.data[0]
@@ -80,7 +84,8 @@ class VAETrainer(Trainer):
 
     def on_batch_end(self, batch, loss):
         # reset kl weight
-        self.kl_weight = self.kl_schedule(batch * self.epoch)
+        total_batches = len(self.datasets['train'])
+        self.kl_weight = self.kl_schedule(batch + total_batches * (self.epoch - 1))
 
     def on_epoch_end(self, epoch, *args):
         self.epoch += 1
