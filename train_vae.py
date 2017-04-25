@@ -73,7 +73,7 @@ class VAETrainer(Trainer):
         log_loss, kl_loss = self.criterion(preds, loss_targets, mu, logvar)
         if not valid:
             batch = source.size(1)
-            loss = log_loss.div(batch) + (self.kl_weight * kl_loss.div(batch))
+            loss = (log_loss + (self.kl_weight * kl_loss)).div(batch)
             loss.backward()
             self.optimizer_step()
         return log_loss.data[0], kl_loss.data[0]
