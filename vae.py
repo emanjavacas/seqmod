@@ -219,20 +219,22 @@ class SequenceVAE(nn.Module):
             "At least one of (inp, z_params) must be given"
         # encoder
         if z_params is None:
-            emb = self.embeddings(inp)
-            mu, logvar = self.encoder(inp)
+            mu, logvar = self.encoder(self.embeddings(inp))
         else:
             mu, logvar = z_params
         # sample from the hidden code
         z = self.encoder.reparametrize(mu, logvar)
         # decoder
         hidden = self.decoder.init_hidden_for(z)
-        dec_outs, z_cond = [], z if self.add_z else None
+        scores, preds, z_cond = [], [], z if self.add_z else None
         prev = Variable(inp.data.new([self.src_dict.get_bos()]), volatile=True)
-        prev = prev.unsqueeze(0)
         for _ in range(len(inp) * max_decode_len):
-            prev_emb = self.embeddings(prev).unsqueeze(0)
+            prev_emb = self.embeddings(prev.unsqueeze(0)).squeeze(0)
             dec_out, hidden = self.decoder(prev_emb, hidden, z=z_cond)
-            dec_outs.append(dec_out)
-        dec_outs = torch.stack(dec_outs)
-        return self.project(dec_outs)
+            dec_out = self.project(dec_out.unsqueeze(0))
+            score, pred = dec_out.max(1)
+            scores.append(score.squeeze().data[0])
+            preds.append(pred.squeeze().data[0])
+            if prev.data.eq(self.src_dict.get_eos()).nonzero().nelement() > 0:
+                break
+        return [sum(scores)], [preds]

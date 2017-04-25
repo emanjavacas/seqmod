@@ -38,6 +38,20 @@ def kl_weight_hook(trainer, epoch, batch, num_checkpoints):
     trainer.log("info", "kl weight: [%g]" % trainer.kl_weight)
 
 
+def make_generate_hook(target="This is just a tweet and not much more ...", n=5):
+
+    def hook(trainer, epoch, batch, num_checkpoints):
+        d = trainer.datasets['train'].d['src']
+        inp = torch.LongTensor([d.index(i) for i in target.split()])
+        inp = Variable(inp, volatile=True).unsqueeze(1)
+        z_params = trainer.model.encode(inp)
+        for hyp_num in range(1, n + 1):
+            score, hyp = trainer.model.generate(z_params=z_params)
+            trainer.log("info", u.format_hyp(score[0], hyp[0], hyp_num, d))
+
+    return hook
+
+
 def generic_sigmoid(a=1, b=1, c=1):
     return lambda x: a / (1 + b * math.exp(-x * c))
 
