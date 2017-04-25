@@ -188,17 +188,19 @@ class SequenceVAE(nn.Module):
         mu: (batch x z_dim)
         logvar: (batch x z_dim)
         """
-        # encoder
-        src = word_dropout(
-            src, self.target_code, p=self.word_dropout,
-            reserved_codes=self.reserved_codes, training=self.training)
+        # - encoder
         emb = self.embeddings(src)
         mu, logvar = self.encoder(emb)
         z = self.encoder.reparametrize(mu, logvar)
-        # decoder
+        # - decoder
         hidden = self.decoder.init_hidden_for(z)
         dec_outs, z_cond = [], z if self.add_z else None
+        # apply word dropout on the conditioning targets
+        trg = word_dropout(
+            trg, self.target_code, p=self.word_dropout,
+            reserved_codes=self.reserved_codes, training=self.training)
         for emb_t in self.embeddings(trg).chunk(trg.size(0)):
+            # rnn
             dec_out, hidden = self.decoder(emb_t.squeeze(0), hidden, z=z_cond)
             dec_outs.append(dec_out)
         dec_outs = torch.stack(dec_outs)
