@@ -107,7 +107,8 @@ class DecoderVAE(nn.Module):
 class SequenceVAE(nn.Module):
     def __init__(self, emb_dim, hid_dim, z_dim, src_dict, num_layers=1,
                  cell='LSTM', bidi=True, dropout=0.0, word_dropout=0.0,
-                 tie_weights=False, project_on_tied_weights=False, add_z=False):
+                 project_init=False, add_z=False,
+                 tie_weights=False, project_on_tied_weights=False):
         if isinstance(hid_dim, tuple):
             enc_hid_dim, dec_hid_dim = hid_dim
         else:
@@ -140,7 +141,7 @@ class SequenceVAE(nn.Module):
         # decoder
         self.decoder = DecoderVAE(
             z_dim, emb_dim, dec_hid_dim, dec_num_layers, cell,
-            add_z=add_z, dropout=dropout)
+            project_init=project_init, add_z=add_z, dropout=dropout)
 
         # projection
         if tie_weights:

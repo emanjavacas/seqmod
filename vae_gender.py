@@ -18,11 +18,13 @@ if __name__ == '__main__':
     parser.add_argument('--layers', default=1, type=int)
     parser.add_argument('--emb_dim', default=50, type=int)
     parser.add_argument('--hid_dim', default=50, type=int)
+    parser.add_argument('--dec_hid_dim', default=0, type=int)
     parser.add_argument('--z_dim', default=50, type=int)
     parser.add_argument('--cell', default='LSTM')
     parser.add_argument('--non_bidi', action='store_true')
     parser.add_argument('--tie_weights', action='store_true')
     parser.add_argument('--project_on_tied_weights', action='store_true')
+    parser.add_argument('--project_init', action='store_true')
     parser.add_argument('--dropout', default=0.0, type=float)
     parser.add_argument('--word_dropout', default=0.0, type=float)
     parser.add_argument('--add_z', action='store_true')
@@ -77,11 +79,12 @@ if __name__ == '__main__':
     print("* Number of train batches %d" % len(train))
 
     print("Building model...")
+    hid_dim = args.hid_dim if args.dec_hid_dim == 0 else (args.hid_dim, args.dec_hid_dim)
     model = SequenceVAE(
-        args.emb_dim, args.hid_dim, args.z_dim, train.d['src'],
+        args.emb_dim, hid_dim, args.z_dim, train.d['src'],
         num_layers=args.layers, cell=args.cell, bidi=not args.non_bidi,
         dropout=args.dropout, add_z=args.add_z, word_dropout=args.word_dropout,
-        tie_weights=args.tie_weights,
+        tie_weights=args.tie_weights, project_init=args.project_init,
         project_on_tied_weights=args.project_on_tied_weights)
     print(model)
     model.apply(u.make_initializer())
