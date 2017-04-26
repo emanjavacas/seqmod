@@ -31,6 +31,7 @@ class StdLogger(Logger):
                  msgfmt="[%(asctime)s] %(message)s",
                  datefmt='%m-%d %H:%M:%S'):
         self.logger = logging.getLogger(__name__)
+        self.logger.propagate = False
         self.logger.setLevel(getattr(logging, level))
         formatter = logging.Formatter(msgfmt, datefmt)
         sh = logging.StreamHandler()
