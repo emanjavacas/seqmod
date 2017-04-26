@@ -40,6 +40,7 @@ class Trainer(object):
         self.criterion = criterion
         self.optimizer = optimizer  # might be a dict
         self.loss_labels = loss_labels
+        self.epoch = 0          # safe global epoch
         # config
         self.verbose = verbose
         self.size_average = size_average
@@ -261,6 +262,7 @@ class Trainer(object):
         """
         start = time.time()
         for epoch in range(1, epochs + 1):
+            self.epoch = epoch
             start_epoch = time.time()
             self.model.train()
             self.on_epoch_begin(epoch)

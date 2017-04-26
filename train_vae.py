@@ -1,105 +1,193 @@
 
-import math
+import os
+import argparse
 
-import torch
-import torch.nn as nn
-from torch.autograd import Variable
-
+from loaders import load_twisty, load_dataset, load_embeddings
+from vae import SequenceVAE
+from vae_utils import vae_criterion, VAETrainer, kl_weight_hook
 from modules import utils as u
-
-from misc.beam_search import Beam
-from misc.trainer import Trainer
-
-
-class vae_criterion(object):
-    def __init__(self, vocab_size, pad):
-        # Reconstruction loss
-        weight = torch.ones(vocab_size)
-        weight[pad] = 0
-        self.log_loss = nn.NLLLoss(weight, size_average=False)
-
-    # KL-divergence loss
-    def KL_loss(self, mu, logvar):
-        """
-        https://arxiv.org/abs/1312.6114
-        0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
-        """
-        element = mu.pow(2).add_(logvar.exp()).mul_(-1).add_(1).add_(logvar)
-        return torch.sum(element).mul_(-0.5)
-
-    def cuda(self):
-        self.log_loss.cuda()
-
-    def __call__(self, logs, targets, mu, logvar):
-        return self.log_loss(logs, targets), self.KL_loss(mu, logvar)
+from misc.loggers import StdLogger, VisdomLogger
+from misc.optimizer import Optimizer
+from misc.preprocess import text_processor
+from misc.dataset import PairedDataset, Dict
 
 
-def kl_weight_hook(trainer, epoch, batch, num_checkpoints):
-    trainer.log("info", "kl weight: [%g]" % trainer.kl_weight)
+def load_lines(path, processor=text_processor()):
+    lines = []
+    with open(os.path.expanduser(path)) as f:
+        for line in f:
+            line = line.strip()
+            if processor is not None:
+                line = processor(line)
+            line = line.split()
+            if line:
+                lines.append(line)
+    return lines
 
 
-def make_generate_hook(target="This is just a tweet and not much more ...", n=5):
-
-    def hook(trainer, epoch, batch, num_checkpoints):
-        d = trainer.datasets['train'].d['src']
-        inp = torch.LongTensor([d.index(i) for i in target.split()])
-        inp = Variable(inp, volatile=True).unsqueeze(1)
-        z_params = trainer.model.encode(inp)
-        for hyp_num in range(1, n + 1):
-            score, hyp = trainer.model.generate(z_params=z_params)
-            trainer.log("info", u.format_hyp(score[0], hyp[0], hyp_num, d))
-
-    return hook
+def make_mock_labels(lines, label='0'):
+    return [[label] for _ in range(len(lines))]
 
 
-def generic_sigmoid(a=1, b=1, c=1):
-    return lambda x: a / (1 + b * math.exp(-x * c))
+def load_from_lines(
+        path, batch_size, max_size=1000000, min_freq=5, gpu=False,
+        shuffle=True, sort_key=lambda x: len(x[0]), **kwargs):
+    lines = load_lines(path)
+    ldict = Dict(pad_token=u.PAD, eos_token=u.EOS, bos_token=u.BOS,
+                 max_size=max_size, min_freq=min_freq)
+    ldict.fit(lines)
+    mock_labels = make_mock_labels(train)
+    mock = Dict()
+    mock.fit(mock_labels)
+    d = {'src': ldict, 'trg': mock}
+    splits = PairedDataset(lines, mock_labels, d, batch_size, gpu=gpu).splits(
+        shuffle=shuffle, sort_key=sort_key, **kwargs)
+    return splits
 
 
-def kl_annealing_schedule(inflection, steepness=4):
-    b = 10 ** steepness
-    return generic_sigmoid(b=b, c=math.log(b) / inflection)
+def load_penn(path, batch_size,
+              max_size=1000000, min_freq=1, gpu=False, shuffle=True,
+              sort_key=lambda pair: len(pair[0])):
+    train_data = load_lines(os.path.join(path, 'train.txt'))
+    train_labels = make_mock_labels(train_data)
+    valid_data = load_lines(os.path.join(path, 'valid.txt'))
+    valid_labels = make_mock_labels(valid_data)
+    test_data = load_lines(os.path.join(path, 'test.txt'))
+    test_labels = make_mock_labels(test_data)
+    ldict = Dict(pad_token=u.PAD, eos_token=u.EOS, bos_token=u.BOS,
+                 max_size=max_size, min_freq=min_freq)
+    ldict.fit(train_data, valid_data)
+    mock = Dict().fit(train_labels)
+    d = {'src': ldict, 'trg': mock}
+    train = PairedDataset(train_data, train_labels, d, batch_size, gpu=gpu
+    ).sort_(sort_key=sort_key)
+    valid = PairedDataset(valid_data, valid_labels, d, batch_size, gpu=gpu,
+                          evaluation=True).sort_(sort_key=sort_key)
+    test = PairedDataset(test_data, test_labels, d, batch_size, gpu=gpu,
+                         evaluation=True).sort_(sort_key=sort_key)
+    return train, valid, test
 
 
-class VAETrainer(Trainer):
-    def __init__(self, *args, inflection_point=5000, **kwargs):
-        super(VAETrainer, self).__init__(*args, **kwargs)
-        self.size_average = False
-        self.loss_labels = ('rec', 'kl')
-        self.kl_weight = 0.0    # start at 0
-        self.kl_schedule = kl_annealing_schedule(inflection_point)
-        self.epoch = 1
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    # model
+    parser.add_argument('--layers', default=1, type=int)
+    parser.add_argument('--dec_layers', default=0, type=int)
+    parser.add_argument('--emb_dim', default=50, type=int)
+    parser.add_argument('--hid_dim', default=50, type=int)
+    parser.add_argument('--dec_hid_dim', default=0, type=int)
+    parser.add_argument('--z_dim', default=50, type=int)
+    parser.add_argument('--cell', default='LSTM')
+    parser.add_argument('--non_bidi', action='store_true')
+    parser.add_argument('--tie_weights', action='store_true')
+    parser.add_argument('--project_on_tied_weights', action='store_true')
+    parser.add_argument('--project_init', action='store_true')
+    parser.add_argument('--dropout', default=0.0, type=float)
+    parser.add_argument('--word_dropout', default=0.0, type=float)
+    parser.add_argument('--add_z', action='store_true')
+    parser.add_argument('--load_embeddings', action='store_true')
+    parser.add_argument('--flavor', default=None)
+    parser.add_argument('--suffix', default=None)
+    # training
+    parser.add_argument('--optim', default='RMSprop')
+    parser.add_argument('--learning_rate', default=0.01, type=float)
+    parser.add_argument('--max_norm', default=5., type=float)
+    parser.add_argument('--weight_decay', default=0, type=float)
+    parser.add_argument('--lr_decay', default=0.85, type=float)
+    parser.add_argument('--start_decay_at', default=1, type=int)
+    parser.add_argument('--inflection_point', default=10000, type=int)
+    parser.add_argument('--epochs', default=10, type=int)
+    parser.add_argument('--batch_size', type=int, default=564)
+    parser.add_argument('--gpu', action='store_true')
+    parser.add_argument('--outputfile', default=None)
+    parser.add_argument('--checkpoints', default=100, type=int)
+    # dataset
+    parser.add_argument('--source', required=True)
+    parser.add_argument('--source_path')
+    parser.add_argument('--dev', default=0.1, type=float)
+    parser.add_argument('--test', default=0.2, type=float)
+    parser.add_argument('--min_len', default=0, type=int)
+    parser.add_argument('--min_freq', default=5, type=int)
+    parser.add_argument('--max_size', default=50000, type=int)
+    parser.add_argument('--level', default='token')
+    parser.add_argument('--concat', action='store_true')
+    parser.add_argument('--cache_data', action='store_true')
+    args = parser.parse_args()
 
-    def format_loss(self, losses):
-        return tuple(math.exp(min(loss, 100)) for loss in losses)
+    print("Loading data...")
+    prefix = '{source}.{level}.{min_len}.{min_freq}.{concat}.{max_size}' \
+             .format(**vars(args))
+    if not args.cache_data or not os.path.isfile('data/%s_train.pt' % prefix):
+        if args.source == 'twisty':
+            src, trg = load_twisty(
+                min_len=args.min_len, level=args.level, concat=args.concat,
+                processor=text_processor(lower=False))
+            train, test, valid = load_dataset(
+                src, trg, args.batch_size,
+                min_freq=args.min_freq, max_size=args.max_size,
+                gpu=args.gpu, dev=args.dev, test=args.test)
+        elif args.source == 'penn':
+            train, test, valid = load_penn(
+                "~/corpora/penn", args.batch_size,
+                min_freq=args.min_freq, max_size=args.max_size, gpu=args.gpu)
+        else:
+            train, test, valid = load_from_lines(
+                args.source_path, args.batch_size,
+                min_freq=args.min_freq, max_size=args.max_size,
+                gpu=args.gpu, dev=args.dev, test=args.text)
+        if args.cache_data:
+            train.to_disk('data/%s_train.pt' % prefix)
+            test.to_disk('data/%s_test.pt' % prefix)
+            valid.to_disk('data/%s_valid.pt' % prefix)
+    else:
+        train = PairedDataset.from_disk('data/%s_train.pt' % prefix)
+        test = PairedDataset.from_disk('data/%s_test.pt' % prefix)
+        valid = PairedDataset.from_disk('data/%s_valid.pt' % prefix)
+        train.set_gpu(args.gpu), test.set_gpu(args.gpu), valid.set_gpu(args.gpu)
+        train.set_batch_size(args.batch_size), test.set_batch_size(args.batch_size)
+        valid.set_batch_size(args.batch_size)
+    datasets = {'train': train, 'valid': valid, 'test': test}
+    vocab = len(train.d['src'].vocab)
+    print("* Number of train batches %d" % len(train))
 
-    def run_batch(self, batch_data, dataset='train', **kwargs):
-        valid = dataset != 'train'
-        pad, eos = self.model.src_dict.get_pad(), self.model.src_dict.get_eos()
-        source, labels = batch_data
-        # remove <eos> from decoder targets dealing with different <pad> sizes
-        decode_targets = Variable(u.map_index(source[:-1].data, eos, pad))
-        # remove <bos> from loss targets
-        loss_targets = source[1:].view(-1)
-        # preds: (batch * seq_len x vocab)
-        preds, mu, logvar = self.model(source[1:], decode_targets, labels=labels)
-        # compute loss
-        log_loss, kl_loss = self.criterion(preds, loss_targets, mu, logvar)
-        if not valid:
-            batch = source.size(1)
-            loss = (log_loss + (self.kl_weight * kl_loss)).div(batch)
-            loss.backward()
-            self.optimizer_step()
-        return log_loss.data[0], kl_loss.data[0]
+    print("Building model...")
+    hid_dim = args.hid_dim if args.dec_hid_dim == 0 else (args.hid_dim, args.dec_hid_dim)
+    layers = args.layers if args.dec_layers == 0 else (args.layers, args.dec_layers)
+    model = SequenceVAE(
+        args.emb_dim, hid_dim, args.z_dim, train.d['src'],
+        num_layers=layers, cell=args.cell, bidi=not args.non_bidi,
+        dropout=args.dropout, add_z=args.add_z, word_dropout=args.word_dropout,
+        tie_weights=args.tie_weights, project_init=args.project_init,
+        project_on_tied_weights=args.project_on_tied_weights)
+    print(model)
+    model.apply(u.make_initializer())
+    # model.encoder.register_backward_hook(u.log_grad)
+    
+    if args.load_embeddings:
+        weight = load_embeddings(
+            train.d['src'].vocab, args.flavor, args.suffix, '~/data/word_embeddings')
+        model.init_embeddings(weight)
 
-    def num_batch_examples(self, batch_data):
-        source, _ = batch_data
-        return source[1:].data.ne(self.model.src_dict.get_pad()).sum()
+    criterion = vae_criterion(vocab, train.d['src'].get_pad())
 
-    def on_batch_end(self, batch, loss):
-        # reset kl weight
-        total_batches = len(self.datasets['train'])
-        self.kl_weight = self.kl_schedule(batch + total_batches * (self.epoch - 1))
+    if args.gpu:
+        model.cuda(), criterion.cuda()
 
-    def on_epoch_end(self, epoch, *args):
-        self.epoch += 1
+    def on_lr_update(old_lr, new_lr):
+        trainer.log("info", "Resetting lr [%g -> %g]" % (old_lr, new_lr))
+
+    optimizer = Optimizer(
+        model.parameters(), args.optim, lr=args.learning_rate,
+        max_norm=args.max_norm, weight_decay=args.weight_decay,
+        # SGD-only
+        start_decay_at=args.start_decay_at, lr_decay=args.lr_decay,
+        on_lr_update=on_lr_update)
+
+    trainer = VAETrainer(
+        model, datasets, criterion, optimizer, inflection_point=args.inflection_point)
+    trainer.add_loggers(
+        StdLogger(),
+        VisdomLogger(env='vae_gender', losses=('rec', 'kl'), max_y=600))
+    # trainer.add_hook(kl_weight_hook)
+
+    trainer.train(args.epochs, args.checkpoints, shuffle=True, gpu=args.gpu)

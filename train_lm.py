@@ -123,7 +123,7 @@ if __name__ == '__main__':
         test_data = load_lines(args.path + 'test.txt')
         d = Dict(max_size=args.max_size, min_freq=args.min_freq,
                  eos_token=u.EOS, bos_token=u.BOS)
-        d.fit(train_data, valid_data, test_data)
+        d.fit(train_data, valid_data)
         train = BlockDataset(
             train_data, d, args.batch_size, args.bptt, gpu=args.gpu)
         valid = BlockDataset(
