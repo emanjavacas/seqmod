@@ -39,7 +39,7 @@ class EncoderVAE(Encoder):
         batch = h_t.size(1)
         h_t = h_t.view(self.num_layers, self.num_dirs, batch, self.hid_dim)
         # only use last layer activations
-        # h_t (batch, hid_dim)
+        # h_t (batch x hid_dim * num_dirs)
         h_t = h_t[-1].t().contiguous().view(batch, -1)
         mu, logvar = self.Q_mu(h_t), self.Q_logvar(h_t)
         return mu, logvar
@@ -159,16 +159,30 @@ class SequenceVAE(nn.Module):
             self.out_proj = nn.Linear(dec_hid_dim, vocab_size)
 
     def init_embeddings(self, weight):
+        emb_elements = self.embeddings.weight.data.nelement()
+        mismatch_msg = "Expected " + str(emb_elements) + "elements but got %d"
         if isinstance(weight, np.ndarray):
+            assert emb_elements == weight.size, mismatch_msg % weight.size
             self.embeddings.weight.data = torch.Tensor(weight)
         elif isinstance(weight, torch.Tensor):
+            assert emb_elements == weight.nelement(), \
+                mismatch_msg % weight.nelement()
             self.embeddings.weight.data = weight
         elif isinstance(weight, nn.Parameter):
+            assert emb_elements == weight.nelement(), \
+                mismatch_msg % weight.nelement()
             self.embeddings.weight = weight
         else:
             raise ValueError("Unknown weight type [%s]" % type(weight))
 
     def project(self, dec_outs):
+        """
+        Parameters:
+        -----------
+        dec_outs: (seq_len x batch x hid_dim), decoder output
+
+        Returns: dec_logs (seq_len * batch x vocab_size)
+        """
         seq_len, batch, hid_dim = dec_outs.size()
         dec_outs = self.out_proj(dec_outs.view(batch * seq_len, hid_dim))
         dec_logs = F.log_softmax(dec_outs)
@@ -207,7 +221,7 @@ class SequenceVAE(nn.Module):
         dec_outs = torch.stack(dec_outs)
         return self.project(dec_outs), mu, logvar
 
-    def generate(self, inp=None, z_params=None, max_decode_len=2, **kwargs):
+    def generate(self, inp=None, z_params=None, max_inp_len=2, max_len=20, **kwargs):
         """
         inp: None or (seq_len x 1). Input sequences to be encoded. It will
             be ignored if `z_params` is not None.
@@ -221,15 +235,17 @@ class SequenceVAE(nn.Module):
         # encoder
         if z_params is None:
             mu, logvar = self.encoder(self.embeddings(inp))
+            max_len = len(inp) * max_inp_len
         else:
             mu, logvar = z_params
+            max_len = max_len
         # sample from the hidden code
         z = self.encoder.reparametrize(mu, logvar)
         # decoder
         hidden = self.decoder.init_hidden_for(z)
         scores, preds, z_cond = [], [], z if self.add_z else None
-        prev = Variable(inp.data.new([self.src_dict.get_bos()]), volatile=True)
-        for _ in range(len(inp) * max_decode_len):
+        prev = Variable(mu.data.new([self.src_dict.get_bos()]), volatile=True)
+        for _ in range(max_len):
             prev_emb = self.embeddings(prev.unsqueeze(0)).squeeze(0)
             dec_out, hidden = self.decoder(prev_emb, hidden, z=z_cond)
             dec_out = self.project(dec_out.unsqueeze(0))
