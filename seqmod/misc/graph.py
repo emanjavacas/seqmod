@@ -3,7 +3,7 @@ from graphviz import Digraph
 import torch
 from torch.autograd import Variable
 
-from misc.dataset import Dict
+from seqmod.misc.dataset import Dict
 
 
 def make_dot(var):

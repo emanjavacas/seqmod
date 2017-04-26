@@ -14,16 +14,16 @@ except:
 torch.manual_seed(seed)
 
 import dummy as d
-from train_encoder_decoder import (
-    make_encdec_hook, make_att_hook, make_criterion)
+from train_encoder_decoder import make_encdec_hook, make_att_hook
+from train_encoder_decoder import make_criterion
 
-from modules.encoder_decoder import ForkableMultiTarget
-from modules import utils as u
+from seqmod.modules.encoder_decoder import ForkableMultiTarget
+from seqmod.modules import utils as u
 
-from misc.dataset import PairedDataset, Dict
-from misc.optimizer import Optimizer
-from misc.trainer import EncoderDecoderTrainer
-from misc.loggers import StdLogger, VisdomLogger
+from seqmod.misc.dataset import PairedDataset, Dict
+from seqmod.misc.optimizer import Optimizer
+from seqmod.misc.trainer import EncoderDecoderTrainer
+from seqmod.misc.loggers import StdLogger, VisdomLogger
 
 
 def wrap_autoencode(sample_fn):

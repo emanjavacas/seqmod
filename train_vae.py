@@ -5,11 +5,11 @@ import argparse
 from loaders import load_twisty, load_dataset, load_embeddings
 from vae import SequenceVAE
 from vae_utils import vae_criterion, VAETrainer, kl_weight_hook
-from modules import utils as u
-from misc.loggers import StdLogger, VisdomLogger
-from misc.optimizer import Optimizer
-from misc.preprocess import text_processor
-from misc.dataset import PairedDataset, Dict
+from seqmod.modules import utils as u
+from seqmod.misc.loggers import StdLogger, VisdomLogger
+from seqmod.misc.optimizer import Optimizer
+from seqmod.misc.preprocess import text_processor
+from seqmod.misc.dataset import PairedDataset, Dict
 
 
 def load_lines(path, processor=text_processor()):

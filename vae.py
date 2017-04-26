@@ -6,11 +6,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 
-from modules.custom import word_dropout, StackedRNN
-from modules.encoder import Encoder
-from modules import utils as u
+from seqmod.modules.custom import word_dropout, StackedRNN
+from seqmod.modules.encoder import Encoder
+from seqmod.modules import utils as u
 
-from misc.beam_search import Beam
+from seqmod.misc.beam_search import Beam
 
 
 class EncoderVAE(Encoder):

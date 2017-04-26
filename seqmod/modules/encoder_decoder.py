@@ -4,11 +4,11 @@ import torch
 import torch.nn as nn
 from torch.autograd import Variable
 
-from modules.custom import word_dropout
-from modules.encoder import Encoder
-from modules.decoder import Decoder
-from modules import utils as u
-from misc.beam_search import Beam
+from seqmod.modules.custom import word_dropout
+from seqmod.modules.encoder import Encoder
+from seqmod.modules.decoder import Decoder
+from seqmod.modules import utils as u
+from seqmod.misc.beam_search import Beam
 
 
 class EncoderDecoder(nn.Module):

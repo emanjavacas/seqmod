@@ -4,7 +4,7 @@ import json
 
 import numpy as np
 
-from misc.dataset import Dict, PairedDataset
+from seqmod.misc.dataset import Dict, PairedDataset
 
 from w2v import Embedder
 

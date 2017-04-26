@@ -5,10 +5,10 @@ import torch
 import numpy as np
 from torch.autograd import Variable
 
-from misc.dataset import CyclicBlockDataset
-from misc.early_stopping import EarlyStopping, EarlyStoppingException
+from seqmod.misc.dataset import CyclicBlockDataset
+from seqmod.misc.early_stopping import EarlyStopping, EarlyStoppingException
 
-from modules import utils as u
+from seqmod.modules import utils as u
 
 
 # Utility functions (repackage_hidden, memory effective loss, etc.)

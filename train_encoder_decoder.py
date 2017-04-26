@@ -19,13 +19,13 @@ np.random.seed(seed)
 from torch import nn            # nopep8
 from torch.autograd import Variable  # nopep8
 
-from modules.encoder_decoder import EncoderDecoder  # nopep8
-from modules import utils as u                      # nopep8
+from seqmod.modules.encoder_decoder import EncoderDecoder  # nopep8
+from seqmod.modules import utils as u                      # nopep8
 
-from misc.optimizer import Optimizer             # nopep8
-from misc.trainer import EncoderDecoderTrainer   # nopep8
-from misc.loggers import StdLogger, VisdomLogger  # nopep8
-from misc.dataset import PairedDataset, Dict      # nopep8
+from seqmod.misc.optimizer import Optimizer             # nopep8
+from seqmod.misc.trainer import EncoderDecoderTrainer   # nopep8
+from seqmod.misc.loggers import StdLogger, VisdomLogger  # nopep8
+from seqmod.misc.dataset import PairedDataset, Dict      # nopep8
 
 import dummy as d                                 # nopep8
 

@@ -1,9 +1,9 @@
 
 from random import choice, randrange
 
-from misc.dataset import PairedDataset, Dict
+from seqmod.misc.dataset import PairedDataset, Dict
 
-from modules import utils as u
+from seqmod.modules import utils as u
 
 
 # string generator functions

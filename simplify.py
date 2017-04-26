@@ -15,14 +15,14 @@ torch.manual_seed(seed)
 
 from train_encoder_decoder import make_encdec_hook, make_criterion
 
-from modules.encoder_decoder import EncoderDecoder
-from modules import utils as u
+from seqmod.modules.encoder_decoder import EncoderDecoder
+from seqmod.modules import utils as u
 
-from misc.dataset import PairedDataset, Dict
-from misc.optimizer import Optimizer
-from misc.trainer import EncoderDecoderTrainer
-from misc.loggers import StdLogger, VisdomLogger
-from misc.preprocess import text_processor
+from seqmod.misc.dataset import PairedDataset, Dict
+from seqmod.misc.optimizer import Optimizer
+from seqmod.misc.trainer import EncoderDecoderTrainer
+from seqmod.misc.loggers import StdLogger, VisdomLogger
+from seqmod.misc.preprocess import text_processor
 
 
 def load_data(path, exts, text_processor=text_processor()):

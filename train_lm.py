@@ -15,15 +15,15 @@ torch.manual_seed(seed)
 
 import torch.nn as nn           # nopep8
 
-from modules.lm import LM       # nopep8
-from modules import utils as u  # nopep8
+from seqmod.modules.lm import LM       # nopep8
+from seqmod.modules import utils as u  # nopep8
 
-from misc.trainer import LMTrainer               # nopep8
-from misc.loggers import StdLogger, VisdomLogger  # nopep8
-from misc.optimizer import Optimizer              # nopep8
-from misc.dataset import Dict, BlockDataset       # nopep8
-from misc.preprocess import text_processor        # nopep8
-from misc.early_stopping import EarlyStopping     # nopep8
+from seqmod.misc.trainer import LMTrainer               # nopep8
+from seqmod.misc.loggers import StdLogger, VisdomLogger  # nopep8
+from seqmod.misc.optimizer import Optimizer              # nopep8
+from seqmod.misc.dataset import Dict, BlockDataset       # nopep8
+from seqmod.misc.preprocess import text_processor        # nopep8
+from seqmod.misc.early_stopping import EarlyStopping     # nopep8
 
 
 # Load data

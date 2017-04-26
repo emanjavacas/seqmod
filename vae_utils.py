@@ -5,10 +5,10 @@ import torch
 import torch.nn as nn
 from torch.autograd import Variable
 
-from modules import utils as u
+from seqmod.modules import utils as u
 
-from misc.beam_search import Beam
-from misc.trainer import Trainer
+from seqmod.misc.beam_search import Beam
+from seqmod.misc.trainer import Trainer
 
 
 class vae_criterion(object):

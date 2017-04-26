@@ -4,8 +4,6 @@ import time
 import numpy as np
 import pickle as p
 
-from misc.dataset import Dict
-
 
 def text_processor(language='en', num=True, lower=True):
     try:
@@ -51,6 +49,8 @@ def process_files(files, processor, max_buffer_size):
 
 
 if __name__ == '__main__':
+    from seqmod.misc.dataset import Dict
+
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('path')
