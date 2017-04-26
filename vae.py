@@ -244,14 +244,16 @@ class SequenceVAE(nn.Module):
         # decoder
         hidden = self.decoder.init_hidden_for(z)
         scores, preds, z_cond = [], [], z if self.add_z else None
-        prev = Variable(mu.data.new([self.src_dict.get_bos()]), volatile=True)
+        prev_data = mu.data.new([self.src_dict.get_bos()]).long()
+        prev = Variable(prev_data, volatile=True).unsqueeze(0)
         for _ in range(max_len):
-            prev_emb = self.embeddings(prev.unsqueeze(0)).squeeze(0)
+            prev_emb = self.embeddings(prev).squeeze(0)
             dec_out, hidden = self.decoder(prev_emb, hidden, z=z_cond)
             dec_out = self.project(dec_out.unsqueeze(0))
             score, pred = dec_out.max(1)
             scores.append(score.squeeze().data[0])
             preds.append(pred.squeeze().data[0])
+            prev = pred
             if prev.data.eq(self.src_dict.get_eos()).nonzero().nelement() > 0:
                 break
         return [sum(scores)], [preds]
