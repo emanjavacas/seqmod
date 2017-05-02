@@ -16,7 +16,7 @@ torch.manual_seed(seed)
 from train_encoder_decoder import make_encdec_hook, make_criterion
 
 from seqmod.modules.encoder_decoder import EncoderDecoder
-from seqmod.modules import utils as u
+from seqmod import utils as u
 
 from seqmod.misc.dataset import PairedDataset, Dict
 from seqmod.misc.optimizer import Optimizer

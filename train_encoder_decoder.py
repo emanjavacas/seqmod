@@ -20,7 +20,7 @@ from torch import nn            # nopep8
 from torch.autograd import Variable  # nopep8
 
 from seqmod.modules.encoder_decoder import EncoderDecoder  # nopep8
-from seqmod.modules import utils as u                      # nopep8
+from seqmod import utils as u                      # nopep8
 
 from seqmod.misc.optimizer import Optimizer             # nopep8
 from seqmod.misc.trainer import EncoderDecoderTrainer   # nopep8

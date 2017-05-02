@@ -7,8 +7,8 @@ from torch.autograd import Variable
 from seqmod.modules.custom import word_dropout
 from seqmod.modules.encoder import Encoder
 from seqmod.modules.decoder import Decoder
-from seqmod.modules import utils as u
 from seqmod.misc.beam_search import Beam
+import seqmod.utils as u
 
 
 class EncoderDecoder(nn.Module):

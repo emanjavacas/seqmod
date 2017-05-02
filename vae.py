@@ -8,7 +8,7 @@ from torch.autograd import Variable
 
 from seqmod.modules.custom import word_dropout, StackedRNN
 from seqmod.modules.encoder import Encoder
-from seqmod.modules import utils as u
+from seqmod import utils as u
 
 from seqmod.misc.beam_search import Beam
 

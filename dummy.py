@@ -3,7 +3,7 @@ from random import choice, randrange
 
 from seqmod.misc.dataset import PairedDataset, Dict
 
-from seqmod.modules import utils as u
+from seqmod import utils as u
 
 
 # string generator functions

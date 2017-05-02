@@ -18,7 +18,7 @@ from train_encoder_decoder import make_encdec_hook, make_att_hook
 from train_encoder_decoder import make_criterion
 
 from seqmod.modules.encoder_decoder import ForkableMultiTarget
-from seqmod.modules import utils as u
+from seqmod import utils as u
 
 from seqmod.misc.dataset import PairedDataset, Dict
 from seqmod.misc.optimizer import Optimizer

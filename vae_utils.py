@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 from torch.autograd import Variable
 
-from seqmod.modules import utils as u
+from seqmod import utils as u
 
 from seqmod.misc.beam_search import Beam
 from seqmod.misc.trainer import Trainer

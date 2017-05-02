@@ -16,7 +16,7 @@ torch.manual_seed(seed)
 import torch.nn as nn           # nopep8
 
 from seqmod.modules.lm import LM       # nopep8
-from seqmod.modules import utils as u  # nopep8
+from seqmod import utils as u  # nopep8
 
 from seqmod.misc.trainer import LMTrainer               # nopep8
 from seqmod.misc.loggers import StdLogger, VisdomLogger  # nopep8
@@ -165,15 +165,15 @@ if __name__ == '__main__':
     criterion = nn.CrossEntropyLoss()
 
     # create trainer
-    trainer = LMTrainer(
-        model, {"train": train, "test": test, "valid": valid}, criterion, optim)
+    trainer = LMTrainer(model, {"train": train, "test": test, "valid": valid},
+                        criterion, optim)
 
     # hooks
     early_stopping = None
     if args.early_stopping > 0:
         early_stopping = EarlyStopping(args.early_stopping)
     model_check_hook = make_lm_check_hook(
-        d, args.gpu, early_stopping=early_stopping)
+        d, seed_text=args.seed, gpu=args.gpu, early_stopping=early_stopping)
     num_checkpoints = len(train) // (args.checkpoint * args.hooks_per_epoch)
     trainer.add_hook(model_check_hook, num_checkpoints=num_checkpoints)
 

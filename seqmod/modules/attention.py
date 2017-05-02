@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from seqmod.modules import utils as u
+import seqmod.utils as u
 
 
 class GlobalAttention(nn.Module):

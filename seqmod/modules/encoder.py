@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 from torch.autograd import Variable
 
-from seqmod.modules import utils as u
+import seqmod.utils as u
 
 
 class Encoder(nn.Module):
