@@ -5,7 +5,16 @@ import numpy as np
 import pickle as p
 
 
-def text_processor(language='en', num=True, lower=True):
+def segmenter(sent, level='char'):
+    if level == 'char':
+        return list(sent)
+    elif level == 'token':
+        return sent.split()
+    else:
+        raise ValueError
+
+
+def text_processor(language='en', num=True, lower=True, level='token'):
     try:
         from normalizr import Normalizr
     except ImportError:
@@ -30,7 +39,7 @@ def text_processor(language='en', num=True, lower=True):
             sent = NUM.sub('<num>', sent)  # number substitution
         if lower:
             sent = sent.lower()  # downcase
-        return sent
+        return segmenter(sent, level=level)
 
     return processor
 
@@ -40,7 +49,7 @@ def process_files(files, processor, max_buffer_size):
         with open(f, 'r') as lines:
             to_process = []
             for line in lines:
-                to_process.append(processor(line.strip()).split())
+                to_process.append(processor(line.strip()))
                 if len(to_process) >= max_buffer_size:
                     yield to_process
                     to_process = []
@@ -60,13 +69,16 @@ if __name__ == '__main__':
     parser.add_argument('--bos_token', type=str, default='<bos>')
     parser.add_argument('--eos_token', type=str, default='<eos>')
     parser.add_argument('--max_buffer_size', type=int, default=100000)
+    parser.add_argument('--num', action='store_true')
+    parser.add_argument('--lower', action='store_true')
+    parser.add_argument('--level', default='token')
     args = parser.parse_args()
 
     extractor = Dict(
         max_size=args.max_size, min_freq=args.min_freq,
         bos_token=args.bos_token, eos_token=args.eos_token)
 
-    processor = text_processor()
+    processor = text_processor(num=args.num, lower=args.lower, level=args.level)
 
     if os.path.isfile(args.path):
         files = [args.path]

@@ -19,7 +19,6 @@ def load_lines(path, processor=text_processor()):
             line = line.strip()
             if processor is not None:
                 line = processor(line)
-            line = line.split()
             if line:
                 lines.append(line)
     return lines
