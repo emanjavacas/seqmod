@@ -220,7 +220,8 @@ class LM(nn.Module):
         scores: list of floats, unnormalized scores, one for each hypothesis
         hyps: list of lists, decoded hypotheses in integer form
         """
-        self.eval()
+        if self.training:
+            logging.warn("Generating in training modus!")
         beam = Beam(width, bos, eos, gpu=gpu)
         hidden = None
         while beam.active and len(beam) < max_seq_len:
@@ -246,7 +247,8 @@ class LM(nn.Module):
         scores: list of floats, unnormalized scores, one for each hypothesis
         hyps: list of lists, decoded hypotheses in integer form
         """
-        self.eval()
+        if self.training:
+            logging.warn("Generating in training modus!")
         prev = Variable(torch.LongTensor([bos]).unsqueeze(0), volatile=True)
         if gpu: prev = prev.cuda()
         hidden, hyp, scores = None, [], []
@@ -262,7 +264,8 @@ class LM(nn.Module):
         return [sum(scores)], [hyp]
 
     def predict_proba(self, inp, gpu=False, **kwargs):
-        self.eval()
+        if self.training:
+            logging.warn("Generating in training modus!")
         inp_vec = Variable(torch.LongTensor([inp]), volatile=True)
         if gpu:
             inp_vec.cuda()

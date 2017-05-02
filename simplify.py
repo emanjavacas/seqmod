@@ -32,8 +32,8 @@ def load_data(path, exts, text_processor=text_processor()):
         for src_line, trg_line in zip(src, trg):
             src_line, trg_line = src_line.strip(), trg_line.strip()
             if text_processor is not None:
-                src_line = text_processor(src_line).split()
-                trg_line = text_processor(trg_line).split()
+                src_line = text_processor(src_line)
+                trg_line = text_processor(trg_line)
             if src_line and trg_line:
                 src_data.append(src_line), trg_data.append(trg_line)
     return src_data, trg_data

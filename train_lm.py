@@ -34,7 +34,6 @@ def load_lines(path, processor=text_processor()):
             line = line.strip()
             if processor is not None:
                 line = processor(line)
-            line = line.split()
             if line:
                 lines.append(line)
     return lines
@@ -75,12 +74,7 @@ def make_lm_check_hook(d, gpu, early_stopping):
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--path', required=True)
-    parser.add_argument('--processed', action='store_true',
-                        help='Is data in processed format?')
-    parser.add_argument('--dict_path', type=str)
-    parser.add_argument('--max_size', default=1000000, type=int)
-    parser.add_argument('--min_freq', default=1, type=int)
+    # model
     parser.add_argument('--layers', default=2, type=int)
     parser.add_argument('--cell', default='LSTM')
     parser.add_argument('--emb_dim', default=200, type=int)
@@ -88,12 +82,23 @@ if __name__ == '__main__':
     parser.add_argument('--att_dim', default=0, type=int)
     parser.add_argument('--dropout', default=0.3, type=float)
     parser.add_argument('--word_dropout', default=0.0, type=float)
-    parser.add_argument('--early_stopping', default=-1, type=int)
     parser.add_argument('--tie_weights', action='store_true')
     parser.add_argument('--project_on_tied_weights', action='store_true')
-    parser.add_argument('--batch_size', default=20, type=int)
-    parser.add_argument('--bptt', default=20, type=int)
+    # dataset
+    parser.add_argument('--path', required=True)
+    parser.add_argument('--processed', action='store_true',
+                        help='preprocessed data?')
+    parser.add_argument('--dict_path', type=str)
+    parser.add_argument('--max_size', default=1000000, type=int)
+    parser.add_argument('--min_freq', default=1, type=int)
+    parser.add_argument('--lower', action='store_true')
+    parser.add_argument('--num', action='store_true')
+    parser.add_argument('--level', default='token')
+    # training
     parser.add_argument('--epochs', default=10, type=int)
+    parser.add_argument('--batch_size', default=20, type=int)
+    parser.add_argument('--early_stopping', default=-1, type=int)
+    parser.add_argument('--bptt', default=20, type=int)
     parser.add_argument('--checkpoint', default=200, type=int)
     parser.add_argument('--hooks_per_epoch', default=5, type=int)
     parser.add_argument('--log_checkpoints', action='store_true')
@@ -118,9 +123,11 @@ if __name__ == '__main__':
         del data
     else:
         print("Processing datasets...")
-        train_data = load_lines(args.path + 'train.txt')
-        valid_data = load_lines(args.path + 'valid.txt')
-        test_data = load_lines(args.path + 'test.txt')
+        proc = text_processor(
+            lower=args.lower, num=args.num, level=args.level)
+        train_data = load_lines(args.path + 'train.txt', processor=proc)
+        valid_data = load_lines(args.path + 'valid.txt', processor=proc)
+        test_data = load_lines(args.path + 'test.txt', processor=proc)
         d = Dict(max_size=args.max_size, min_freq=args.min_freq,
                  eos_token=u.EOS, bos_token=u.BOS)
         d.fit(train_data, valid_data)
@@ -158,8 +165,8 @@ if __name__ == '__main__':
     criterion = nn.CrossEntropyLoss()
 
     # create trainer
-    datasets = {"train": train, "test": test, "valid": valid}
-    trainer = LMTrainer(model, datasets, criterion, optim)
+    trainer = LMTrainer(
+        model, {"train": train, "test": test, "valid": valid}, criterion, optim)
 
     # hooks
     early_stopping = None

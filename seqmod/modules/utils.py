@@ -18,8 +18,10 @@ def load_model(path):
         import pickle as p
         load_fn = p.load
     elif path.endswith('pt'):
-        import torch
         load_fn = torch.load
+    elif path.endswith('npy'):
+        import numpy as np
+        load_fn = np.load
     else:
         raise ValueError("Unknown file format [%s]" % path)
     with open(path, 'rb') as f:
@@ -33,6 +35,9 @@ def save_model(model, prefix, d=None, mode='torch'):
     elif mode == 'pickle':
         import pickle as p
         save_fn, ext = p.dump, 'pickle'
+    elif mode == 'npy':
+        import numpy as np
+        save_fn, ext = np.save, 'npy'
     else:
         raise ValueError("Unknown mode [%s]" % mode)
     with open(prefix + "." + ext, 'wb') as f:
