@@ -181,8 +181,37 @@ class LM(nn.Module):
         else:
             return h_0
 
-    def generate_beam(
-            self, bos, eos, max_seq_len=20, width=5, gpu=False, **kwargs):
+    def forward(self, inp, hidden=None, **kwargs):
+        """
+        Parameters:
+        -----------
+        inp: torch.Tensor (seq_len x batch_size)
+
+        Returns:
+        --------
+        outs: torch.Tensor (seq_len * batch_size x vocab)
+        hidden: see output of RNN, GRU, LSTM in torch.nn
+        weights: None or list of weights (batch_size x 0:n),
+            It will only be not None if attention is provided.
+        """
+        inp = word_dropout(
+            inp, self.target_code, p=self.word_dropout,
+            reserved_codes=self.reserved_codes, training=self.training)
+        emb = self.embeddings(inp)
+        if self.has_dropout:
+            emb = F.dropout(emb, p=self.dropout, training=self.training)
+        outs, hidden = self.rnn(emb, hidden or self.init_hidden_for(emb))
+        if self.has_dropout:
+            outs = F.dropout(outs, p=self.dropout, training=self.training)
+        weights = None
+        if hasattr(self, 'attn'):
+            outs, weights = self.attn(outs, emb)
+        seq_len, batch, hid_dim = outs.size()
+        outs = self.project(outs.view(seq_len * batch, hid_dim))
+        return outs, hidden, weights
+
+    def generate_beam(self, bos, eos,
+                      max_seq_len=20, width=5, gpu=False, **kwargs):
         """
         Generate text using beam search decoding
 
@@ -240,35 +269,6 @@ class LM(nn.Module):
         outs, hidden, _ = self(inp_vec, **kwargs)
         outs = u.select_cols(F.log_softmax(outs), inp).sum()
         return outs.data[0] / len(inp)
-
-    def forward(self, inp, hidden=None, **kwargs):
-        """
-        Parameters:
-        -----------
-        inp: torch.Tensor (seq_len x batch_size)
-
-        Returns:
-        --------
-        outs: torch.Tensor (seq_len * batch_size x vocab)
-        hidden: see output of RNN, GRU, LSTM in torch.nn
-        weights: None or list of weights (batch_size x 0:n),
-            It will only be not None if attention is provided.
-        """
-        inp = word_dropout(
-            inp, self.target_code, p=self.word_dropout,
-            reserved_codes=self.reserved_codes, training=self.training)
-        emb = self.embeddings(inp)
-        if self.has_dropout:
-            emb = F.dropout(emb, p=self.dropout, training=self.training)
-        outs, hidden = self.rnn(emb, hidden or self.init_hidden_for(emb))
-        if self.has_dropout:
-            outs = F.dropout(outs, p=self.dropout, training=self.training)
-        weights = None
-        if hasattr(self, 'attn'):
-            outs, weights = self.attn(outs, emb)
-        seq_len, batch, hid_dim = outs.size()
-        outs = self.project(outs.view(seq_len * batch, hid_dim))
-        return outs, hidden, weights
 
 
 class ForkableLM(LM):
