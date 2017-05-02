@@ -12,7 +12,6 @@ class GlobalAttention(nn.Module):
     def __init__(self, dim):
         super(GlobalAttention, self).__init__()
         self.linear_in = nn.Linear(dim, dim, bias=False)
-        self.softmax = nn.Softmax()
         self.linear_out = nn.Linear(dim * 2, dim, bias=False)
 
     def forward(self, dec_out, enc_outs, mask=None, **kwargs):
@@ -27,7 +26,7 @@ class GlobalAttention(nn.Module):
         dec_att = self.linear_in(dec_out).unsqueeze(2)
         # (batch x seq_len x att_dim) * (batch x att x 1) -> (batch x seq_len)
         weights = torch.bmm(enc_outs.t(), dec_att).squeeze(2)
-        weights = self.softmax(weights)
+        weights = F.softmax(weights)
         if mask is not None:
             weights.data.masked_fill_(mask, -math.inf)
         # (batch x 1 x seq_len) * (batch x seq_len x att) -> (batch x att)

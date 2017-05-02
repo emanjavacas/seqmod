@@ -34,13 +34,9 @@ class EncoderVAE(Encoder):
         return eps.mul(std).add_(mu)
 
     def forward(self, inp, hidden=None, **kwargs):
-        _, hidden = super(EncoderVAE, self).forward(inp, hidden, **kwargs)
-        h_t = hidden[0] if self.cell.startswith('LSTM') else hidden
-        batch = h_t.size(1)
-        h_t = h_t.view(self.num_layers, self.num_dirs, batch, self.hid_dim)
-        # only use last layer activations
-        # h_t (batch x hid_dim * num_dirs)
-        h_t = h_t[-1].t().contiguous().view(batch, -1)
+        outs, _ = super(EncoderVAE, self).forward(inp, hidden, **kwargs)
+        # only use last layer activations (batch x hid_dim * num_dirs)
+        h_t = outs[-1]
         mu, logvar = self.Q_mu(h_t), self.Q_logvar(h_t)
         return mu, logvar
 
@@ -221,7 +217,8 @@ class SequenceVAE(nn.Module):
         dec_outs = torch.stack(dec_outs)
         return self.project(dec_outs), mu, logvar
 
-    def generate(self, inp=None, z_params=None, max_inp_len=2, max_len=20, **kwargs):
+    def generate(self, inp=None, z_params=None,
+                 max_inp_len=2, max_len=20, **kwargs):
         """
         inp: None or (seq_len x 1). Input sequences to be encoded. It will
             be ignored if `z_params` is not None.

@@ -4,13 +4,6 @@ import torch.optim as optim
 from torch.nn.utils import clip_grad_norm
 
 
-def root(x, nth=1):
-    """
-    warning!: this is only exact for p values below 3.
-    """
-    return math.pow(x, 1/nth)
-
-
 class Optimizer(object):
     def __init__(self, params, method, lr=1., max_norm=5., weight_decay=0,
                  lr_decay=1, start_decay_at=None, decay_every=1, on_lr_update=None):
