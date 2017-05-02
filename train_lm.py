@@ -52,18 +52,22 @@ def load_from_file(path):
 
 
 # hook
-def make_lm_check_hook(d, gpu, early_stopping):
+def make_lm_check_hook(d, seed_text, max_seq_len=25, gpu=False,
+                       method='beam', temperature=2, width=5,
+                       early_stopping=None, validate=False):
 
     def hook(trainer, epoch, batch_num, checkpoint):
         trainer.log("info", "Checking training...")
-        loss = trainer.validate_model()
-        trainer.log("info", "Valid loss: %g" % loss)
-        trainer.log("info", "Registering early stopping loss...")
-        if early_stopping is not None:
-            early_stopping.add_checkpoint(loss)
+        if validate:
+            loss = trainer.validate_model()
+            trainer.log("info", "Valid loss: %g" % loss)
+            trainer.log("info", "Registering early stopping loss...")
+            if early_stopping is not None:
+                early_stopping.add_checkpoint(loss)
         trainer.log("info", "Generating text...")
         scores, hyps = trainer.model.generate(
-            d.get_bos(), d.get_eos(), gpu=gpu, max_seq_len=100)
+            d, seed_text=seed_text, max_seq_len=max_seq_len, gpu=gpu,
+            method=method, temperature=temperature, width=width)
         hyps = [u.format_hyp(score, hyp, hyp_num + 1, d)
                 for hyp_num, (score, hyp) in enumerate(zip(scores, hyps))]
         trainer.log("info", '\n***' + ''.join(hyps) + "\n***")
@@ -98,6 +102,7 @@ if __name__ == '__main__':
     parser.add_argument('--epochs', default=10, type=int)
     parser.add_argument('--batch_size', default=20, type=int)
     parser.add_argument('--early_stopping', default=-1, type=int)
+    parser.add_argument('--seed', default=None)
     parser.add_argument('--bptt', default=20, type=int)
     parser.add_argument('--checkpoint', default=200, type=int)
     parser.add_argument('--hooks_per_epoch', default=5, type=int)

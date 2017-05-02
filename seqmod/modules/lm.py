@@ -1,4 +1,7 @@
 
+import math
+import functools
+import operator
 import logging
 
 import torch
@@ -6,9 +9,91 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 
-from seqmod.modules import utils as u
+import seqmod.utils as u
 from seqmod.modules.custom import word_dropout
 from seqmod.misc.beam_search import Beam
+
+
+class Decoder(object):
+    def __init__(self, model, d, gpu=False):
+        self.torch = torch if not gpu else torch.cuda
+        self.model = model
+        self.d = d
+        self.bos, self.eos = self.d.get_bos(), self.d.get_eos()
+
+    def seed(self, seed_text=None, **kwargs):
+        """
+        Parameters
+        -----------
+        seed_text: iterable or None, Seed text to initialize the generator.
+            It should be an iterable of strings over vocabulary tokens.
+
+        Returns
+        ---------
+        prev: (1 x 1), first integer token to feed into the generator
+        hidden: hidden state to seed the generator, may be None if no
+            seed text was passed to the generation function.
+        """
+        hidden = None
+        if seed_text is not None:
+            # prediction after last seed input
+            seed_text = [self.d.index(i) for i in seed_text]
+            if self.bos:
+                seed_text = [self.bos] + seed_text
+            inp = Variable(self.torch.LongTensor(seed_text).unsqueeze(1))
+            # outs (seq_len (* 1) x vocab)
+            outs, hidden, _ = self.model(inp, **kwargs)
+            # prev_data (1)
+            _, prev_data = outs.data[-1].max(0)
+        elif self.bos is not None:
+            # initialize with <bos>
+            prev_data = self.torch.LongTensor([self.bos])
+        else:
+            # random uniform sample from vocab
+            prev_data = (torch.rand(1) * self.model.vocab).long()
+        prev = Variable(prev_data.unsqueeze(0), volatile=True)
+        return prev, hidden
+
+    def argmax(self, seed_text=None, max_seq_len=25, **kwargs):
+        prev, hidden = self.seed(seed_text)
+        hyp, scores = [], []
+        for _ in range(max_seq_len):
+            outs, hidden, _ = self.model(prev, hidden=hidden, **kwargs)
+            score, prev = outs.max(1)
+            hyp.append(prev.squeeze().data[0])
+            scores.append(score.squeeze().data[0])
+            if self.eos and prev.data.eq(self.eos).nonzero().nelement() > 0:
+                break
+        return [math.exp(sum(scores))], [hyp]
+
+    def sample(self, temperature=1, seed_text=None, max_seq_len=25, **kwargs):
+        prev, hidden = self.seed(seed_text)
+        hyp, scores = [], []
+        for _ in range(max_seq_len):
+            outs, hidden, _ = self.model(prev, hidden=hidden, **kwargs)
+            prev = outs.div(temperature).exp_().multinomial()
+            score = outs.squeeze()[prev.squeeze().data[0]]
+            hyp.append(prev.squeeze().data[0])
+            scores.append(score.squeeze().data[0])
+            if self.eos and prev.data.eq(self.eos).nonzero().nelement() > 0:
+                break
+        return [functools.reduce(operator.mul, scores)], [hyp]
+
+    def beam(self, width=5, seed_text=None, max_seq_len=25, **kwargs):
+        prev, hidden = self.seed(seed_text)
+        beam = Beam(width, prev.squeeze().data[0], eos=self.eos)
+        while beam.active and len(beam) < max_seq_len:
+            prev_data = beam.get_current_state().unsqueeze(0)
+            prev = Variable(prev_data, volatile=True)
+            outs, hidden, _ = self.model(prev, hidden=hidden, **kwargs)
+            beam.advance(outs.data)
+            if self.model.cell.startswith('LSTM'):
+                hidden = (u.swap(hidden[0], 1, beam.get_source_beam()),
+                          u.swap(hidden[1], 1, beam.get_source_beam()))
+            else:
+                hidden = u.swap(hidden, 1, beam.get_source_beam())
+        scores, hyps = beam.decode(n=width)
+        return scores, hyps
 
 
 class Attention(nn.Module):
@@ -181,7 +266,7 @@ class LM(nn.Module):
         else:
             return h_0
 
-    def forward(self, inp, hidden=None, **kwargs):
+    def forward(self, inp, hidden=None, schedule=None, **kwargs):
         """
         Parameters:
         -----------
@@ -191,7 +276,7 @@ class LM(nn.Module):
         --------
         outs: torch.Tensor (seq_len * batch_size x vocab)
         hidden: see output of RNN, GRU, LSTM in torch.nn
-        weights: None or list of weights (batch_size x 0:n),
+        weights: None or list of weights (batch_size x seq_len),
             It will only be not None if attention is provided.
         """
         inp = word_dropout(
@@ -207,38 +292,11 @@ class LM(nn.Module):
         if hasattr(self, 'attn'):
             outs, weights = self.attn(outs, emb)
         seq_len, batch, hid_dim = outs.size()
-        outs = self.project(outs.view(seq_len * batch, hid_dim))
+        outs = F.log_softmax(self.project(outs.view(seq_len * batch, hid_dim)))
         return outs, hidden, weights
 
-    def generate_beam(self, bos, eos,
-                      max_seq_len=20, width=5, gpu=False, **kwargs):
-        """
-        Generate text using beam search decoding
-
-        Returns:
-        --------
-        scores: list of floats, unnormalized scores, one for each hypothesis
-        hyps: list of lists, decoded hypotheses in integer form
-        """
-        if self.training:
-            logging.warn("Generating in training modus!")
-        beam = Beam(width, bos, eos, gpu=gpu)
-        hidden = None
-        while beam.active and len(beam) < max_seq_len:
-            prev = Variable(
-                beam.get_current_state().unsqueeze(0), volatile=True)
-            outs, hidden, _ = self(prev, hidden=hidden, **kwargs)
-            logs = F.log_softmax(outs)
-            beam.advance(logs.data)
-            if self.cell.startswith('LSTM'):
-                hidden = (u.swap(hidden[0], 1, beam.get_source_beam()),
-                          u.swap(hidden[1], 1, beam.get_source_beam()))
-            else:
-                hidden = u.swap(hidden, 1, beam.get_source_beam())
-        scores, hyps = beam.decode(n=width)
-        return scores, hyps
-
-    def generate(self, bos, eos, max_seq_len=20, gpu=False, **kwargs):
+    def generate(self, d, seed_text=None, max_seq_len=25, gpu=False,
+                 method='sample', temperature=1, width=5, **kwargs):
         """
         Generate text using simple argmax decoding
 
@@ -249,19 +307,20 @@ class LM(nn.Module):
         """
         if self.training:
             logging.warn("Generating in training modus!")
-        prev = Variable(torch.LongTensor([bos]).unsqueeze(0), volatile=True)
-        if gpu: prev = prev.cuda()
-        hidden, hyp, scores = None, [], []
-        for _ in range(max_seq_len):
-            outs, hidden, _ = self(prev, hidden=hidden, **kwargs)
-            outs = F.log_softmax(outs)
-            best_score, prev = outs.max(1)
-            prev = prev.t()
-            hyp.append(prev.squeeze().data[0])
-            scores.append(best_score.squeeze().data[0])
-            if prev.data.eq(eos).nonzero().nelement() > 0:
-                break
-        return [sum(scores)], [hyp]
+        decoder = Decoder(self, d, gpu=gpu)
+        if method == 'argmax':
+            scores, hyps = decoder.argmax(
+                seed_text=seed_text, max_seq_len=max_seq_len)
+        elif method == 'sample':
+            scores, hyps = decoder.sample(
+                temperature=temperature, seed_text=seed_text,
+                max_seq_len=max_seq_len)
+        elif method == 'beam':
+            scores, hyps = decoder.beam(
+                width=width, seed_text=seed_text, max_seq_len=max_seq_len)
+        else:
+            raise ValueError("Wrong decoding method: %s" % method)
+        return scores, hyps
 
     def predict_proba(self, inp, gpu=False, **kwargs):
         if self.training:
@@ -270,7 +329,7 @@ class LM(nn.Module):
         if gpu:
             inp_vec.cuda()
         outs, hidden, _ = self(inp_vec, **kwargs)
-        outs = u.select_cols(F.log_softmax(outs), inp).sum()
+        outs = u.select_cols(outs, inp).sum()
         return outs.data[0] / len(inp)
 
 
