@@ -287,11 +287,11 @@ class EncoderDecoder(nn.Module):
         dec_out, enc_att = None, None
         if self.decoder.att_type == 'Bahdanau':
             enc_att = self.decoder.attn.project_enc_outs(enc_outs)
-        beam = Beam(beam_width, bos, eos, gpu=gpu)
+        beam = Beam(beam_width, bos, eos=eos, gpu=gpu)
         while beam.active and len(beam) < len(src) * max_decode_len:
             # add seq_len singleton dim (1 x width)
-            prev = Variable(
-                beam.get_current_state().unsqueeze(0), volatile=True)
+            prev_data = beam.get_current_state().unsqueeze(0)
+            prev = Variable(prev_data, volatile=True)
             prev_emb = self.trg_embeddings(prev).squeeze(0)
             dec_out, dec_hidden, att_weights = self.decoder(
                 prev_emb, dec_hidden, enc_outs, out=dec_out, enc_att=enc_att)

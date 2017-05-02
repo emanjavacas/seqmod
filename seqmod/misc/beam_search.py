@@ -3,16 +3,27 @@ import torch
 
 
 class Beam(object):
-    def __init__(self, width, bos, eos, gpu=False):
+    """
+    Beam class for performing beam search
+
+    Parameters
+    -----------
+    width: int, beam buffer size. The higher the better the chances are of
+        actually decoding the best sequence but also the bigger the memory
+        footprint
+    prev: int, integer token to use as first decoding step
+    eos: int or None, integer corresponding to the <eos> symbol in the
+        vocabulary. It will be used as terminating criterion for the decoding
+    """
+    def __init__(self, width, prev, eos=None, gpu=False):
         self.width = width
-        self.bos = bos
         self.eos = eos
         self.active = True
         self.scores = torch.FloatTensor(width).zero_()
         if gpu:
-            init_state = torch.LongTensor(width).fill_(bos).cuda()
+            init_state = torch.LongTensor(width).fill_(prev).cuda()
         else:
-            init_state = torch.LongTensor(width).fill_(bos)
+            init_state = torch.LongTensor(width).fill_(prev)
         self.beam_values = [init_state]  # output values at each beam
         self.source_beams = []  # backpointer to previous beam
 
