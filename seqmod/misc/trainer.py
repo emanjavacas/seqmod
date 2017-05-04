@@ -341,7 +341,7 @@ class LMTrainer(Trainer):
 
     def num_batch_examples(self, batch_data):
         src, trg, *_ = batch_data
-        return len(trg)
+        return trg.nelement()
 
 
 class EncoderDecoderTrainer(Trainer):
