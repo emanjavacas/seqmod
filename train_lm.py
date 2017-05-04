@@ -108,6 +108,7 @@ if __name__ == '__main__':
     parser.add_argument('--learning_rate', default=0.01, type=float)
     parser.add_argument('--learning_rate_decay', default=0.5, type=float)
     parser.add_argument('--start_decay_at', default=5, type=int)
+    parser.add_argument('--decay_every', default=1, type=int)
     parser.add_argument('--max_grad_norm', default=5., type=float)
     parser.add_argument('--early_stopping', default=-1, type=int)
     # - check
@@ -171,7 +172,8 @@ if __name__ == '__main__':
 
     optim = Optimizer(
         model.parameters(), args.optim, args.learning_rate, args.max_grad_norm,
-        lr_decay=args.learning_rate_decay, start_decay_at=args.start_decay_at)
+        lr_decay=args.learning_rate_decay, start_decay_at=args.start_decay_at,
+        decay_every=args.decay_every)
     criterion = nn.CrossEntropyLoss()
 
     # create trainer
