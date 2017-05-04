@@ -10,7 +10,7 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 
 import seqmod.utils as u
-from seqmod.modules.custom import word_dropout
+from seqmod.modules.custom import word_dropout, MaxOut
 from seqmod.misc.beam_search import Beam
 
 
@@ -168,6 +168,42 @@ class AttentionalProjection(nn.Module):
         return torch.stack(output), weights
 
 
+class DeepOut(nn.Module):
+    """
+    DeepOut for Language Model following https://arxiv.org/pdf/1312.6026.pdf
+
+    Parameters:
+    ===========
+    in_dim: int, input dimension for first layer
+    layers: iterable of output dimensions for the hidden layers
+    activation: str (ReLU, Tanh, MaxOut), activation after linear layer
+    """
+    def __init__(self, in_dim, layers, activation, dropout=0.0):
+        self.in_dim = in_dim
+        self.layers = layers
+        self.activation = activation
+        self.dropout = dropout
+
+        super(DeepOut, self).__init__()
+        self.layers, in_dim = [], self.in_dim
+        for idx, out_dim in enumerate(layers):
+            if activation == 'MaxOut':
+                layer = MaxOut(in_dim, out_dim, 2)
+            else:
+                layer = nn.Sequential(
+                    nn.Linear(in_dim, out_dim), getattr(nn, activation))
+            self.add_module('deepout_%d' % idx, layer)
+            self.layers.append(layer)
+            in_dim = out_dim
+
+    def forward(self, inp):
+        for layer in self.layers:
+            out = layer(inp)
+            out = F.dropout(out, p=self.dropout, training=self.training)
+            inp = out
+        return out
+
+
 class LM(nn.Module):
     """
     Vanilla RNN-based language model.
@@ -185,25 +221,30 @@ class LM(nn.Module):
     - bias: bool, whether to include bias in the RNN.
     - dropout: float, amount of dropout to apply in between layers.
     - tie_weights: bool, whether to tie input and output embedding layers.
-    - project_on_tied_weights: bool,
-        In case of unequal emb_dim and hid_dim values this option has to
-        be True if tie_weights is True. A linear project layer will be
-        inserted after the RNN to match back to the embedding dimension.
+        In case of unequal emb_dim and hid_dim values a linear project layer
+        will be inserted after the RNN to match back to the embedding dim
+    - att_dim: int, whether to add an attention module of dimension `att_dim`
+        over the prefix. No attention will be added if att_dim is None or 0
+    - deepout_layers: int, whether to add deep output after hidden layer and
+        before output projection layer. No deep output will be added if
+        deepout_layers is 0 or None.
+    - deepout_act: str, activation function for the deepout module in camelcase
     """
     def __init__(self, vocab, emb_dim, hid_dim, num_layers=1,
                  cell='GRU', bias=True, dropout=0.0, word_dropout=0.0,
                  target_code=None, reserved_codes=(),
-                 add_attn=False, att_dim=None,
-                 tie_weights=False, project_on_tied_weights=False):
+                 att_dim=None, tie_weights=False,
+                 deepout_layers=0, deepout_act='MaxOut'):
         self.vocab = vocab
         self.emb_dim = emb_dim
         self.hid_dim = hid_dim
         self.tie_weights = tie_weights
-        self.project_on_tied_weights = project_on_tied_weights
-        if tie_weights and not project_on_tied_weights:
-            assert self.emb_dim == self.hid_dim, \
-                "When tying weights, output projection and " + \
-                "embedding layer should have equal size"
+        self.add_attn = att_dim and att_dim > 0
+        self.add_deepout = deepout_layers and deepout_layers > 0
+        if tie_weights and not self.emb_dim == self.hid_dim:
+            logging.warn("When tying weights, output layer and embedding " +
+                         "layer should have equal size. A projection layer " +
+                         "will be insterted to accomodate for this")
         self.num_layers = num_layers
         self.cell = cell
         self.bias = bias
@@ -222,21 +263,26 @@ class LM(nn.Module):
             self.emb_dim, self.hid_dim,
             num_layers=num_layers, bias=bias, dropout=dropout)
         # attention
-        if add_attn:
+        if self.add_attn:
             assert self.cell == 'RNN' or self.cell == 'GRU', \
                 "currently only RNN, GRU supports attention"
             assert att_dim is not None, "Need to specify att_dim"
             self.att_dim = att_dim
             self.attn = AttentionalProjection(
                 self.att_dim, self.hid_dim, self.emb_dim)
-        # output embeddings
-        if tie_weights:
+        # deepout
+        if self.add_deepout:
+            self.deepout = DeepOut(
+                in_dim=self.hid_dim,
+                layers=tuple([self.hid_dim] * deepout_layers),
+                activation=deepout_act,
+                dropout=self.dropout)
+        # output projection
+        if self.tie_weights:
             if self.emb_dim == self.hid_dim:
                 self.project = nn.Linear(self.hid_dim, self.vocab)
                 self.project.weight = self.embeddings.weight
             else:
-                assert project_on_tied_weights, \
-                    "Unequal tied layer dims but no projection layer"
                 project = nn.Linear(self.emb_dim, self.vocab)
                 project.weight = self.embeddings.weight
                 self.project = nn.Sequential(
@@ -289,10 +335,13 @@ class LM(nn.Module):
         if self.has_dropout:
             outs = F.dropout(outs, p=self.dropout, training=self.training)
         weights = None
-        if hasattr(self, 'attn'):
+        if self.add_attn:
             outs, weights = self.attn(outs, emb)
         seq_len, batch, hid_dim = outs.size()
-        outs = F.log_softmax(self.project(outs.view(seq_len * batch, hid_dim)))
+        outs = outs.view(seq_len * batch, hid_dim)
+        if self.add_deepout:
+            outs = self.deepout(outs)
+        outs = F.log_softmax(self.project(outs))
         return outs, hidden, weights
 
     def generate(self, d, seed_text=None, max_seq_len=25, gpu=False,
@@ -356,13 +405,13 @@ class ForkableLM(LM):
         model = ForkableLM(
             self.vocab, self.emb_dim, self.hid_dim, num_layers=self.num_layers,
             cell=self.cell, dropout=self.dropout, bias=self.bias,
-            tie_weights=False, project_on_tied_weights=False)
+            tie_weights=False, add_deepout=self.add_deepout)
         source_dict, target_dict = self.state_dict(), model.state_dict()
         target_dict['embeddings.weight'] = source_dict()['embeddings.weight']
         for layer, p in source_dict.items():
-            if layer.startswith('project') and \
-               self.tie_weights and \
-               self.project_on_tied_weights:
+            if layer.startswith('project') \
+               and self.tie_weights \
+               and self.hid_dim != self.emb_dim:
                 logging.warn(
                     "Warning: Forked model couldn't use projection layer " +
                     "of parent for the initialization of layer [%s]" % layer)
@@ -386,7 +435,7 @@ class MultiheadLM(LM):
         super(MultiheadLM, self).__init__(*args, **kwargs)
         assert heads, "MultiheadLM requires at least 1 head but got 0"
         import copy
-        if hasattr(self, 'attn'):
+        if self.add_attn:
             attn = self.attn
             del self.attn
             self.attn = {}
@@ -397,7 +446,7 @@ class MultiheadLM(LM):
             project_module = copy.deepcopy(project)
             self.add_module(head, project_module)
             self.project[head] = project_module
-            if hasattr(self, 'attn'):
+            if self.add_attn:
                 attn_module = copy.deepcopy(attn)
                 self.add_module(head, attn_module)
                 self.attn[head] = attn_module
@@ -410,11 +459,13 @@ class MultiheadLM(LM):
         if self.has_dropout:
             outs = F.dropout(outs, p=self.dropout, training=self.training)
         weights = None
-        if hasattr(self, 'attn'):
+        if self.add_attn:
             outs, weights = self.attn[head](outs, emb)
         seq_len, batch, hid_dim = outs.size()
-        # (seq_len x batch x hid) -> (seq_len * batch x hid)
-        outs = self.project[head](outs.view(seq_len * batch, hid_dim))
+        outs = outs.view(seq_len * batch, hid_dim)
+        if self.add_deepout:
+            outs = self.deepout(outs)
+        outs = self.project[head](outs)
         return outs, hidden, weights
 
     @classmethod
@@ -429,7 +480,9 @@ class MultiheadLM(LM):
             that_model.vocab, that_model.emb_dim, that_model.hid_dim,
             num_layers=that_model.num_layers, cell=that_model.cell,
             bias=that_model.bias, dropout=that_model.dropout, heads=heads,
-            add_attn=hasattr(that_model, 'attn'), att_dim=that_model.att_dim)
+            att_dim=that_model.att_dim,
+            deepout_layers=that_model.deepout_layers,
+            deepout_act=that_model.deepout_act)
         this_state_dict = this_model.state_dict()
         for p, w in that_model.state_dict().items():
             if p in this_state_dict:

@@ -53,8 +53,8 @@ def load_from_file(path):
 
 # hook
 def make_lm_check_hook(d, seed_text, max_seq_len=25, gpu=False,
-                       method='beam', temperature=2, width=5,
-                       early_stopping=None, validate=False):
+                       method='sample', temperature=1, width=5,
+                       early_stopping=None, validate=True):
 
     def hook(trainer, epoch, batch_num, checkpoint):
         trainer.log("info", "Checking training...")
@@ -87,11 +87,11 @@ if __name__ == '__main__':
     parser.add_argument('--dropout', default=0.3, type=float)
     parser.add_argument('--word_dropout', default=0.0, type=float)
     parser.add_argument('--tie_weights', action='store_true')
-    parser.add_argument('--project_on_tied_weights', action='store_true')
+    parser.add_argument('--deepout_layers', default=0, type=int)
+    parser.add_argument('--deepout_act', default='MaxOut')
     # dataset
     parser.add_argument('--path', required=True)
-    parser.add_argument('--processed', action='store_true',
-                        help='preprocessed data?')
+    parser.add_argument('--processed', action='store_true')
     parser.add_argument('--dict_path', type=str)
     parser.add_argument('--max_size', default=1000000, type=int)
     parser.add_argument('--min_freq', default=1, type=int)
@@ -101,19 +101,24 @@ if __name__ == '__main__':
     # training
     parser.add_argument('--epochs', default=10, type=int)
     parser.add_argument('--batch_size', default=20, type=int)
-    parser.add_argument('--early_stopping', default=-1, type=int)
-    parser.add_argument('--seed', default=None)
     parser.add_argument('--bptt', default=20, type=int)
-    parser.add_argument('--checkpoint', default=200, type=int)
-    parser.add_argument('--hooks_per_epoch', default=5, type=int)
-    parser.add_argument('--log_checkpoints', action='store_true')
-    parser.add_argument('--visdom_server', default='localhost')
+    parser.add_argument('--gpu', action='store_true')
+    # - optimizer
     parser.add_argument('--optim', default='RMSprop', type=str)
     parser.add_argument('--learning_rate', default=0.01, type=float)
     parser.add_argument('--learning_rate_decay', default=0.5, type=float)
     parser.add_argument('--start_decay_at', default=5, type=int)
     parser.add_argument('--max_grad_norm', default=5., type=float)
-    parser.add_argument('--gpu', action='store_true')
+    parser.add_argument('--early_stopping', default=-1, type=int)
+    # - check
+    parser.add_argument('--seed', default=None)
+    parser.add_argument('--decoding_method', default='sample')
+    parser.add_argument('--max_seq_len', default=25, type=int)
+    parser.add_argument('--temperature', default=1, type=float)
+    parser.add_argument('--checkpoint', default=200, type=int)
+    parser.add_argument('--hooks_per_epoch', default=5, type=int)
+    parser.add_argument('--log_checkpoints', action='store_true')
+    parser.add_argument('--visdom_server', default='localhost')
     parser.add_argument('--save', action='store_true')
     parser.add_argument('--prefix', default='model', type=str)
     args = parser.parse_args()
@@ -151,11 +156,11 @@ if __name__ == '__main__':
 
     print('Building model...')
     model = LM(len(d), args.emb_dim, args.hid_dim,
-               num_layers=args.layers, cell=args.cell,
-               add_attn=args.att_dim > 0, att_dim=args.att_dim,
-               dropout=args.dropout, tie_weights=args.tie_weights,
-               word_dropout=args.word_dropout, target_code=d.get_unk(),
-               project_on_tied_weights=args.project_on_tied_weights)
+               num_layers=args.layers, cell=args.cell, dropout=args.dropout,
+               att_dim=args.att_dim, tie_weights=args.tie_weights,
+               deepout_layers=args.deepout_layers,
+               deepout_act=args.deepout_act, word_dropout=args.word_dropout,
+               target_code=d.get_unk())
 
     model.apply(u.make_initializer())
     if args.gpu:
@@ -178,7 +183,9 @@ if __name__ == '__main__':
     if args.early_stopping > 0:
         early_stopping = EarlyStopping(args.early_stopping)
     model_check_hook = make_lm_check_hook(
-        d, seed_text=args.seed, gpu=args.gpu, early_stopping=early_stopping)
+        d, method=args.decoding_method, temperature=args.temperature,
+        max_seq_len=args.max_seq_len, seed_text=args.seed, gpu=args.gpu,
+        early_stopping=early_stopping)
     num_checkpoints = len(train) // (args.checkpoint * args.hooks_per_epoch)
     trainer.add_hook(model_check_hook, num_checkpoints=num_checkpoints)
 

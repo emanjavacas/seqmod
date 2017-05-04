@@ -93,13 +93,18 @@ class Trainer(object):
 
     def on_epoch_end(self, epoch, loss, num_examples, duration):
         # SGD lr update
+        msg = 'Updated lr [%.4f] -> [%.4f]'
         if isinstance(self.optimizer, dict):
             for opt in self.optimizer.items():
                 if hasattr(opt, "maybe_update_lr"):
-                    opt.maybe_update_lr(epoch, loss)
+                    out = opt.maybe_update_lr(epoch, loss)
+                    if 'new_lr' in out:
+                        self.log('info', msg % (out['last_lr'], out['new_lr']))
         else:
             if hasattr(self.optimizer, "maybe_update_lr"):
-                self.optimizer.maybe_update_lr(epoch, loss)
+                out = self.optimizer.maybe_update_lr(epoch, loss)
+                if 'new_lr' in out:
+                    self.log('info', msg % (out['last_lr'], out['new_lr']))
 
         self.log("epoch_end", {"epoch": epoch,
                                "loss": dict(zip(self.loss_labels, loss)),

@@ -55,5 +55,6 @@ class Optimizer(object):
                 self.lr = new_lr
                 self.optim = getattr(optim, self.method)(
                     self.params, lr=self.lr, weight_decay=self.weight_decay)
+                return {'last_lr': last_lr, 'new_lr': self.lr}
             self.last_loss = loss
-            return last_lr, self.lr
+        return {}
