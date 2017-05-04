@@ -382,49 +382,6 @@ class LM(nn.Module):
         return outs.data[0] / len(inp)
 
 
-class ForkableLM(LM):
-    """
-    A LM model that allows to create forks of the current instance with
-    frozen Embedding (and eventually RNN) layers for fine tunning the
-    non-frozen parameters to particular dataset.
-    The parent cannot have the projection layer for tied embeddings,
-    since tied layers don't fit in this setup.
-    """
-    def __init__(self, *args, **kwargs):
-        super(ForkableLM, self).__init__(*args, **kwargs)
-
-    def fork_model(self, freeze_rnn=True):
-        """
-        Creates a child fork from the current model with frozen input
-        embeddings (and eventually also frozen RNN).
-
-        Parameters:
-        ===========
-        - freeze_rnn: optional, whether to also freeze the child RNN layer.
-        """
-        model = ForkableLM(
-            self.vocab, self.emb_dim, self.hid_dim, num_layers=self.num_layers,
-            cell=self.cell, dropout=self.dropout, bias=self.bias,
-            tie_weights=False, add_deepout=self.add_deepout)
-        source_dict, target_dict = self.state_dict(), model.state_dict()
-        target_dict['embeddings.weight'] = source_dict()['embeddings.weight']
-        for layer, p in source_dict.items():
-            if layer.startswith('project') \
-               and self.tie_weights \
-               and self.hid_dim != self.emb_dim:
-                logging.warn(
-                    "Warning: Forked model couldn't use projection layer " +
-                    "of parent for the initialization of layer [%s]" % layer)
-                continue
-            else:
-                target_dict[layer] = p
-        model.load_state_dict(target_dict)
-        model.freeze_submodule('embeddings')
-        if freeze_rnn:
-            model.freeze_submodule('rnn')
-        return model
-
-
 class MultiheadLM(LM):
     """
     A variant LM that has multiple output embeddings (one for each of a
