@@ -50,7 +50,7 @@ class Decoder(object):
             prev_data = self.torch.LongTensor([self.bos])
         else:
             # random uniform sample from vocab
-            prev_data = (torch.rand(1) * self.model.vocab).long()
+            prev_data = (self.torch.rand(1) * self.model.vocab).long()
         prev = Variable(prev_data.unsqueeze(0), volatile=True)
         return prev, hidden
 
