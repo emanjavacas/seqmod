@@ -16,7 +16,7 @@ from seqmod.misc.beam_search import Beam
 
 class Decoder(object):
     def __init__(self, model, d, gpu=False):
-        self.torch = torch if not gpu else torch.cuda
+        self.gpu = gpu
         self.model = model
         self.d = d
         self.bos, self.eos = self.d.get_bos(), self.d.get_eos()
@@ -40,18 +40,22 @@ class Decoder(object):
             seed_text = [self.d.index(i) for i in seed_text]
             if self.bos:
                 seed_text = [self.bos] + seed_text
-            inp = Variable(self.torch.LongTensor(seed_text).unsqueeze(1))
+            inp = Variable(torch.LongTensor(seed_text).unsqueeze(1))
+            if self.gpu:
+                inp = inp.cuda()
             # outs (seq_len (* 1) x vocab)
             outs, hidden, _ = self.model(inp, **kwargs)
             # prev_data (1)
             _, prev_data = outs.data[-1].max(0)
         elif self.bos is not None:
             # initialize with <bos>
-            prev_data = self.torch.LongTensor([self.bos])
+            prev_data = torch.LongTensor([self.bos])
         else:
             # random uniform sample from vocab
-            prev_data = (self.torch.rand(1) * self.model.vocab).long()
+            prev_data = (torch.rand(1) * self.model.vocab).long()
         prev = Variable(prev_data.unsqueeze(0), volatile=True)
+        if self.gpu:
+            prev = prev.cuda()
         return prev, hidden
 
     def argmax(self, seed_text=None, max_seq_len=25, **kwargs):
