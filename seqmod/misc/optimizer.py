@@ -5,7 +5,8 @@ from torch.nn.utils import clip_grad_norm
 
 class Optimizer(object):
     def __init__(self, params, method, lr=1., max_norm=5., weight_decay=0,
-                 lr_decay=1, start_decay_at=None, decay_every=1, on_lr_update=None):
+                 lr_decay=1, start_decay_at=None, decay_every=1,
+                 on_lr_update=None):
         self.params = list(params)
         self.method = method
         self.lr = lr
@@ -21,10 +22,6 @@ class Optimizer(object):
         self.start_decay = False
         self.optim = getattr(optim, self.method)(
             self.params, lr=self.lr, weight_decay=self.weight_decay)
-
-    def set_params(self, params):
-        self.params = list(params)
-        self.optim = getattr(optim, self.method)(self.params, lr=self.lr)
 
     def step(self, norm_type=2):
         """
