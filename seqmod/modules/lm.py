@@ -38,7 +38,7 @@ class Decoder(object):
         if seed_text is not None:
             # prediction after last seed input
             seed_text = [self.d.index(i) for i in seed_text]
-            if self.bos:
+            if self.bos and seed_text[0] != self.bos:
                 seed_text = [self.bos] + seed_text
             inp = Variable(torch.LongTensor(seed_text).unsqueeze(1))
             if self.gpu:
