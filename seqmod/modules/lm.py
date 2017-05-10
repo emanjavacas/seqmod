@@ -66,7 +66,8 @@ class Decoder(object):
             score, prev = outs.max(1)
             hyp.append(prev.squeeze().data[0])
             scores.append(score.squeeze().data[0])
-            if self.eos and prev.data.eq(self.eos).nonzero().nelement() > 0:
+            if self.eos is not None and \
+               prev.data.eq(self.eos).nonzero().nelement() > 0:
                 break
         return [math.exp(sum(scores))], [hyp]
 
@@ -79,7 +80,8 @@ class Decoder(object):
             score = outs.squeeze()[prev.squeeze().data[0]]
             hyp.append(prev.squeeze().data[0])
             scores.append(score.squeeze().data[0])
-            if self.eos and prev.data.eq(self.eos).nonzero().nelement() > 0:
+            if self.eos is not None and \
+               prev.data.eq(self.eos).nonzero().nelement() > 0:
                 break
         return [functools.reduce(operator.mul, scores)], [hyp]
 
@@ -351,7 +353,7 @@ class LM(nn.Module):
     def generate(self, d, seed_text=None, max_seq_len=25, gpu=False,
                  method='sample', temperature=1, width=5, **kwargs):
         """
-        Generate text using simple argmax decoding
+        Generate text using a specified method (argmax, sample, beam)
 
         Returns:
         --------
