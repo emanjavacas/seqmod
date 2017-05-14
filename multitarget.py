@@ -55,7 +55,6 @@ if __name__ == '__main__':
     parser.add_argument('--project_init', action='store_true')
     parser.add_argument('--maxout', default=0, type=int)
     parser.add_argument('--tie_weights', action='store_true')
-    parser.add_argument('--project_on_tied_weights', action='store_true')
     parser.add_argument('--epochs', default=5, type=int)
     parser.add_argument('--vocab', default=list(string.ascii_letters) + [' '])
     parser.add_argument('--checkpoint', default=100, type=int)

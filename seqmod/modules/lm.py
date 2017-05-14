@@ -217,10 +217,7 @@ class LM(nn.Module):
     Parameters:
     ===========
     - vocab: int, vocabulary size.
-    - emb_dim: int, embedding size,
-        This value has to be equal to hid_dim if tie_weights is True and
-        project_on_tied_weights is False, otherwise input and output
-        embedding dimensions wouldn't match and weights cannot be tied.
+    - emb_dim: int, embedding size.
     - hid_dim: int, hidden dimension of the RNN.
     - num_layers: int, number of layers of the RNN.
     - cell: str, one of GRU, LSTM, RNN.

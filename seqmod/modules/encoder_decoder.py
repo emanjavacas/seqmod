@@ -54,7 +54,6 @@ class EncoderDecoder(nn.Module):
                  bidi=True,
                  add_prev=True,
                  tie_weights=False,
-                 project_on_tied_weights=False,
                  init_hidden='last'):
         super(EncoderDecoder, self).__init__()
         if isinstance(num_layers, tuple):
@@ -101,15 +100,15 @@ class EncoderDecoder(nn.Module):
         if tie_weights:
             project = nn.Linear(emb_dim, output_size)
             project.weight = self.trg_embeddings.weight
-            if not project_on_tied_weights:
-                assert emb_dim == hid_dim, \
-                    "When tying weights, output projection and " + \
-                    "embedding layer should have equal size"
-                self.project = nn.Sequential(project, nn.LogSoftmax())
-            else:
+            if emb_dim != hid_dim:
+                logging.warn("When tying weights, output layer and " +
+                             "embedding layer should have equal size. " +
+                             "A projection layer will be insterted.")
                 project_tied = nn.Linear(hid_dim, emb_dim)
                 self.project = nn.Sequential(
                     project_tied, project, nn.LogSoftmax())
+            else:
+                self.project = nn.Sequential(project, nn.LogSoftmax())
         else:
             self.project = nn.Sequential(
                 nn.Linear(hid_dim, output_size),

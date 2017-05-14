@@ -79,7 +79,6 @@ if __name__ == '__main__':
     parser.add_argument('--cell', default='LSTM')
     parser.add_argument('--non_bidi', action='store_true')
     parser.add_argument('--tie_weights', action='store_true')
-    parser.add_argument('--project_on_tied_weights', action='store_true')
     parser.add_argument('--project_init', action='store_true')
     parser.add_argument('--dropout', default=0.0, type=float)
     parser.add_argument('--word_dropout', default=0.0, type=float)
@@ -156,8 +155,7 @@ if __name__ == '__main__':
         args.emb_dim, hid_dim, args.z_dim, train.d['src'],
         num_layers=layers, cell=args.cell, bidi=not args.non_bidi,
         dropout=args.dropout, add_z=args.add_z, word_dropout=args.word_dropout,
-        tie_weights=args.tie_weights, project_init=args.project_init,
-        project_on_tied_weights=args.project_on_tied_weights)
+        tie_weights=args.tie_weights, project_init=args.project_init)
     print(model)
     model.apply(u.make_initializer())
     # model.encoder.register_backward_hook(u.log_grad)
