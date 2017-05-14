@@ -1,8 +1,13 @@
 
+import logging
 import re
+
+import numpy as np
+
 import torch
 import torch.nn as nn
 from torch.autograd import Variable
+
 
 from seqmod.modules.custom import word_dropout
 from seqmod.modules.encoder import Encoder
@@ -171,6 +176,36 @@ class EncoderDecoder(nn.Module):
             model.state_dict(), self.state_dict(),
             {target_module: source_module})
         self.load_state_dict(state_dict)
+
+    def load_embeddings(self, weight, words,
+                        target_embeddings='src', verbose=False):
+        """
+        Load embeddings from a weight matrix with words `words` as rows.
+
+        Parameters
+        -----------
+        weight: (vocab x emb_dim)
+        words: list of words corresponding to each row in `weight`
+        """
+        if isinstance(weight, np.array):
+            weight = torch.from_numpy(weight)
+        assert weight.size(1) != self.emb_dim, \
+            "Mismatched embedding dim %d for model with dim %d" % \
+            (weight.size(1), self.emb_dim)
+        target_words = {word: idx for idx, word in enumerate(words)}
+        for idx, word in enumerate(self.src_dict.vocab):
+            if word not in target_words:
+                if verbose:
+                    logging.warn("Couldn't find word [%s]" % word)
+                continue
+            if target_embeddings == 'src':
+                self.src_embeddings.weight.data[idx, :].copy_(
+                    weight[target_words[word], :])
+            elif target_embeddings == 'trg':
+                self.trg_embeddings.weight.data[idx, :].copy_(
+                    weight[target_words[word], :])
+            else:
+                raise ValueError('target_embeddings must be `src` or `trg`')
 
     def init_batch(self, src):
         """
