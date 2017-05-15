@@ -77,14 +77,12 @@ class Dict(object):
                  sequential=True):
         self.counter = Counter()
         self.fitted = False
-        # TODO: warn if pad, eos or bos token are given and sequential is False
         self.pad_token = pad_token
         self.eos_token = eos_token
         self.bos_token = bos_token
         self.unk_token = unk_token
         # only index unk_token if needed or requested
         self.reserved = {t for t in [pad_token, eos_token, bos_token] if t}
-        self.has_unk = force_unk
         if force_unk:
             assert unk_token is not None, "<unk> token needed"
             self.reserved.add(self.unk_token)
@@ -108,20 +106,21 @@ class Dict(object):
         return self.s2i.get(self.unk_token, None)
 
     def _maybe_index_unk(self):
+        """
+        Run during fit to optionally encode unk_token
+        """
         if self.unk_token not in self.s2i:
             unk_code = self.s2i[self.unk_token] = len(self.vocab)
             self.vocab += [self.unk_token]
-            self.has_unk = True
             return unk_code
         else:
             return self.s2i[self.unk_token]
 
     def index(self, s):
         assert self.fitted, "Attempt to index without fitted data"
-        if s not in self.s2i:
-            return self._maybe_index_unk()
-        else:
-            return self.s2i[s]
+        if s not in self.s2i and self.unk_token not in self.s2i:
+            raise ValueError("OOV with no unk code")
+        return self.s2i.get(s, self.get_unk())
 
     def partial_fit(self, *args):
         for dataset in args:
@@ -133,6 +132,9 @@ class Dict(object):
             raise ValueError('Dict is already fitted')
         self.partial_fit(*args)
         most_common = self.counter.most_common(self.max_size)
+        if self.max_size < len(self.counter) and self.unk_token is not None:
+            if self.unk_token not in self.reserved:
+                self.reserved.add(self.unk_token)
         self.vocab = [s for s in self.reserved]
         self.vocab += [k for k, v in most_common if v >= self.min_freq]
         self.s2i = {s: i for i, s in enumerate(self.vocab)}
@@ -190,24 +192,39 @@ class PairedDataset(Dataset):
             src_dict: Dict instance fitted to the source data
             trg_dict: Dict instance fitted to the target data
         """
-        assert len(src) == len(trg), \
+        # check inputs
+        if isinstance(src, tuple):
+            assert len(d['src']) == len(src), \
+                "src entry to `d` must have same shape as `src`"
+            src_len = set(len(x) for x in src)
+            assert len(src_len) == 1, "All src input must be equal length"
+            src_len = src_len[0]
+        else:
+            src_len = len(src)
+        if isinstance(trg, tuple):
+            assert len(d['trg']) == len(trg), \
+                "trg entry to `d` must have same shape as `trg`"
+            trg_len = set(len(x) for x in trg)
+            assert len(trg_len) == 1, "All trg input must be equal length"
+            trg_len = trg_len[0]
+        else:
+            trg_len = len(trg)
+        assert src_len == trg_len, \
             "Source and Target dataset must be equal length"
-        assert len(src) >= batch_size, "Empty dataset"
-        self.data = {
-            'src': src if fitted else list(d['src'].transform(src)),
-            'trg': trg if fitted else list(d['trg'].transform(trg))}
+        assert src_len >= batch_size, "Empty dataset"
+
+        if fitted:
+            self.data = {'src': src, 'trg': trg}
+        else:
+            self.data = {
+                'src': src if fitted else list(d['src'].transform(src)),
+                'trg': trg if fitted else list(d['trg'].transform(trg))}
         self.d = d              # fitted dicts
         self.batch_size = batch_size
         self.gpu = gpu
         self.evaluation = evaluation
         self.align_right = align_right
         self.num_batches = len(self.data['src']) // batch_size
-
-    def _pack(self, batch_data, pad_token=None):
-        out = pack(batch_data, pad_token=pad_token, align_right=self.align_right)
-        if self.gpu:
-            out = out.cuda()
-        return Variable(out, volatile=self.evaluation)
 
     def set_batch_size(self, new_batch_size):
         self.batch_size = new_batch_size
@@ -219,14 +236,21 @@ class PairedDataset(Dataset):
     def __len__(self):
         return self.num_batches
 
+    def _pack(self, batch_data, pad_token=None):
+        out = pack(
+            batch_data, pad_token=pad_token, align_right=self.align_right)
+        if self.gpu:
+            out = out.cuda()
+        return Variable(out, volatile=self.evaluation)
+
     def __getitem__(self, idx):
         assert idx < self.num_batches, "%d >= %d" % (idx, self.num_batches)
         b_from, b_to = idx * self.batch_size, (idx+1) * self.batch_size
         src_pad = self.d['src'].get_pad() if self.d['src'].sequential else None
-        src_batch = self._pack(self.data['src'][b_from: b_to], pad_token=src_pad)
+        src = self._pack(self.data['src'][b_from: b_to], pad_token=src_pad)
         trg_pad = self.d['trg'].get_pad() if self.d['trg'].sequential else None
-        trg_batch = self._pack(self.data['trg'][b_from: b_to], pad_token=trg_pad)
-        return src_batch, trg_batch
+        trg = self._pack(self.data['trg'][b_from: b_to], pad_token=trg_pad)
+        return src, trg
 
     def sort_(self, sort_key=None):
         sort = sorted(zip(self.data['src'], self.data['trg']), key=sort_key)
