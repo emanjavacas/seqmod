@@ -14,7 +14,7 @@ PAD = '<pad>'
 
 # General utils
 def load_model(path):
-    if path.endswith('pickle'):
+    if path.endswith('pickle') or path.endswith('pkl'):
         import pickle as p
         load_fn = p.load
     elif path.endswith('pt'):
@@ -34,7 +34,7 @@ def save_model(model, prefix, d=None, mode='torch'):
         save_fn, ext = torch.save, 'pt'
     elif mode == 'pickle':
         import pickle as p
-        save_fn, ext = p.dump, 'pickle'
+        save_fn, ext = p.dump, 'pkl'
     elif mode == 'npy':
         import numpy as np
         save_fn, ext = np.save, 'npy'
