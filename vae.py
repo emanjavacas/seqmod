@@ -1,4 +1,6 @@
 
+import logging
+
 import numpy as np
 
 import torch
@@ -103,8 +105,7 @@ class DecoderVAE(nn.Module):
 class SequenceVAE(nn.Module):
     def __init__(self, emb_dim, hid_dim, z_dim, src_dict, num_layers=1,
                  cell='LSTM', bidi=True, dropout=0.0, word_dropout=0.0,
-                 project_init=False, add_z=False,
-                 tie_weights=False, project_on_tied_weights=False):
+                 project_init=False, add_z=False, tie_weights=False):
         if isinstance(hid_dim, tuple):
             enc_hid_dim, dec_hid_dim = hid_dim
         else:
@@ -143,14 +144,14 @@ class SequenceVAE(nn.Module):
         if tie_weights:
             projection = nn.Linear(emb_dim, vocab_size)
             projection.weight = self.embeddings.weight
-            if not project_on_tied_weights:
-                assert emb_dim == dec_hid_dim, \
-                    "When tying weights, output projection and " + \
-                    "embedding layer should have equal size"
-                self.out_proj = projection
-            else:
+            if emb_dim != dec_hid_dim:
+                logging.warn("When tying weights, output layer and " +
+                             "embedding layer should have equal size. " +
+                             "A projection layer will be insterted.")
                 tied_projection = nn.Linear(dec_hid_dim, emb_dim)
                 self.out_proj = nn.Sequential(tied_projection, projection)
+            else:
+                self.out_proj = projection
         else:
             self.out_proj = nn.Linear(dec_hid_dim, vocab_size)
 

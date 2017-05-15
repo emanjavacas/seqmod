@@ -1,8 +1,13 @@
 
+import logging
 import re
+
+import numpy as np
+
 import torch
 import torch.nn as nn
 from torch.autograd import Variable
+
 
 from seqmod.modules.custom import word_dropout
 from seqmod.modules.encoder import Encoder
@@ -54,7 +59,6 @@ class EncoderDecoder(nn.Module):
                  bidi=True,
                  add_prev=True,
                  tie_weights=False,
-                 project_on_tied_weights=False,
                  init_hidden='last'):
         super(EncoderDecoder, self).__init__()
         if isinstance(num_layers, tuple):
@@ -101,15 +105,15 @@ class EncoderDecoder(nn.Module):
         if tie_weights:
             project = nn.Linear(emb_dim, output_size)
             project.weight = self.trg_embeddings.weight
-            if not project_on_tied_weights:
-                assert emb_dim == hid_dim, \
-                    "When tying weights, output projection and " + \
-                    "embedding layer should have equal size"
-                self.project = nn.Sequential(project, nn.LogSoftmax())
-            else:
+            if emb_dim != hid_dim:
+                logging.warn("When tying weights, output layer and " +
+                             "embedding layer should have equal size. " +
+                             "A projection layer will be insterted.")
                 project_tied = nn.Linear(hid_dim, emb_dim)
                 self.project = nn.Sequential(
                     project_tied, project, nn.LogSoftmax())
+            else:
+                self.project = nn.Sequential(project, nn.LogSoftmax())
         else:
             self.project = nn.Sequential(
                 nn.Linear(hid_dim, output_size),
@@ -172,6 +176,36 @@ class EncoderDecoder(nn.Module):
             model.state_dict(), self.state_dict(),
             {target_module: source_module})
         self.load_state_dict(state_dict)
+
+    def load_embeddings(self, weight, words,
+                        target_embeddings='src', verbose=False):
+        """
+        Load embeddings from a weight matrix with words `words` as rows.
+
+        Parameters
+        -----------
+        weight: (vocab x emb_dim)
+        words: list of words corresponding to each row in `weight`
+        """
+        if isinstance(weight, np.array):
+            weight = torch.from_numpy(weight)
+        assert weight.size(1) != self.emb_dim, \
+            "Mismatched embedding dim %d for model with dim %d" % \
+            (weight.size(1), self.emb_dim)
+        target_words = {word: idx for idx, word in enumerate(words)}
+        for idx, word in enumerate(self.src_dict.vocab):
+            if word not in target_words:
+                if verbose:
+                    logging.warn("Couldn't find word [%s]" % word)
+                continue
+            if target_embeddings == 'src':
+                self.src_embeddings.weight.data[idx, :].copy_(
+                    weight[target_words[word], :])
+            elif target_embeddings == 'trg':
+                self.trg_embeddings.weight.data[idx, :].copy_(
+                    weight[target_words[word], :])
+            else:
+                raise ValueError('target_embeddings must be `src` or `trg`')
 
     def init_batch(self, src):
         """

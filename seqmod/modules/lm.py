@@ -16,7 +16,7 @@ from seqmod.misc.beam_search import Beam
 
 class Decoder(object):
     def __init__(self, model, d, gpu=False):
-        self.torch = torch if not gpu else torch.cuda
+        self.gpu = gpu
         self.model = model
         self.d = d
         self.bos, self.eos = self.d.get_bos(), self.d.get_eos()
@@ -38,20 +38,24 @@ class Decoder(object):
         if seed_text is not None:
             # prediction after last seed input
             seed_text = [self.d.index(i) for i in seed_text]
-            if self.bos:
+            if self.bos and seed_text[0] != self.bos:
                 seed_text = [self.bos] + seed_text
-            inp = Variable(self.torch.LongTensor(seed_text).unsqueeze(1))
+            inp = Variable(torch.LongTensor(seed_text).unsqueeze(1))
+            if self.gpu:
+                inp = inp.cuda()
             # outs (seq_len (* 1) x vocab)
             outs, hidden, _ = self.model(inp, **kwargs)
             # prev_data (1)
             _, prev_data = outs.data[-1].max(0)
         elif self.bos is not None:
             # initialize with <bos>
-            prev_data = self.torch.LongTensor([self.bos])
+            prev_data = torch.LongTensor([self.bos])
         else:
             # random uniform sample from vocab
-            prev_data = (self.torch.rand(1) * self.model.vocab).long()
+            prev_data = (torch.rand(1) * self.model.vocab).long()
         prev = Variable(prev_data.unsqueeze(0), volatile=True)
+        if self.gpu:
+            prev = prev.cuda()
         return prev, hidden
 
     def argmax(self, seed_text=None, max_seq_len=25, **kwargs):
@@ -62,7 +66,8 @@ class Decoder(object):
             score, prev = outs.max(1)
             hyp.append(prev.squeeze().data[0])
             scores.append(score.squeeze().data[0])
-            if self.eos and prev.data.eq(self.eos).nonzero().nelement() > 0:
+            if self.eos is not None and \
+               prev.data.eq(self.eos).nonzero().nelement() > 0:
                 break
         return [math.exp(sum(scores))], [hyp]
 
@@ -75,7 +80,8 @@ class Decoder(object):
             score = outs.squeeze()[prev.squeeze().data[0]]
             hyp.append(prev.squeeze().data[0])
             scores.append(score.squeeze().data[0])
-            if self.eos and prev.data.eq(self.eos).nonzero().nelement() > 0:
+            if self.eos is not None and \
+               prev.data.eq(self.eos).nonzero().nelement() > 0:
                 break
         return [functools.reduce(operator.mul, scores)], [hyp]
 
@@ -211,10 +217,7 @@ class LM(nn.Module):
     Parameters:
     ===========
     - vocab: int, vocabulary size.
-    - emb_dim: int, embedding size,
-        This value has to be equal to hid_dim if tie_weights is True and
-        project_on_tied_weights is False, otherwise input and output
-        embedding dimensions wouldn't match and weights cannot be tied.
+    - emb_dim: int, embedding size.
     - hid_dim: int, hidden dimension of the RNN.
     - num_layers: int, number of layers of the RNN.
     - cell: str, one of GRU, LSTM, RNN.
@@ -347,7 +350,7 @@ class LM(nn.Module):
     def generate(self, d, seed_text=None, max_seq_len=25, gpu=False,
                  method='sample', temperature=1, width=5, **kwargs):
         """
-        Generate text using simple argmax decoding
+        Generate text using a specified method (argmax, sample, beam)
 
         Returns:
         --------

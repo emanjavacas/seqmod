@@ -104,7 +104,7 @@ if __name__ == '__main__':
     parser.add_argument('--bptt', default=20, type=int)
     parser.add_argument('--gpu', action='store_true')
     # - optimizer
-    parser.add_argument('--optim', default='RMSprop', type=str)
+    parser.add_argument('--optim', default='Adam', type=str)
     parser.add_argument('--learning_rate', default=0.01, type=float)
     parser.add_argument('--learning_rate_decay', default=0.5, type=float)
     parser.add_argument('--start_decay_at', default=5, type=int)
@@ -139,8 +139,7 @@ if __name__ == '__main__':
         train_data = load_lines(args.path + 'train.txt', processor=proc)
         valid_data = load_lines(args.path + 'valid.txt', processor=proc)
         test_data = load_lines(args.path + 'test.txt', processor=proc)
-        d = Dict(max_size=args.max_size, min_freq=args.min_freq,
-                 eos_token=u.EOS, bos_token=u.BOS)
+        d = Dict(max_size=args.max_size, min_freq=args.min_freq, eos_token=u.EOS)
         d.fit(train_data, valid_data)
         train = BlockDataset(
             train_data, d, args.batch_size, args.bptt, gpu=args.gpu)
