@@ -187,9 +187,9 @@ class EncoderDecoder(nn.Module):
         weight: (vocab x emb_dim)
         words: list of words corresponding to each row in `weight`
         """
-        if isinstance(weight, np.array):
+        if isinstance(weight, np.ndarray):
             weight = torch.from_numpy(weight)
-        assert weight.size(1) != self.emb_dim, \
+        assert weight.size(1) == self.emb_dim, \
             "Mismatched embedding dim %d for model with dim %d" % \
             (weight.size(1), self.emb_dim)
         target_words = {word: idx for idx, word in enumerate(words)}
