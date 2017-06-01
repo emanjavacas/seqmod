@@ -139,7 +139,7 @@ def select_cols(t, vec):
     Parameters:
     -----------
     - t: torch.Tensor (m x n)
-    - vec: list with indices of length m with the longest integer at most n.
+    - vec: list with indices of length m with the longest integer at most n-1.
     """
     nrows, ncols = t.size()
     rows = torch.LongTensor(list(range(ncols))).repeat(nrows, 1)
