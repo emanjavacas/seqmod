@@ -1,6 +1,7 @@
 
 import random
 from collections import Counter, Sequence
+from functools import singledispatch
 
 import torch
 import torch.utils.data
@@ -31,7 +32,7 @@ def get_splits(length, test, dev=None):
     return cumsum(int(length * i) for i in [train, dev, test] if i)
 
 
-def pack(examples, pad_token=None, align_right=False):
+def _pack_simple(examples, pad_token=None, align_right=False):
     if pad_token is None:
         assert all(len(examples[0]) == len(x) for x in examples), \
             "No pad token was supported but need to pad (unequal lengths)"
@@ -44,6 +45,49 @@ def pack(examples, pad_token=None, align_right=False):
         out[i].narrow(0, offset, example_length).copy_(example)
     out = out.t().contiguous()
     return out
+
+
+def pack(examples, pad_token=None, align_right=False):
+    if not isinstance(examples[0], tuple):  # normal input
+        return _pack_simple(examples, pad_token, align_right)
+    else:                       # multi-input sequences
+        return tuple(_pack_simple(e, pad_token, align_right)
+                     for e in zip(*examples))
+
+
+@singledispatch
+def wrap_variable(out, volatile, gpu):
+    out = Variable(out, volatile=volatile)
+    if gpu:
+        out = out.cuda()
+    return out
+
+
+@wrap_variable.register(tuple)
+def _wrap_variable(out, volatile, gpu):
+    return tuple(wrap_variable(subout, volatile, gpu) for subout in out)
+
+
+@singledispatch
+def default_sort_key(pair):
+    src, trg = pair
+    return len(src)
+
+
+@default_sort_key.register(tuple)
+def _default_sort_key(pair):
+    src, trg = pair
+    return len(src[0])
+
+
+@singledispatch
+def get_dict_pad(d):
+    return None if not d.sequential else d.get_pad()
+
+
+@get_dict_pad.register(tuple)
+def get_dict_pad_(d):
+    return next(get_dict_pad(subd) for subd in d)
 
 
 def block_batchify(vector, batch_size):
@@ -132,8 +176,8 @@ class Dict(object):
             raise ValueError('Dict is already fitted')
         self.partial_fit(*args)
         most_common = self.counter.most_common(self.max_size)
-        if self.max_size < len(self.counter) and self.unk_token is not None:
-            if self.unk_token not in self.reserved:
+        if self.max_size is not None and self.max_size < len(self.counter):
+            if self.unk_token and self.unk_token not in self.reserved:
                 self.reserved.add(self.unk_token)
         self.vocab = [s for s in self.reserved]
         self.vocab += [k for k, v in most_common if v >= self.min_freq]
@@ -186,39 +230,21 @@ class PairedDataset(Dataset):
         case of e.g. monolingual data.
 
         Arguments:
-        - src: list of lists of hashables representing source sequences
-        - trg: list of lists of hashables representing target sequences
+        - src: (list or tuple) of lists of lists of hashables representing
+            source sequences. If a tuple, each member should be a parallel
+            version of the same sequence.
+        - trg: same as src but repersenting target sequences.
         - d: dict of {'src': src_dict, 'trg': trg_dict} where
-            src_dict: Dict instance fitted to the source data
-            trg_dict: Dict instance fitted to the target data
+            src_dict: Dict or tuple of Dicts fitted to the source data. If
+                passed a list, the Dicts should be order to match the order
+                of the parallel version passed to src
+            trg_dict: same as src_dict but for the target data
         """
-        # check inputs
-        if isinstance(src, tuple):
-            assert len(d['src']) == len(src), \
-                "src entry to `d` must have same shape as `src`"
-            src_len = set(len(x) for x in src)
-            assert len(src_len) == 1, "All src input must be equal length"
-            src_len = src_len[0]
-        else:
-            src_len = len(src)
-        if isinstance(trg, tuple):
-            assert len(d['trg']) == len(trg), \
-                "trg entry to `d` must have same shape as `trg`"
-            trg_len = set(len(x) for x in trg)
-            assert len(trg_len) == 1, "All trg input must be equal length"
-            trg_len = trg_len[0]
-        else:
-            trg_len = len(trg)
-        assert src_len == trg_len, \
-            "Source and Target dataset must be equal length"
-        assert src_len >= batch_size, "Empty dataset"
-
-        if fitted:
-            self.data = {'src': src, 'trg': trg}
-        else:
-            self.data = {
-                'src': src if fitted else list(d['src'].transform(src)),
-                'trg': trg if fitted else list(d['trg'].transform(trg))}
+        self.data = {'src': src if fitted else self._fit(src, d['src']),
+                     'trg': trg if fitted else self._fit(trg, d['trg'])}
+        assert len(self.data['src']) == len(self.data['trg']), \
+            "source and target dataset must be equal length"
+        assert len(self.data['src']) >= batch_size, "not enough input examples"
         self.d = d              # fitted dicts
         self.batch_size = batch_size
         self.gpu = gpu
@@ -226,33 +252,50 @@ class PairedDataset(Dataset):
         self.align_right = align_right
         self.num_batches = len(self.data['src']) // batch_size
 
-    def set_batch_size(self, new_batch_size):
-        self.batch_size = new_batch_size
-        self.num_batches = len(self.data['src']) // self.batch_size
-
-    def set_gpu(self, new_gpu):
-        self.gpu = new_gpu
-
-    def __len__(self):
-        return self.num_batches
+    def _fit(self, data, d):
+        # check inputs
+        if isinstance(data, tuple) or isinstance(d, tuple):
+            assert isinstance(data, tuple) and isinstance(d, tuple), \
+                "both input sequences and Dict must be equal type"
+            assert all(len(data[i]) == len(data[i+1])
+                       for i in range(len(data)-2)), \
+                "all input datasets must be equal size"
+            assert len(data) == len(d), \
+                "equal number of input sequences and Dicts needed"
+            return list(zip(*(subd.transform(subdata)
+                              for subdata, subd in zip(data, d))))
+        else:
+            return list(d.transform(data))
 
     def _pack(self, batch_data, pad_token=None):
         out = pack(
             batch_data, pad_token=pad_token, align_right=self.align_right)
-        if self.gpu:
-            out = out.cuda()
-        return Variable(out, volatile=self.evaluation)
+        return wrap_variable(out, volatile=self.evaluation, gpu=self.gpu)
+
+    def __len__(self):
+        return self.num_batches
 
     def __getitem__(self, idx):
         assert idx < self.num_batches, "%d >= %d" % (idx, self.num_batches)
         b_from, b_to = idx * self.batch_size, (idx+1) * self.batch_size
-        src_pad = self.d['src'].get_pad() if self.d['src'].sequential else None
+        src_pad = get_dict_pad(self.d['src'])
         src = self._pack(self.data['src'][b_from: b_to], pad_token=src_pad)
-        trg_pad = self.d['trg'].get_pad() if self.d['trg'].sequential else None
+        trg_pad = get_dict_pad(self.d['trg'])
         trg = self._pack(self.data['trg'][b_from: b_to], pad_token=trg_pad)
         return src, trg
 
-    def sort_(self, sort_key=None):
+    def set_batch_size(self, new_batch_size):
+        self.batch_size = new_batch_size
+        self.num_batches = len(self.data['src']) // new_batch_size
+
+    def set_gpu(self, new_gpu):
+        self.gpu = new_gpu
+
+    def sort_(self, sort_key=default_sort_key):
+        """
+        Sort dataset examples according to sequence length. By default source
+        sequences are used for sorting (see sort_key function).
+        """
         sort = sorted(zip(self.data['src'], self.data['trg']), key=sort_key)
         src, trg = zip(*sort)
         self.data['src'] = list(src)
@@ -281,7 +324,10 @@ class PairedDataset(Dataset):
             subset = PairedDataset(
                 src[start:stop], trg[start:stop], self.d, self.batch_size,
                 fitted=True, gpu=self.gpu, evaluation=evaluation,
-                align_right=self.align_right).sort_(sort_key)
+                align_right=self.align_right)
+            if sort_key:
+                sort_key = sort_key if callable(sort_key) else default_sort_key
+                subset = subset.sort_(sort_key=sort_key)
             datasets.append(subset)
         return tuple(datasets)
 
@@ -305,7 +351,7 @@ class BlockDataset(Dataset):
     def __init__(self, examples, d, batch_size, bptt,
                  fitted=False, gpu=False, evaluation=False):
         if not fitted:
-            examples = [c for l in d.transform(examples) for c in l]
+            examples = [item for seq in d.transform(examples) for item in seq]
         self.data = block_batchify(examples, batch_size)
         if len(examples) == 0:
             raise ValueError("Empty dataset")

@@ -4,7 +4,7 @@ import json
 
 import numpy as np
 
-from seqmod.misc.dataset import Dict, PairedDataset
+from seqmod.misc.dataset import Dict, PairedDataset, default_sort_key
 
 from w2v import Embedder
 
@@ -56,16 +56,8 @@ def load_twisty(path='/home/corpora/TwiSty/twisty-EN',
     return src, trg
 
 
-def sort_key(pair):
-    """
-    Sort examples by tweet length
-    """
-    src, trg = pair
-    return len(src)
-
-
 def load_dataset(src, trg, batch_size, max_size=100000, min_freq=5,
-                 gpu=False, shuffle=True, sort_key=sort_key, **kwargs):
+                 gpu=False, shuffle=True, sort_key=default_sort_key, **kwargs):
     """
     Wrapper function for dataset with sensible, overwritable defaults
     """

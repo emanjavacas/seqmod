@@ -131,8 +131,7 @@ if __name__ == '__main__':
             dataset = PairedDataset.from_disk(f)
         dataset.set_batch_size(args.batch_size)
         dataset.set_gpu(args.gpu)
-        train, valid = dataset.splits(
-            sort_key=lambda pair: len(pair[0]), dev=args.dev, test=None)
+        train, valid = dataset.splits(sort_key=True, dev=args.dev, test=None)
         src_dict = dataset.dicts['src']
     else:
         src, trg = zip(*d.generate_set(
@@ -143,7 +142,7 @@ if __name__ == '__main__':
         train, valid = PairedDataset(
             src, trg, {'src': src_dict, 'trg': src_dict},
             batch_size=args.batch_size, gpu=args.gpu
-        ).splits(dev=args.dev, test=None, sort_key=lambda pair: len(pair[0]))
+        ).splits(dev=args.dev, test=None, sort_key=True)
 
     print(' * vocabulary size. %d' % len(src_dict))
     print(' * number of train batches. %d' % len(train))

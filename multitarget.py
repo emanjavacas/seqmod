@@ -86,8 +86,7 @@ if __name__ == '__main__':
             datasets[target]['src'], datasets[target]['trg'],
             {'src': src_dict, 'trg': src_dict},
             batch_size=args.batch_size, gpu=args.gpu).splits(
-                dev=args.dev, test=None,
-                shuffle=True, sort_key=lambda pair: len(pair[0]))
+                dev=args.dev, test=None, shuffle=True, sort_key=True)
         del datasets[target]
         src, trg = zip(*d.generate_set(
             int(args.train_len * 0.1), args.vocab, args.min_len, args.max_len,
