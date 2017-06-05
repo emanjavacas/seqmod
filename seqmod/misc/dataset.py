@@ -85,13 +85,19 @@ def get_dict_pad_(d):
     return next(get_dict_pad(subd) for subd in d)
 
 
-def block_batchify(vector, batch_size):
+def _block_batchify(vector, batch_size):
     if isinstance(vector, list):
         vector = torch.LongTensor(vector)
     num_batches = len(vector) // batch_size
     batches = vector.narrow(0, 0, num_batches * batch_size)
     batches = batches.view(batch_size, -1).t().contiguous()
     return batches
+
+
+def block_batchify(vector, batch_size):
+    if isinstance(vector, tuple):
+        return tuple(_block_batchify(v, batch_size) for v in vector)
+    return _block_batchify(vector, batch_size)
 
 
 class Dict(object):
@@ -334,16 +340,19 @@ class PairedDataset(Dataset):
 
 class BlockDataset(Dataset):
     """
-    Dataset class for training LMs that also supports multi-source datasets.
+    Dataset class for autoregressive models.
 
     Parameters:
     ===========
-    - examples: list of sequences or dict of source to list of sequences,
-        Source data that will be used by the dataset.
+    - examples: list of source sequences where each input sequence is a list,
+        Multiple input can be used by passing a tuple of input sequences.
+        In the latter case the each batch will be a tuple with entries
+        corresponding to the different domains in the same order as passed
+        to the constructor, and the input to d must be a tuple in which each
+        entry is a Dict fitted to the corresponding input domain.
         If fitted is False, the lists are supposed to be already transformed
-        into a single long vector. If a dict, the examples are supposed to
-        come from different sources and will be iterated over cyclically.
-    - d: Dict already fitted.
+        into a single long vector.
+    - d: Dict (or tuple of Dicts for multi-input) already fitted.
     - batch_size: int,
     - bptt: int,
         Backprop through time (max context the RNN conditions predictions on)
@@ -351,7 +360,7 @@ class BlockDataset(Dataset):
     def __init__(self, examples, d, batch_size, bptt,
                  fitted=False, gpu=False, evaluation=False):
         if not fitted:
-            examples = [item for seq in d.transform(examples) for item in seq]
+            examples = self._fit(examples, d)
         self.data = block_batchify(examples, batch_size)
         if len(examples) == 0:
             raise ValueError("Empty dataset")
@@ -362,6 +371,21 @@ class BlockDataset(Dataset):
         self.fitted = fitted
         self.gpu = gpu
         self.evaluation = evaluation
+
+    def _fit(self, examples, d):
+        if isinstance(examples, tuple) or isinstance(d, tuple):
+            assert isinstance(d, tuple) and isinstance(examples, tuple), \
+                "multiple input needs multiple Dicts"
+            assert len(examples) == len(d), \
+                "equal number of input and Dicts needed"
+            assert all(len(examples[i]) == len(examples[i+1])
+                       for i in range(len(examples)-2)), \
+                "all input examples must be equal size"
+            return tuple(
+                [item for seq in subd.transform(subex) for item in seq]
+                for (subex, subd) in zip(examples, d))
+        else:
+            return [item for seq in d.transform(examples) for item in seq]
 
     def _getitem(self, data, idx):
         """
@@ -382,6 +406,8 @@ class BlockDataset(Dataset):
         The length of the dataset is computed as the number of bptt'ed batches
         to conform the way batches are computed. See __getitem__.
         """
+        if isinstance(self.data, tuple):
+            return len(self.data[0]) // self.bptt
         return len(self.data) // self.bptt
 
     def __getitem__(self, idx):
@@ -390,17 +416,24 @@ class BlockDataset(Dataset):
 
         Returns:
         ========
-        - src: torch.LongTensor of maximum size of self.bptt x self.batch_size
-        - trg: torch.LongTensor of maximum size of self.bptt x self.batch_size,
+        - src: torch.LongTensor of maximum size self.bptt x self.batch_size
+        - trg: torch.LongTensor of maximum size self.bptt x self.batch_size,
             corresponding to a shifted batch
         """
-        return self._getitem(self.data, idx)
+        if isinstance(self.data, tuple):
+            return tuple(zip(*(self._getitem(d, idx) for d in self.data)))
+        else:
+            return self._getitem(self.data, idx)
 
     def split_data(self, start, stop):
         """
         Compute a split on the dataset for a batch range defined by start, stop
         """
-        return self.data.t().contiguous().view(-1)[start:stop]
+        if isinstance(self.data, tuple):
+            return tuple(d.t().contiguous().view(-1)[start:stop]
+                         for d in self.data)
+        else:
+            return self.data.t().contiguous().view(-1)[start:stop]
 
     def splits(self, test=0.1, dev=0.1):
         """
