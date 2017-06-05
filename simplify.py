@@ -89,7 +89,7 @@ if __name__ == '__main__':
         (args.layers, args.layers), args.emb_dim, (args.hid_dim, args.hid_dim),
         args.att_dim, src_dict, att_type=args.att_type, dropout=args.dropout,
         bidi=args.bidi, cell=args.cell, project_init=args.project_init)
-    model.load_embeddings()
+
     optimizer = Optimizer(
         model.parameters(), args.optim, args.learning_rate, args.max_grad_norm,
         lr_decay=args.learning_rate_decay, start_decay_at=args.start_decay_at)

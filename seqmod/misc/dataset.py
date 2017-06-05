@@ -68,16 +68,11 @@ def _wrap_variable(out, volatile, gpu):
     return tuple(wrap_variable(subout, volatile, gpu) for subout in out)
 
 
-@singledispatch
 def default_sort_key(pair):
     src, trg = pair
+    if isinstance(src, tuple):
+        return len(src[0])
     return len(src)
-
-
-@default_sort_key.register(tuple)
-def _default_sort_key(pair):
-    src, trg = pair
-    return len(src[0])
 
 
 @singledispatch
@@ -240,10 +235,15 @@ class PairedDataset(Dataset):
                 of the parallel version passed to src
             trg_dict: same as src_dict but for the target data
         """
-        self.data = {'src': src if fitted else self._fit(src, d['src']),
-                     'trg': trg if fitted else self._fit(trg, d['trg'])}
-        assert len(self.data['src']) == len(self.data['trg']), \
-            "source and target dataset must be equal length"
+        self.data, self.d = {}, d
+        self.data['src'] = src if fitted else self._fit(src, d['src'])
+        if trg is None:         # autoregressive dataset
+            self.data['trg'] = self.data['src']
+            self.d['trg'] = self.d['src']
+        else:
+            self.data['trg'] = trg if fitted else self._fit(trg, d['trg'])
+            assert len(self.data['src']) == len(self.data['trg']), \
+                "source and target dataset must be equal length"
         assert len(self.data['src']) >= batch_size, "not enough input examples"
         self.d = d              # fitted dicts
         self.batch_size = batch_size
@@ -298,8 +298,8 @@ class PairedDataset(Dataset):
         """
         sort = sorted(zip(self.data['src'], self.data['trg']), key=sort_key)
         src, trg = zip(*sort)
-        self.data['src'] = list(src)
-        self.data['trg'] = list(trg)
+        self.data['src'] = src
+        self.data['trg'] = trg
         return self
 
     def splits(self, test=0.1, dev=0.2, shuffle=False, sort_key=None):

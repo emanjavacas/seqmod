@@ -2,7 +2,8 @@
 import os
 import argparse
 
-from loaders import load_twisty, load_dataset, load_embeddings
+from loaders import load_twisty, load_dataset
+from w2v import load_embeddings
 from vae import SequenceVAE
 from vae_utils import vae_criterion, VAETrainer, kl_weight_hook
 from seqmod import utils as u

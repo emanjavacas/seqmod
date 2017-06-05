@@ -38,7 +38,7 @@ def kl_weight_hook(trainer, epoch, batch, num_checkpoints):
     trainer.log("info", "kl weight: [%g]" % trainer.kl_weight)
 
 
-def make_generate_hook(target="This is just a tweet and not much more ...", n=5):
+def make_generate_hook(target="This is just a tweet and not much more", n=5):
 
     def hook(trainer, epoch, batch, num_checkpoints):
         d = trainer.datasets['train'].d['src']
@@ -73,7 +73,6 @@ class VAETrainer(Trainer):
         return tuple(math.exp(min(loss, 100)) for loss in losses)
 
     def run_batch(self, batch_data, dataset='train', **kwargs):
-        valid = dataset != 'train'
         pad, eos = self.model.src_dict.get_pad(), self.model.src_dict.get_eos()
         source, labels = batch_data
         # remove <eos> from decoder targets dealing with different <pad> sizes
@@ -81,10 +80,11 @@ class VAETrainer(Trainer):
         # remove <bos> from loss targets
         loss_targets = source[1:].view(-1)
         # preds: (batch * seq_len x vocab)
-        preds, mu, logvar = self.model(source[1:], decode_targets, labels=labels)
+        preds, mu, logvar = self.model(
+            source[1:], decode_targets, labels=labels)
         # compute loss
         log_loss, kl_loss = self.criterion(preds, loss_targets, mu, logvar)
-        if not valid:
+        if dataset == 'train':
             batch = source.size(1)
             loss = (log_loss + (self.kl_weight * kl_loss)).div(batch)
             loss.backward()
