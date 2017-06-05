@@ -2,7 +2,8 @@
 import os
 import argparse
 
-from loaders import load_twisty, load_dataset, load_embeddings
+from loaders import load_twisty, load_dataset
+from w2v import load_embeddings
 from vae import SequenceVAE
 from vae_utils import vae_criterion, VAETrainer, kl_weight_hook
 from seqmod import utils as u
@@ -30,7 +31,7 @@ def make_mock_labels(lines, label='0'):
 
 def load_from_lines(
         path, batch_size, max_size=1000000, min_freq=5, gpu=False,
-        shuffle=True, sort_key=lambda x: len(x[0]), **kwargs):
+        shuffle=True, sort_key=True, **kwargs):
     lines = load_lines(path)
     ldict = Dict(pad_token=u.PAD, eos_token=u.EOS, bos_token=u.BOS,
                  max_size=max_size, min_freq=min_freq)
@@ -46,7 +47,7 @@ def load_from_lines(
 
 def load_penn(path, batch_size,
               max_size=1000000, min_freq=1, gpu=False, shuffle=True,
-              sort_key=lambda pair: len(pair[0])):
+              sort_key=True):
     train_data = load_lines(os.path.join(path, 'train.txt'))
     train_labels = make_mock_labels(train_data)
     valid_data = load_lines(os.path.join(path, 'valid.txt'))
@@ -58,12 +59,15 @@ def load_penn(path, batch_size,
     ldict.fit(train_data, valid_data)
     mock = Dict().fit(train_labels)
     d = {'src': ldict, 'trg': mock}
-    train = PairedDataset(train_data, train_labels, d, batch_size, gpu=gpu
+    train = PairedDataset(
+        train_data, train_labels, d, batch_size, gpu=gpu
     ).sort_(sort_key=sort_key)
-    valid = PairedDataset(valid_data, valid_labels, d, batch_size, gpu=gpu,
-                          evaluation=True).sort_(sort_key=sort_key)
-    test = PairedDataset(test_data, test_labels, d, batch_size, gpu=gpu,
-                         evaluation=True).sort_(sort_key=sort_key)
+    valid = PairedDataset(
+        valid_data, valid_labels, d, batch_size, gpu=gpu, evaluation=True
+    ).sort_(sort_key=sort_key)
+    test = PairedDataset(
+        test_data, test_labels, d, batch_size, gpu=gpu, evaluation=True
+    ).sort_(sort_key=sort_key)
     return train, valid, test
 
 
@@ -159,10 +163,13 @@ if __name__ == '__main__':
     print(model)
     model.apply(u.make_initializer())
     # model.encoder.register_backward_hook(u.log_grad)
-    
+
     if args.load_embeddings:
         weight = load_embeddings(
-            train.d['src'].vocab, args.flavor, args.suffix, '~/data/word_embeddings')
+            train.d['src'].vocab,
+            args.flavor,
+            args.suffix,
+            '~/data/word_embeddings')
         model.init_embeddings(weight)
 
     criterion = vae_criterion(vocab, train.d['src'].get_pad())
@@ -181,7 +188,8 @@ if __name__ == '__main__':
         on_lr_update=on_lr_update)
 
     trainer = VAETrainer(
-        model, datasets, criterion, optimizer, inflection_point=args.inflection_point)
+        model, datasets, criterion, optimizer,
+        inflection_point=args.inflection_point)
     trainer.add_loggers(
         StdLogger(),
         VisdomLogger(env='vae_gender', losses=('rec', 'kl'), max_y=600))

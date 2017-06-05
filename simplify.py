@@ -77,7 +77,7 @@ if __name__ == '__main__':
     train, valid = PairedDataset(
         src, trg, {'src': src_dict, 'trg': src_dict},
         batch_size=args.batch_size, gpu=args.gpu
-    ).splits(dev=args.dev, test=None, sort_key=lambda pair: len(pair[0]))
+    ).splits(dev=args.dev, test=None, sort_key=True)
 
     print(' * vocabulary size. %d' % len(src_dict))
     print(' * number of train batches. %d' % len(train))
@@ -89,6 +89,7 @@ if __name__ == '__main__':
         (args.layers, args.layers), args.emb_dim, (args.hid_dim, args.hid_dim),
         args.att_dim, src_dict, att_type=args.att_type, dropout=args.dropout,
         bidi=args.bidi, cell=args.cell, project_init=args.project_init)
+
     optimizer = Optimizer(
         model.parameters(), args.optim, args.learning_rate, args.max_grad_norm,
         lr_decay=args.learning_rate_decay, start_decay_at=args.start_decay_at)

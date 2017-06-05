@@ -377,7 +377,8 @@ class EncoderDecoderTrainer(Trainer):
             loss = self.update_loss(loss, self.criterion(pred, trg.view(-1)))
         if not valid:
             batch = outs.size(1)
-            loss[0].div(batch).backward()
+            for l in loss:
+                l.div(batch).backward()
             grad = None if det_outs.grad is None else det_outs.grad.data
             outs.backward(grad)
             self.optimizer_step()

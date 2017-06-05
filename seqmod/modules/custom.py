@@ -54,7 +54,9 @@ class StackedRNN(nn.Module):
         h_n: torch.Tensor (num_layers x batch x hid_dim)
         c_n: torch.Tensor (num_layers x batch x hid_dim)
         """
+        batch, inp_dim = inp.size()
         if self.cell.startswith('LSTM'):
+            num_layers, batch, hid_dim = hidden[0].size()
             h_0, c_0 = hidden
             h_1, c_1 = [], []
             for i in range(self.num_layers):

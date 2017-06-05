@@ -8,7 +8,8 @@ import fasttext
 
 
 class Embedder(object):
-    def __init__(self, flavor='w2v', suffix='', directory='~/data/word_embeddings/'):
+    def __init__(self,
+                 flavor='w2v', suffix='', directory='~/data/word_embeddings/'):
         if flavor not in ('w2v', 'ft'):
             raise NotImplementedError('Unsupported embedding option:', flavor)
 
@@ -17,7 +18,8 @@ class Embedder(object):
         suffix = ('.' + suffix) if suffix else ''
         directory = os.path.expanduser(directory)
         self.path = os.path.join(
-            directory, '{flavor}_model{suffix}'.format(flavor=flavor, suffix=suffix))
+            directory, '{flavor}_model{suffix}'.format(
+                flavor=flavor, suffix=suffix))
 
     def __getitem__(self, w):
         if not self.fitted:
@@ -70,13 +72,42 @@ class Embedder(object):
         X = []
 
         for d in documents:
-            x = [sefl[w] for w in d]
+            x = [self[w] for w in d]
             X.append(np.mean(x, axis=0))
 
         return np.array(X, dtype='float64')
 
     def fit_transform(self, documents, **kwargs):
         return self.fit(documents, **kwargs).transform(documents)
+
+
+def load_embeddings(vocab, flavor, suffix, directory):
+    """
+    Load embeddings from a w2v model for model pretraining
+    """
+    size, embedder = 0, None
+
+    if flavor == 'glove':
+        embedder = {}
+        directory = os.path.expanduser(directory)
+        with open(os.path.join(directory, 'glove.%s.txt' % suffix), 'r') as f:
+            for l in f:
+                w, *vec = l.strip().split(' ')
+                size = len(vec)
+                embedder[w] = np.array(vec, dtype=np.float64)
+    else:
+        embedder = Embedder(
+            flavor=flavor, suffix=suffix, directory=directory)
+        embedder.load()
+        size = embedder.size
+
+    weight = np.zeros((len(vocab), size))
+    for idx, w in enumerate(vocab):
+        try:
+            weight[idx] = embedder[w]
+        except KeyError:
+            pass                # default to zero vector
+    return weight
 
 
 if __name__ == '__main__':

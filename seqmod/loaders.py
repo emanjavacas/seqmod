@@ -1,12 +1,9 @@
 
 import os
+import re
 import json
 
-import numpy as np
-
-from seqmod.misc.dataset import Dict, PairedDataset
-
-from w2v import Embedder
+from seqmod.misc.dataset import Dict, PairedDataset, default_sort_key
 
 
 def identity(x):
@@ -22,7 +19,7 @@ def segmenter(tweet, level='char'):
         raise ValueError
 
 
-# Data loaders
+# Twisty
 def load_twisty(path='/home/corpora/TwiSty/twisty-EN',
                 min_len=0,
                 level='token',
@@ -56,16 +53,9 @@ def load_twisty(path='/home/corpora/TwiSty/twisty-EN',
     return src, trg
 
 
-def sort_key(pair):
-    """
-    Sort examples by tweet length
-    """
-    src, trg = pair
-    return len(src)
-
-
+# Dataset
 def load_dataset(src, trg, batch_size, max_size=100000, min_freq=5,
-                 gpu=False, shuffle=True, sort_key=sort_key, **kwargs):
+                 gpu=False, shuffle=True, sort_key=default_sort_key, **kwargs):
     """
     Wrapper function for dataset with sensible, overwritable defaults
     """
@@ -80,30 +70,42 @@ def load_dataset(src, trg, batch_size, max_size=100000, min_freq=5,
     return splits
 
 
-def load_embeddings(vocab, flavor, suffix, directory):
-    """
-    Load embeddings from a w2v model for model pretraining
-    """
-    size, embedder = 0, None
+# Penn3
+def _penn3_files_from_dir(path):
+    for d in os.listdir(path):
+        if os.path.isdir(os.path.join(path, d)):
+            for f in os.listdir(os.path.join(path, d)):
+                yield os.path.join(path, d, f)
 
-    if flavor == 'glove':
-        embedder = {}
-        directory = os.path.expanduser(directory)
-        with open(os.path.join(directory, 'glove.%s.txt' % suffix), 'r') as f:
-            for l in f:
-                w, *vec = l.strip().split(' ')
-                size = len(vec)
-                embedder[w] = np.array(vec, dtype=np.float64)
-    else:
-        embedder = Embedder(
-            flavor=flavor, suffix=suffix, directory=directory)
-        embedder.load()
-        size = embedder.size
 
-    weight = np.zeros((len(vocab), size))
-    for idx, w in enumerate(vocab):
-        try:
-            weight[idx] = embedder[w]
-        except KeyError:
-            pass                # default to zero vector
-    return weight
+def _penn3_lines_from_file(path):
+    with open(path, 'r') as f:
+        seq = []
+        for idx, l in enumerate(f):
+            line = l.strip()
+            if not line or line.startswith('*'):
+                continue
+            elif line.startswith('='):
+                if len(seq) != 0:
+                    words, poses = zip(*seq)
+                    yield words, poses
+                    seq = []
+            else:
+                # remove brackets
+                line = line.replace('[', '').replace(']', '')
+                for t in line.split():
+                    try:
+                        word, pos = re.split(r'(?<!\\)/', t)
+                        seq.append([word, pos])
+                    except:
+                        print("Couldn't parse line %d in file %s: %s" %
+                              (idx, path, t))
+
+
+def load_penn3(path, wsj=True, brown=True, swbd=False, atis=False):
+    flags = [('wsj', wsj), ('brown', brown), ('swbd', swbd), ('atis', atis)]
+    out, dirs = [], [d for d, flag in flags if flag]
+    for d in dirs:
+        out.extend(seq for f in _penn3_files_from_dir(os.path.join(path, d))
+                   for seq in _penn3_lines_from_file(f))
+    return out

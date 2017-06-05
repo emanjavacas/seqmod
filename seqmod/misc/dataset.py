@@ -1,6 +1,7 @@
 
 import random
 from collections import Counter, Sequence
+from functools import singledispatch
 
 import torch
 import torch.utils.data
@@ -31,7 +32,7 @@ def get_splits(length, test, dev=None):
     return cumsum(int(length * i) for i in [train, dev, test] if i)
 
 
-def pack(examples, pad_token=None, align_right=False):
+def _pack_simple(examples, pad_token=None, align_right=False):
     if pad_token is None:
         assert all(len(examples[0]) == len(x) for x in examples), \
             "No pad token was supported but need to pad (unequal lengths)"
@@ -46,13 +47,57 @@ def pack(examples, pad_token=None, align_right=False):
     return out
 
 
-def block_batchify(vector, batch_size):
+def pack(examples, pad_token=None, align_right=False):
+    if not isinstance(examples[0], tuple):  # normal input
+        return _pack_simple(examples, pad_token, align_right)
+    else:                       # multi-input sequences
+        return tuple(_pack_simple(e, pad_token, align_right)
+                     for e in zip(*examples))
+
+
+@singledispatch
+def wrap_variable(out, volatile, gpu):
+    out = Variable(out, volatile=volatile)
+    if gpu:
+        out = out.cuda()
+    return out
+
+
+@wrap_variable.register(tuple)
+def _wrap_variable(out, volatile, gpu):
+    return tuple(wrap_variable(subout, volatile, gpu) for subout in out)
+
+
+def default_sort_key(pair):
+    src, trg = pair
+    if isinstance(src, tuple):
+        return len(src[0])
+    return len(src)
+
+
+@singledispatch
+def get_dict_pad(d):
+    return None if not d.sequential else d.get_pad()
+
+
+@get_dict_pad.register(tuple)
+def get_dict_pad_(d):
+    return next(get_dict_pad(subd) for subd in d)
+
+
+def _block_batchify(vector, batch_size):
     if isinstance(vector, list):
         vector = torch.LongTensor(vector)
     num_batches = len(vector) // batch_size
     batches = vector.narrow(0, 0, num_batches * batch_size)
     batches = batches.view(batch_size, -1).t().contiguous()
     return batches
+
+
+def block_batchify(vector, batch_size):
+    if isinstance(vector, tuple):
+        return tuple(_block_batchify(v, batch_size) for v in vector)
+    return _block_batchify(vector, batch_size)
 
 
 class Dict(object):
@@ -77,14 +122,12 @@ class Dict(object):
                  sequential=True):
         self.counter = Counter()
         self.fitted = False
-        # TODO: warn if pad, eos or bos token are given and sequential is False
         self.pad_token = pad_token
         self.eos_token = eos_token
         self.bos_token = bos_token
         self.unk_token = unk_token
         # only index unk_token if needed or requested
         self.reserved = {t for t in [pad_token, eos_token, bos_token] if t}
-        self.has_unk = force_unk
         if force_unk:
             assert unk_token is not None, "<unk> token needed"
             self.reserved.add(self.unk_token)
@@ -108,20 +151,21 @@ class Dict(object):
         return self.s2i.get(self.unk_token, None)
 
     def _maybe_index_unk(self):
+        """
+        Run during fit to optionally encode unk_token
+        """
         if self.unk_token not in self.s2i:
             unk_code = self.s2i[self.unk_token] = len(self.vocab)
             self.vocab += [self.unk_token]
-            self.has_unk = True
             return unk_code
         else:
             return self.s2i[self.unk_token]
 
     def index(self, s):
         assert self.fitted, "Attempt to index without fitted data"
-        if s not in self.s2i:
-            return self._maybe_index_unk()
-        else:
-            return self.s2i[s]
+        if s not in self.s2i and self.unk_token not in self.s2i:
+            raise ValueError("OOV with no unk code")
+        return self.s2i.get(s, self.get_unk())
 
     def partial_fit(self, *args):
         for dataset in args:
@@ -133,6 +177,9 @@ class Dict(object):
             raise ValueError('Dict is already fitted')
         self.partial_fit(*args)
         most_common = self.counter.most_common(self.max_size)
+        if self.max_size is not None and self.max_size < len(self.counter):
+            if self.unk_token and self.unk_token not in self.reserved:
+                self.reserved.add(self.unk_token)
         self.vocab = [s for s in self.reserved]
         self.vocab += [k for k, v in most_common if v >= self.min_freq]
         self.s2i = {s: i for i, s in enumerate(self.vocab)}
@@ -184,18 +231,26 @@ class PairedDataset(Dataset):
         case of e.g. monolingual data.
 
         Arguments:
-        - src: list of lists of hashables representing source sequences
-        - trg: list of lists of hashables representing target sequences
+        - src: (list or tuple) of lists of lists of hashables representing
+            source sequences. If a tuple, each member should be a parallel
+            version of the same sequence.
+        - trg: same as src but repersenting target sequences.
         - d: dict of {'src': src_dict, 'trg': trg_dict} where
-            src_dict: Dict instance fitted to the source data
-            trg_dict: Dict instance fitted to the target data
+            src_dict: Dict or tuple of Dicts fitted to the source data. If
+                passed a list, the Dicts should be order to match the order
+                of the parallel version passed to src
+            trg_dict: same as src_dict but for the target data
         """
-        assert len(src) == len(trg), \
-            "Source and Target dataset must be equal length"
-        assert len(src) >= batch_size, "Empty dataset"
-        self.data = {
-            'src': src if fitted else list(d['src'].transform(src)),
-            'trg': trg if fitted else list(d['trg'].transform(trg))}
+        self.data, self.d = {}, d
+        self.data['src'] = src if fitted else self._fit(src, d['src'])
+        if trg is None:         # autoregressive dataset
+            self.data['trg'] = self.data['src']
+            self.d['trg'] = self.d['src']
+        else:
+            self.data['trg'] = trg if fitted else self._fit(trg, d['trg'])
+            assert len(self.data['src']) == len(self.data['trg']), \
+                "source and target dataset must be equal length"
+        assert len(self.data['src']) >= batch_size, "not enough input examples"
         self.d = d              # fitted dicts
         self.batch_size = batch_size
         self.gpu = gpu
@@ -203,18 +258,25 @@ class PairedDataset(Dataset):
         self.align_right = align_right
         self.num_batches = len(self.data['src']) // batch_size
 
+    def _fit(self, data, d):
+        # check inputs
+        if isinstance(data, tuple) or isinstance(d, tuple):
+            assert isinstance(data, tuple) and isinstance(d, tuple), \
+                "both input sequences and Dict must be equal type"
+            assert all(len(data[i]) == len(data[i+1])
+                       for i in range(len(data)-2)), \
+                "all input datasets must be equal size"
+            assert len(data) == len(d), \
+                "equal number of input sequences and Dicts needed"
+            return list(zip(*(subd.transform(subdata)
+                              for subdata, subd in zip(data, d))))
+        else:
+            return list(d.transform(data))
+
     def _pack(self, batch_data, pad_token=None):
-        out = pack(batch_data, pad_token=pad_token, align_right=self.align_right)
-        if self.gpu:
-            out = out.cuda()
-        return Variable(out, volatile=self.evaluation)
-
-    def set_batch_size(self, new_batch_size):
-        self.batch_size = new_batch_size
-        self.num_batches = len(self.data['src']) // self.batch_size
-
-    def set_gpu(self, new_gpu):
-        self.gpu = new_gpu
+        out = pack(
+            batch_data, pad_token=pad_token, align_right=self.align_right)
+        return wrap_variable(out, volatile=self.evaluation, gpu=self.gpu)
 
     def __len__(self):
         return self.num_batches
@@ -222,17 +284,28 @@ class PairedDataset(Dataset):
     def __getitem__(self, idx):
         assert idx < self.num_batches, "%d >= %d" % (idx, self.num_batches)
         b_from, b_to = idx * self.batch_size, (idx+1) * self.batch_size
-        src_pad = self.d['src'].get_pad() if self.d['src'].sequential else None
-        src_batch = self._pack(self.data['src'][b_from: b_to], pad_token=src_pad)
-        trg_pad = self.d['trg'].get_pad() if self.d['trg'].sequential else None
-        trg_batch = self._pack(self.data['trg'][b_from: b_to], pad_token=trg_pad)
-        return src_batch, trg_batch
+        src_pad = get_dict_pad(self.d['src'])
+        src = self._pack(self.data['src'][b_from: b_to], pad_token=src_pad)
+        trg_pad = get_dict_pad(self.d['trg'])
+        trg = self._pack(self.data['trg'][b_from: b_to], pad_token=trg_pad)
+        return src, trg
 
-    def sort_(self, sort_key=None):
+    def set_batch_size(self, new_batch_size):
+        self.batch_size = new_batch_size
+        self.num_batches = len(self.data['src']) // new_batch_size
+
+    def set_gpu(self, new_gpu):
+        self.gpu = new_gpu
+
+    def sort_(self, sort_key=default_sort_key):
+        """
+        Sort dataset examples according to sequence length. By default source
+        sequences are used for sorting (see sort_key function).
+        """
         sort = sorted(zip(self.data['src'], self.data['trg']), key=sort_key)
         src, trg = zip(*sort)
-        self.data['src'] = list(src)
-        self.data['trg'] = list(trg)
+        self.data['src'] = src
+        self.data['trg'] = trg
         return self
 
     def splits(self, test=0.1, dev=0.2, shuffle=False, sort_key=None):
@@ -257,23 +330,29 @@ class PairedDataset(Dataset):
             subset = PairedDataset(
                 src[start:stop], trg[start:stop], self.d, self.batch_size,
                 fitted=True, gpu=self.gpu, evaluation=evaluation,
-                align_right=self.align_right).sort_(sort_key)
+                align_right=self.align_right)
+            if sort_key:
+                sort_key = sort_key if callable(sort_key) else default_sort_key
+                subset = subset.sort_(sort_key=sort_key)
             datasets.append(subset)
         return tuple(datasets)
 
 
 class BlockDataset(Dataset):
     """
-    Dataset class for training LMs that also supports multi-source datasets.
+    Dataset class for autoregressive models.
 
     Parameters:
     ===========
-    - examples: list of sequences or dict of source to list of sequences,
-        Source data that will be used by the dataset.
+    - examples: list of source sequences where each input sequence is a list,
+        Multiple input can be used by passing a tuple of input sequences.
+        In the latter case the each batch will be a tuple with entries
+        corresponding to the different domains in the same order as passed
+        to the constructor, and the input to d must be a tuple in which each
+        entry is a Dict fitted to the corresponding input domain.
         If fitted is False, the lists are supposed to be already transformed
-        into a single long vector. If a dict, the examples are supposed to
-        come from different sources and will be iterated over cyclically.
-    - d: Dict already fitted.
+        into a single long vector.
+    - d: Dict (or tuple of Dicts for multi-input) already fitted.
     - batch_size: int,
     - bptt: int,
         Backprop through time (max context the RNN conditions predictions on)
@@ -281,7 +360,7 @@ class BlockDataset(Dataset):
     def __init__(self, examples, d, batch_size, bptt,
                  fitted=False, gpu=False, evaluation=False):
         if not fitted:
-            examples = [c for l in d.transform(examples) for c in l]
+            examples = self._fit(examples, d)
         self.data = block_batchify(examples, batch_size)
         if len(examples) == 0:
             raise ValueError("Empty dataset")
@@ -292,6 +371,21 @@ class BlockDataset(Dataset):
         self.fitted = fitted
         self.gpu = gpu
         self.evaluation = evaluation
+
+    def _fit(self, examples, d):
+        if isinstance(examples, tuple) or isinstance(d, tuple):
+            assert isinstance(d, tuple) and isinstance(examples, tuple), \
+                "multiple input needs multiple Dicts"
+            assert len(examples) == len(d), \
+                "equal number of input and Dicts needed"
+            assert all(len(examples[i]) == len(examples[i+1])
+                       for i in range(len(examples)-2)), \
+                "all input examples must be equal size"
+            return tuple(
+                [item for seq in subd.transform(subex) for item in seq]
+                for (subex, subd) in zip(examples, d))
+        else:
+            return [item for seq in d.transform(examples) for item in seq]
 
     def _getitem(self, data, idx):
         """
@@ -312,6 +406,8 @@ class BlockDataset(Dataset):
         The length of the dataset is computed as the number of bptt'ed batches
         to conform the way batches are computed. See __getitem__.
         """
+        if isinstance(self.data, tuple):
+            return len(self.data[0]) // self.bptt
         return len(self.data) // self.bptt
 
     def __getitem__(self, idx):
@@ -320,17 +416,24 @@ class BlockDataset(Dataset):
 
         Returns:
         ========
-        - src: torch.LongTensor of maximum size of self.bptt x self.batch_size
-        - trg: torch.LongTensor of maximum size of self.bptt x self.batch_size,
+        - src: torch.LongTensor of maximum size self.bptt x self.batch_size
+        - trg: torch.LongTensor of maximum size self.bptt x self.batch_size,
             corresponding to a shifted batch
         """
-        return self._getitem(self.data, idx)
+        if isinstance(self.data, tuple):
+            return tuple(zip(*(self._getitem(d, idx) for d in self.data)))
+        else:
+            return self._getitem(self.data, idx)
 
     def split_data(self, start, stop):
         """
         Compute a split on the dataset for a batch range defined by start, stop
         """
-        return self.data.t().contiguous().view(-1)[start:stop]
+        if isinstance(self.data, tuple):
+            return tuple(d.t().contiguous().view(-1)[start:stop]
+                         for d in self.data)
+        else:
+            return self.data.t().contiguous().view(-1)[start:stop]
 
     def splits(self, test=0.1, dev=0.1):
         """
