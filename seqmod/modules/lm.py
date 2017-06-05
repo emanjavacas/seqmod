@@ -9,7 +9,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 
-import seqmod.utils as u
+from seqmod import utils as u
 from seqmod.modules.custom import word_dropout, MaxOut
 from seqmod.misc.beam_search import Beam
 
@@ -380,9 +380,9 @@ class LM(nn.Module):
         inp_vec = Variable(torch.LongTensor([inp]), volatile=True)
         if gpu:
             inp_vec.cuda()
-        outs, hidden, _ = self(inp_vec, **kwargs)
-        outs = u.select_cols(outs, inp).sum()
-        return outs.data[0] / len(inp)
+        outs, _, _ = self(inp_vec, **kwargs)
+        log_probs = u.select_cols(outs[:-1], inp[1:])
+        return log_probs.sum().data[0] / len(log_probs)
 
 
 class MultiheadLM(LM):

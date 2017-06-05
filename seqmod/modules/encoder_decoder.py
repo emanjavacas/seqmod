@@ -13,7 +13,7 @@ from seqmod.modules.custom import word_dropout
 from seqmod.modules.encoder import Encoder
 from seqmod.modules.decoder import Decoder
 from seqmod.misc.beam_search import Beam
-import seqmod.utils as u
+from seqmod import utils as u
 
 
 class EncoderDecoder(nn.Module):

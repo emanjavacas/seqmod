@@ -8,7 +8,7 @@ from torch.autograd import Variable
 from seqmod.misc.dataset import CyclicBlockDataset
 from seqmod.misc.early_stopping import EarlyStopping, EarlyStoppingException
 
-import seqmod.utils as u
+from seqmod import utils as u
 
 
 # Utility functions (repackage_hidden, memory effective loss, etc.)
