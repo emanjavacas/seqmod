@@ -150,32 +150,20 @@ class Dict(object):
     def get_unk(self):
         return self.s2i.get(self.unk_token, None)
 
-    def _maybe_index_unk(self):
-        """
-        Run during fit to optionally encode unk_token
-        """
-        if self.unk_token not in self.s2i:
-            unk_code = self.s2i[self.unk_token] = len(self.vocab)
-            self.vocab += [self.unk_token]
-            return unk_code
-        else:
-            return self.s2i[self.unk_token]
-
     def index(self, s):
-        assert self.fitted, "Attempt to index without fitted data"
         if s not in self.s2i and self.unk_token not in self.s2i:
             raise ValueError("OOV with no unk code")
         return self.s2i.get(s, self.get_unk())
 
-    def partial_fit(self, *args):
-        for dataset in args:
+    def partial_fit(self, *datasets):
+        for dataset in datasets:
             for example in dataset:
                 self.counter.update(example)  # example should always be a list
 
-    def fit(self, *args):
+    def fit(self, *datasets):
         if self.fitted:
             raise ValueError('Dict is already fitted')
-        self.partial_fit(*args)
+        self.partial_fit(*datasets)
         most_common = self.counter.most_common(self.max_size)
         if self.max_size is not None and self.max_size < len(self.counter):
             if self.unk_token and self.unk_token not in self.reserved:
@@ -187,14 +175,14 @@ class Dict(object):
         return self
 
     def transform(self, examples, bos=True, eos=True):
-        bos = [self.index(self.bos_token)] if self.bos_token and bos else []
-        eos = [self.index(self.eos_token)] if self.eos_token and eos else []
+        assert self.fitted, "Attempt to index without fitted data"
+        bos = [self.get_bos() if self.bos_token and bos else []]
+        eos = [self.get_eos() if self.eos_token and eos else []]
         for example in examples:
             if self.sequential:
-                example = bos + [self.index(s) for s in example] + eos
+                yield bos + [self.index(s) for s in example] + eos
             else:
-                example = [self.index(s) for s in example]
-            yield example
+                yield [self.index(s) for s in example]
 
 
 class Dataset(Sequence, torch.utils.data.Dataset):
@@ -361,9 +349,10 @@ class BlockDataset(Dataset):
                  fitted=False, gpu=False, evaluation=False):
         if not fitted:
             examples = self._fit(examples, d)
+        if len(examples) // batch_size == 0:
+            raise ValueError("Not enough data [%d] for a batch size [%d]" %
+                             (len(examples), batch_size))
         self.data = block_batchify(examples, batch_size)
-        if len(examples) == 0:
-            raise ValueError("Empty dataset")
 
         self.d = d
         self.batch_size = batch_size
@@ -451,10 +440,24 @@ class BlockDataset(Dataset):
         datasets, splits = [], get_splits(n_element, test, dev=dev)
         for idx, (start, stop) in enumerate(zip(splits, splits[1:])):
             evaluation = self.evaluation if idx == 0 else True
-            split = self.split_data(start, stop)
             datasets.append(type(self)(
-                split, self.d, self.batch_size, self.bptt,
-                fitted=True, gpu=self.gpu, evaluation=evaluation))
+                self.split_data(start, stop), self.d, self.batch_size,
+                self.bptt, fitted=True, gpu=self.gpu, evaluation=evaluation))
+        return tuple(datasets)
+
+    @classmethod
+    def splits_from_data(cls, data, d, batch_size, bptt,
+                         gpu=False, test=0.1, dev=0.1, evaluation=False):
+        """
+        Shortcut classmethod for loading splits from a vector-serialized
+        corpus. It can be used to avoid creating the parent dataset before
+        creating the children splits if the data is already in vector form.
+        """
+        datasets, splits = [], get_splits(len(data), test, dev=dev)
+        for idx, (start, stop) in enumerate(zip(splits, splits[1:])):
+            evaluation = evaluation if idx == 0 else True
+            datasets.append(cls(data[start:stop], d, batch_size, bptt,
+                                fitted=True, gpu=gpu, evaluation=evaluation))
         return tuple(datasets)
 
 

@@ -103,7 +103,8 @@ class Decoder(object):
             score, prev = outs.max(1)
             hyps.append(prev.data.tolist())
             if self.eos is not None and not ignore_eos:
-                finished[(prev.squeeze().data == self.eos).numpy() == 1] = True
+                mask = (prev.squeeze().data == self.eos).cpu().numpy() == 1
+                finished[mask] = True
                 if all(finished == True):  # nopep8
                     break
                 # 0-mask scores for finished batch examples
@@ -119,10 +120,11 @@ class Decoder(object):
         for _ in range(max_seq_len):
             outs, hidden, _ = self.model(prev, hidden=hidden, **kwargs)
             prev = outs.div(temperature).exp_().multinomial().t()
-            scores += u.select_cols(outs.data, prev.squeeze().data)
+            scores += u.select_cols(outs.data.cpu(), prev.squeeze().data.cpu())
             hyps.append(prev.squeeze().data.tolist())
             if self.eos is not None and not ignore_eos:
-                finished[(prev.squeeze().data == self.eos).numpy() == 1] = True
+                mask = (prev.squeeze().data == self.eos).cpu().numpy() == 1
+                finished[mask] = True
                 if all(finished == True):  # nopep8
                     break
         return scores.tolist(), list(zip(*hyps))
