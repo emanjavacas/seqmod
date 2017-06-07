@@ -4,6 +4,8 @@ import functools
 import operator
 import logging
 
+import numpy as np
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -14,6 +16,25 @@ from seqmod.modules.custom import word_dropout, MaxOut
 from seqmod.misc.beam_search import Beam
 
 
+def read_batch(m, seed_texts):
+    hs, cs, prev = [], [], []
+    for seed_text in seed_texts:
+        inp = Variable(torch.LongTensor(seed_text), volatile=True)
+        outs, hidden, _ = m(inp)
+        if m.cell.startswith('LSTM'):
+            h, c = hidden
+            hs.append(h), cs.append(c)
+        else:
+            hs.append(hidden)
+        _, prev_data = outs[-1].max(0)
+        prev.append(prev_data)
+    prev, hs = torch.stack(prev, 1), torch.cat(hs, 1)
+    if m.cell.startswith('LSTM'):
+        return prev, (hs, torch.cat(cs, 1))
+    else:
+        return prev, hs
+
+
 class Decoder(object):
     def __init__(self, model, d, gpu=False):
         self.gpu = gpu
@@ -21,73 +42,85 @@ class Decoder(object):
         self.d = d
         self.bos, self.eos = self.d.get_bos(), self.d.get_eos()
 
-    def seed(self, seed_text=None, **kwargs):
+    def seed(self, seed_texts, batch_size):
         """
         Parameters
         -----------
-        seed_text: iterable or None, Seed text to initialize the generator.
-            It should be an iterable of strings over vocabulary tokens.
+        seed_texts: list (of list (of string)) or None,
+            Seed text to initialize the generator. It should be an
+            iterable of lists of strings over vocabulary tokens.
 
         Returns
         ---------
-        prev: (1 x 1), first integer token to feed into the generator
-        hidden: hidden state to seed the generator, may be None if no
-            seed text was passed to the generation function.
+        prev: (1 x batch_size), first integer token to feed into the generator
+        hidden: hidden state to seed the generator, may be None if no seed text
+            was passed to the generation function.
         """
         hidden = None
-        if seed_text is not None:
-            # prediction after last seed input
-            seed_text = [self.d.index(i) for i in seed_text]
-            if self.bos and seed_text[0] != self.bos:
-                seed_text = [self.bos] + seed_text
-            inp = Variable(torch.LongTensor(seed_text).unsqueeze(1))
+        if seed_texts is not None:
+            for idx in range(len(seed_texts)):
+                seed_text = [self.d.index(i) for i in seed_texts[idx]]
+                if self.bos and seed_text[0] != self.bos:
+                    seed_text = [self.bos] + seed_text
+                seed_texts[idx] = seed_text
+            prev, hidden = read_batch(self.model, seed_texts)
             if self.gpu:
-                inp = inp.cuda()
-            # outs (seq_len (* 1) x vocab)
-            outs, hidden, _ = self.model(inp, **kwargs)
-            # prev_data (1)
-            _, prev_data = outs.data[-1].max(0)
+                if self.model.cell.startswith('LSTM'):
+                    hidden = hidden[0].cuda(), hidden[1].cuda()
+                else:
+                    hidden = hidden.cuda()
         elif self.bos is not None:
             # initialize with <bos>
-            prev_data = torch.LongTensor([self.bos])
+            prev_data = torch.LongTensor([self.bos] * batch_size).unsqueeze(0)
+            prev = Variable(prev_data, volatile=True)
         else:
             # random uniform sample from vocab
-            prev_data = (torch.rand(1) * self.model.vocab).long()
-        prev = Variable(prev_data.unsqueeze(0), volatile=True)
+            prev_data = (torch.rand(batch_size) * self.model.vocab).long()
+            prev = Variable(prev_data, volatile=True)
         if self.gpu:
             prev = prev.cuda()
         return prev, hidden
 
-    def argmax(self, seed_text=None, max_seq_len=25, **kwargs):
-        prev, hidden = self.seed(seed_text)
-        hyp, scores = [], []
+    def argmax(self, seed_texts=None, max_seq_len=25, batch_size=10,
+               ignore_eos=False, **kwargs):
+        prev, hidden = self.seed(seed_texts, batch_size)
+        batch = prev.size(1)
+        hyps, scores, finished = [], 0, np.array([False] * batch)
         for _ in range(max_seq_len):
             outs, hidden, _ = self.model(prev, hidden=hidden, **kwargs)
             score, prev = outs.max(1)
-            hyp.append(prev.squeeze().data[0])
-            scores.append(score.squeeze().data[0])
-            if self.eos is not None and \
-               prev.data.eq(self.eos).nonzero().nelement() > 0:
-                break
-        return [math.exp(sum(scores))], [hyp]
+            hyps.append(prev.data.tolist())
+            scores += score.data
+            if self.eos is not None and not ignore_eos:
+                finished[(prev.squeeze().data == self.eos).numpy() == 1] = True
+                if all(finished == True):  # nopep8
+                    break
+        return scores.tolist(), list(zip(*hyps))
 
-    def sample(self, temperature=1, seed_text=None, max_seq_len=25, **kwargs):
-        prev, hidden = self.seed(seed_text)
-        hyp, scores = [], []
+    def sample(self, temperature=1, seed_texts=None, max_seq_len=25,
+               batch_size=10, ignore_eos=False, **kwargs):
+        prev, hidden = self.seed(seed_texts, batch_size)
+        batch = prev.size(1)
+        hyps, scores, finished = [], 0, np.array([False] * batch)
         for _ in range(max_seq_len):
             outs, hidden, _ = self.model(prev, hidden=hidden, **kwargs)
-            prev = outs.div(temperature).exp_().multinomial()
-            score = outs.squeeze()[prev.squeeze().data[0]]
-            hyp.append(prev.squeeze().data[0])
-            scores.append(score.squeeze().data[0])
-            if self.eos is not None and \
-               prev.data.eq(self.eos).nonzero().nelement() > 0:
-                break
-        return [functools.reduce(operator.mul, scores)], [hyp]
+            prev = outs.div(temperature).exp_().multinomial().t()
+            scores += u.select_cols(outs.data, prev.squeeze().data)
+            hyps.append(prev.squeeze().data.tolist())
+            if self.eos is not None and not ignore_eos:
+                finished[(prev.squeeze().data == self.eos).numpy() == 1] = True
+                if all(finished == True):  # nopep8
+                    break
+        return scores.tolist(), list(zip(*hyps))
 
-    def beam(self, width=5, seed_text=None, max_seq_len=25, **kwargs):
-        prev, hidden = self.seed(seed_text)
-        beam = Beam(width, prev.squeeze().data[0], eos=self.eos)
+    def beam(self, width=5, seed_texts=None, max_seq_len=25, batch_size=1,
+             ignore_eos=False, **kwargs):
+        if len(seed_text) > 1 or batch_size > 1:
+            raise ValueError(
+                "Currently beam search is limited to single item batches")
+        prev, hidden = self.seed(seed_texts, batch_size)
+        eos = self.eos if not ignore_eos else None
+        beam = Beam(width, prev.squeeze().data[0], eos=eos)
         while beam.active and len(beam) < max_seq_len:
             prev_data = beam.get_current_state().unsqueeze(0)
             prev = Variable(prev_data, volatile=True)
@@ -347,10 +380,26 @@ class LM(nn.Module):
         outs = F.log_softmax(self.project(outs))
         return outs, hidden, weights
 
-    def generate(self, d, seed_text=None, max_seq_len=25, gpu=False,
-                 method='sample', temperature=1, width=5, **kwargs):
+    def generate(self, d, seed_texts=None, max_seq_len=25, gpu=False,
+                 method='sample', temperature=1., width=5, ignore_eos=False,
+                 **kwargs):
         """
         Generate text using a specified method (argmax, sample, beam)
+
+        Parameters:
+        -----------
+        d: Dict used during training to fit the vocabulary
+        seed_texts: None or list of sentences to use as seed for the generator
+        max_seq_len: int, maximum number of symbols to be generated. The output
+            might actually be less than this number if the Dict was fitted with
+            a <eos> token (in which case generation will end after the first
+            generated <eos>)
+        gpu: bool, whether to generate on the gpu
+        methor: str, one of 'sample', 'argmax', 'beam' (check the corresponding
+            functions in Decoder for more info)
+        temperature: float, temperature for multinomial sampling (only applies
+            to method 'sample')
+        width: int, beam size width (only applies to the 'beam' method)
 
         Returns:
         --------
@@ -362,14 +411,16 @@ class LM(nn.Module):
         decoder = Decoder(self, d, gpu=gpu)
         if method == 'argmax':
             scores, hyps = decoder.argmax(
-                seed_text=seed_text, max_seq_len=max_seq_len)
+                seed_texts=seed_texts, max_seq_len=max_seq_len,
+                ignore_eos=ignore_eos, **kwargs)
         elif method == 'sample':
             scores, hyps = decoder.sample(
-                temperature=temperature, seed_text=seed_text,
-                max_seq_len=max_seq_len)
+                temperature=temperature, seed_texts=seed_texts,
+                max_seq_len=max_seq_len, ignore_eos=ignore_eos, **kwargs)
         elif method == 'beam':
             scores, hyps = decoder.beam(
-                width=width, seed_text=seed_text, max_seq_len=max_seq_len)
+                width=width, seed_texts=seed_texts, max_seq_len=max_seq_len,
+                ignore_eos=ignore_eos, **kwargs)
         else:
             raise ValueError("Wrong decoding method: %s" % method)
         return scores, hyps
