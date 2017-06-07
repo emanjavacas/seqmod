@@ -16,6 +16,18 @@ from seqmod.modules.custom import word_dropout, MaxOut
 from seqmod.misc.beam_search import Beam
 
 
+def strip_post_eos(sents, eos):
+    out = []
+    for sent in sents:
+        for idx, item in enumerate(sent):
+            if item == eos:
+                out.append(sent[:idx+1])
+                break
+        else:
+            out.append(sent)
+    return out
+
+
 def read_batch(m, seed_texts):
     hs, cs, prev = [], [], []
     for seed_text in seed_texts:
@@ -90,11 +102,13 @@ class Decoder(object):
             outs, hidden, _ = self.model(prev, hidden=hidden, **kwargs)
             score, prev = outs.max(1)
             hyps.append(prev.data.tolist())
-            scores += score.data
             if self.eos is not None and not ignore_eos:
                 finished[(prev.squeeze().data == self.eos).numpy() == 1] = True
                 if all(finished == True):  # nopep8
                     break
+                # 0-mask scores for finished batch examples
+                score.data[torch.ByteTensor(finished.tolist())] = 0
+            scores += score.data
         return scores.tolist(), list(zip(*hyps))
 
     def sample(self, temperature=1, seed_texts=None, max_seq_len=25,
@@ -382,7 +396,7 @@ class LM(nn.Module):
 
     def generate(self, d, seed_texts=None, max_seq_len=25, gpu=False,
                  method='sample', temperature=1., width=5, ignore_eos=False,
-                 **kwargs):
+                 batch_size=10, **kwargs):
         """
         Generate text using a specified method (argmax, sample, beam)
 
@@ -395,11 +409,14 @@ class LM(nn.Module):
             a <eos> token (in which case generation will end after the first
             generated <eos>)
         gpu: bool, whether to generate on the gpu
-        methor: str, one of 'sample', 'argmax', 'beam' (check the corresponding
+        method: str, one of 'sample', 'argmax', 'beam' (check the corresponding
             functions in Decoder for more info)
         temperature: float, temperature for multinomial sampling (only applies
             to method 'sample')
         width: int, beam size width (only applies to the 'beam' method)
+        ignore_eos: bool, whether to stop generation after hitting <eos> or not
+        batch_size: int, number of parallel generations (only used if
+            seed_texts is None)
 
         Returns:
         --------
@@ -423,7 +440,10 @@ class LM(nn.Module):
                 ignore_eos=ignore_eos, **kwargs)
         else:
             raise ValueError("Wrong decoding method: %s" % method)
-        return scores, hyps
+        if not ignore_eos and d.get_eos() is not None:
+            # strip content after <eos> for each batch
+            hyps = strip_post_eos(hyps, d.get_eos())
+        return [s/len(hyps[idx]) for idx, s in enumerate(scores)], hyps
 
     def predict_proba(self, inp, gpu=False, **kwargs):
         if self.training:
