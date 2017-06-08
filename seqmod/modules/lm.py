@@ -31,7 +31,7 @@ def strip_post_eos(sents, eos):
 def read_batch(m, seed_texts):
     hs, cs, prev = [], [], []
     for seed_text in seed_texts:
-        inp = Variable(torch.LongTensor(seed_text), volatile=True)
+        inp = Variable(torch.LongTensor(seed_text).unsqueeze(1), volatile=True)
         outs, hidden, _ = m(inp)
         if m.cell.startswith('LSTM'):
             h, c = hidden
@@ -72,7 +72,7 @@ class Decoder(object):
         if seed_texts is not None:
             for idx in range(len(seed_texts)):
                 seed_text = [self.d.index(i) for i in seed_texts[idx]]
-                if self.bos and seed_text[0] != self.bos:
+                if self.bos is not None and seed_text[0] != self.bos:
                     seed_text = [self.bos] + seed_text
                 seed_texts[idx] = seed_text
             prev, hidden = read_batch(self.model, seed_texts)
