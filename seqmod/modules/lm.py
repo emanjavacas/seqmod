@@ -28,23 +28,30 @@ def strip_post_eos(sents, eos):
     return out
 
 
-def read_batch(m, seed_texts):
-    hs, cs, prev = [], [], []
+def read_batch(m, seed_texts, method, temperature=1.):
+    assert method in ('sample', 'argmax'), 'method must be "sample" or "argmax"'
+    hs, cs, prev, scores = [], [], [], []
     for seed_text in seed_texts:
         inp = Variable(torch.LongTensor(seed_text).unsqueeze(1), volatile=True)
         outs, hidden, _ = m(inp)
+        outs = outs[-1]         # pick last step
         if m.cell.startswith('LSTM'):
             h, c = hidden
             hs.append(h), cs.append(c)
         else:
             hs.append(hidden)
-        _, prev_data = outs[-1].max(0)
-        prev.append(prev_data)
-    prev, hs = torch.stack(prev, 1), torch.cat(hs, 1)
+        if method == 'sample':
+            prev_t = outs.div(temperature).exp_().multinomial()
+            scores.append(outs[prev_t.data[0]].data)
+        else:
+            score, prev_t = outs.max(0)
+            scores.append(score.data)
+        prev.append(prev_t)
+    scores, prev = torch.cat(scores), torch.stack(prev, 1)
     if m.cell.startswith('LSTM'):
-        return prev, (hs, torch.cat(cs, 1))
+        return scores, prev, (torch.cat(hs, 1), torch.cat(cs, 1))
     else:
-        return prev, hs
+        return scores, prev, torch.cat(hs, 1)
 
 
 class Decoder(object):
@@ -54,13 +61,18 @@ class Decoder(object):
         self.d = d
         self.bos, self.eos = self.d.get_bos(), self.d.get_eos()
 
-    def seed(self, seed_texts, batch_size):
+    def _seed(self, seed_texts, batch_size, method, bos, **kwargs):
         """
         Parameters
         -----------
         seed_texts: list (of list (of string)) or None,
-            Seed text to initialize the generator. It should be an
-            iterable of lists of strings over vocabulary tokens.
+            Seed text to initialize the generator. It should be an iterable of
+            lists of strings over vocabulary tokens. If seed_texts is given and
+            is of length 1, the seed will be broadcasted to batch_size.
+        batch_size: int, number of items in the seed batch.
+        method: str, one of 'sample' or 'argmax' to use for sampling first item
+        bos: bool, whether to prefix the seed with the bos_token. Only used if
+            seed_texts is given.
 
         Returns
         ---------
@@ -68,14 +80,17 @@ class Decoder(object):
         hidden: hidden state to seed the generator, may be None if no seed text
             was passed to the generation function.
         """
-        hidden = None
+        hidden, scores = None, 0
         if seed_texts is not None:
+            if len(seed_texts) == 1:  # project over batch if only single seed
+                seed_texts = [seed_texts[0]] * batch_size
             for idx in range(len(seed_texts)):
-                seed_text = [self.d.index(i) for i in seed_texts[idx]]
-                if self.bos is not None and seed_text[0] != self.bos:
-                    seed_text = [self.bos] + seed_text
-                seed_texts[idx] = seed_text
-            prev, hidden = read_batch(self.model, seed_texts)
+                seed = [self.d.index(i) for i in seed_texts[idx]]
+                if bos and self.bos is not None:
+                    seed = [self.bos] + seed
+                seed_texts[idx] = seed
+            scores, prev, hidden = read_batch(
+                self.model, seed_texts, method, **kwargs)
             if self.gpu:
                 if self.model.cell.startswith('LSTM'):
                     hidden = hidden[0].cuda(), hidden[1].cuda()
@@ -91,13 +106,14 @@ class Decoder(object):
             prev = Variable(prev_data, volatile=True)
         if self.gpu:
             prev = prev.cuda()
-        return prev, hidden
+        return scores, prev, hidden
 
     def argmax(self, seed_texts=None, max_seq_len=25, batch_size=10,
-               ignore_eos=False, **kwargs):
-        prev, hidden = self.seed(seed_texts, batch_size)
+               ignore_eos=False, bos=False, **kwargs):
+        scores, prev, hidden = self._seed(seed_texts, batch_size, 'argmax', bos)
         batch = prev.size(1)
-        hyps, scores, finished = [], 0, np.array([False] * batch)
+        hyps = [prev.squeeze().data.tolist()]
+        finished = np.array([False] * batch)
         for _ in range(max_seq_len):
             outs, hidden, _ = self.model(prev, hidden=hidden, **kwargs)
             score, prev = outs.max(1)
@@ -112,29 +128,34 @@ class Decoder(object):
             scores += score.data
         return scores.tolist(), list(zip(*hyps))
 
-    def sample(self, temperature=1, seed_texts=None, max_seq_len=25,
-               batch_size=10, ignore_eos=False, **kwargs):
-        prev, hidden = self.seed(seed_texts, batch_size)
+    def sample(self, temperature=1., seed_texts=None, max_seq_len=25,
+               batch_size=10, bos=False, ignore_eos=False, **kwargs):
+        scores, prev, hidden = self._seed(
+            seed_texts, batch_size, 'sample', bos, temperature=temperature)
         batch = prev.size(1)
-        hyps, scores, finished = [], 0, np.array([False] * batch)
+        hyps = [prev.squeeze().data.tolist()]
+        finished = np.array([False] * batch)
         for _ in range(max_seq_len):
             outs, hidden, _ = self.model(prev, hidden=hidden, **kwargs)
             prev = outs.div(temperature).exp_().multinomial().t()
-            scores += u.select_cols(outs.data.cpu(), prev.squeeze().data.cpu())
+            score = u.select_cols(outs.data.cpu(), prev.squeeze().data.cpu())
             hyps.append(prev.squeeze().data.tolist())
             if self.eos is not None and not ignore_eos:
                 mask = (prev.squeeze().data == self.eos).cpu().numpy() == 1
                 finished[mask] = True
                 if all(finished == True):  # nopep8
                     break
+                # 0-mask scores for finished batch examples
+                score[torch.ByteTensor(finished.tolist())] = 0
+            scores += score
         return scores.tolist(), list(zip(*hyps))
 
     def beam(self, width=5, seed_texts=None, max_seq_len=25, batch_size=1,
-             ignore_eos=False, **kwargs):
+             ignore_eos=False, bos=False, **kwargs):
         if len(seed_text) > 1 or batch_size > 1:
             raise ValueError(
                 "Currently beam search is limited to single item batches")
-        prev, hidden = self.seed(seed_texts, batch_size)
+        prev, hidden = self._seed(seed_texts, batch_size, 'argmax', bos)
         eos = self.eos if not ignore_eos else None
         beam = Beam(width, prev.squeeze().data[0], eos=eos)
         while beam.active and len(beam) < max_seq_len:
@@ -397,8 +418,8 @@ class LM(nn.Module):
         return outs, hidden, weights
 
     def generate(self, d, seed_texts=None, max_seq_len=25, gpu=False,
-                 method='sample', temperature=1., width=5, ignore_eos=False,
-                 batch_size=10, **kwargs):
+                 method='sample', temperature=1., width=5, bos=False,
+                 ignore_eos=False, batch_size=10, **kwargs):
         """
         Generate text using a specified method (argmax, sample, beam)
 
@@ -431,15 +452,17 @@ class LM(nn.Module):
         if method == 'argmax':
             scores, hyps = decoder.argmax(
                 seed_texts=seed_texts, max_seq_len=max_seq_len,
-                ignore_eos=ignore_eos, **kwargs)
+                batch_size=batch_size, ignore_eos=ignore_eos, bos=bos,
+                **kwargs)
         elif method == 'sample':
             scores, hyps = decoder.sample(
                 temperature=temperature, seed_texts=seed_texts,
-                max_seq_len=max_seq_len, ignore_eos=ignore_eos, **kwargs)
+                batch_size=batch_size, max_seq_len=max_seq_len,
+                ignore_eos=ignore_eos, bos=bos, **kwargs)
         elif method == 'beam':
             scores, hyps = decoder.beam(
                 width=width, seed_texts=seed_texts, max_seq_len=max_seq_len,
-                ignore_eos=ignore_eos, **kwargs)
+                ignore_eos=ignore_eos, bos=bos, **kwargs)
         else:
             raise ValueError("Wrong decoding method: %s" % method)
         if not ignore_eos and d.get_eos() is not None:
