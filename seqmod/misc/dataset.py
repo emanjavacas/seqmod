@@ -152,7 +152,8 @@ class Dict(object):
 
     def index(self, s):
         if s not in self.s2i and self.unk_token not in self.s2i:
-            raise ValueError("OOV with no unk code")
+            raise ValueError("OOV [%s, type: %s] with no unk code" %
+                             (str(s), str(type(s))))
         return self.s2i.get(s, self.get_unk())
 
     def partial_fit(self, *datasets):
