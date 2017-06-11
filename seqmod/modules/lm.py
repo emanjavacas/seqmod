@@ -84,11 +84,11 @@ class Decoder(object):
         if seed_texts is not None:
             if len(seed_texts) == 1:  # project over batch if only single seed
                 seed_texts = [seed_texts[0]] * batch_size
-            for idx in range(len(seed_texts)):
-                seed = [self.d.index(i) for i in seed_texts[idx]]
-                if bos and self.bos is not None:
-                    seed = [self.bos] + seed
-                seed_texts[idx] = seed
+            if bos and self.bos is not None:
+                seed_texts = [[self.bos] + [self.d.index(i) for i in s]
+                              for s in seed_texts]
+            else:
+                seed_texts = [[self.d.index(i) for i in s] for s in seed_texts]
             scores, prev, hidden = read_batch(
                 self.model, seed_texts, method, **kwargs)
             if self.gpu:
