@@ -349,12 +349,8 @@ class BlockDataset(Dataset):
     def __init__(self, examples, d, batch_size, bptt,
                  fitted=False, gpu=False, evaluation=False):
         if not fitted:
-            examples = self._fit(examples, d)
-        if len(examples) // batch_size == 0:
-            raise ValueError("Not enough data [%d] for a batch size [%d]" %
-                             (len(examples), batch_size))
+            examples = self._fit(examples, d, batch_size)
         self.data = block_batchify(examples, batch_size)
-
         self.d = d
         self.batch_size = batch_size
         self.bptt = bptt
@@ -362,7 +358,9 @@ class BlockDataset(Dataset):
         self.gpu = gpu
         self.evaluation = evaluation
 
-    def _fit(self, examples, d):
+    def _fit(self, examples, d, batch_size):
+        too_short = ValueError(
+            "Not enough data for a batch size [%d]" % batch_size)
         if isinstance(examples, tuple) or isinstance(d, tuple):
             assert isinstance(d, tuple) and isinstance(examples, tuple), \
                 "multiple input needs multiple Dicts"
@@ -371,10 +369,14 @@ class BlockDataset(Dataset):
             assert all(len(examples[i]) == len(examples[i+1])
                        for i in range(len(examples)-2)), \
                 "all input examples must be equal size"
+            if len(examples[0]) // batch_size == 0:
+                raise too_short
             return tuple(
                 [item for seq in subd.transform(subex) for item in seq]
                 for (subex, subd) in zip(examples, d))
         else:
+            if len(examples) // batch_size == 0:
+                raise too_short
             return [item for seq in d.transform(examples) for item in seq]
 
     def _getitem(self, data, idx):
