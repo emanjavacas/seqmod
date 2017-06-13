@@ -188,7 +188,9 @@ class Attention(nn.Module):
         --------
         torch.Tensor: (seq_len x batch_size x att_dim)
         """
-        return torch.stack([self.emb2att(i) for i in emb])
+        seq_len, batch_size, _ = emb.size()
+        return self.emb2att(emb.view(seq_len * batch_size, -1)) \
+                   .view(seq_len, batch_size, self.att_dim)
 
     def forward(self, hid, emb, emb_att=None):
         """
@@ -374,6 +376,13 @@ class LM(nn.Module):
     def freeze_submodule(self, module, flag=False):
         for p in getattr(self, module).parameters():
             p.requires_grad = flag
+
+    def set_dropout(self, dropout):
+        for m in self.children():
+            if hasattr(m, 'dropout'):
+                m.dropout = dropout
+            if hasattr(m, 'has_dropout'):
+                m.has_dropout = bool(dropout)
 
     def init_hidden_for(self, inp):
         batch = inp.size(1)

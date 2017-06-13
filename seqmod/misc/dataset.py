@@ -1,4 +1,5 @@
 
+import logging
 import random
 from collections import Counter, Sequence
 from functools import singledispatch
@@ -8,15 +9,15 @@ import torch.utils.data
 from torch.autograd import Variable
 
 
-def shuffled(data):
-    data = list(data)
-    random.shuffle(data)
-    return data
-
-
 def shuffle_pairs(pair1, pair2):
-    pair1, pair2 = zip(*shuffled(zip(pair1, pair2)))
-    return list(pair1), list(pair2)
+    for i in reversed(range(1, len(pair1))):
+        j = int(random.random() * (i + 1))
+        pair1[i], pair1[j] = pair1[j], pair1[i]
+        pair2[i], pair2[j] = pair2[j], pair2[i]
+
+
+def argsort(seq, reverse=False):
+    return sorted(range(len(seq)), reverse=reverse, key=seq.__getitem__)
 
 
 def cumsum(seq):
@@ -230,9 +231,11 @@ class PairedDataset(Dataset):
                 of the parallel version passed to src
             trg_dict: same as src_dict but for the target data
         """
+        self.autoregressive = False
         self.data, self.d = {}, d
         self.data['src'] = src if fitted else self._fit(src, d['src'])
         if trg is None:         # autoregressive dataset
+            self.autoregressive = True
             self.data['trg'] = self.data['src']
             self.d['trg'] = self.d['src']
         else:
@@ -286,18 +289,29 @@ class PairedDataset(Dataset):
     def set_gpu(self, new_gpu):
         self.gpu = new_gpu
 
-    def sort_(self, sort_key=default_sort_key):
+    def sort_(self, sort_by='src', reverse=True):
         """
         Sort dataset examples according to sequence length. By default source
-        sequences are used for sorting (see sort_key function).
+        sequences are used for sorting (see sort_by function).
+
+        Parameters:
+        -----------
+        sort_by: one of ('src', 'trg'), Sort instances according to the length
+            of the source or the target dataset.
         """
-        sort = sorted(zip(self.data['src'], self.data['trg']), key=sort_key)
-        src, trg = zip(*sort)
-        self.data['src'] = src
-        self.data['trg'] = trg
+        assert sort_by in ('src', 'trg')
+        indices = None
+        if self.autoregressive:
+            if sort_by == 'trg':
+                logging.warn("Omitting sort_by in autoregressive dataset")
+            self.data['src'].sort(reverse=reverse)
+        else:
+            index = argsort(list(map(len, self.data[sort_by])), reverse=reverse)
+            self.data['src'] = [self.data['src'][idx] for idx in index]
+            self.data['trg'] = [self.data['trg'][idx] for idx in index]
         return self
 
-    def splits(self, test=0.1, dev=0.2, shuffle=False, sort_key=None):
+    def splits(self, test=0.1, dev=0.2, shuffle=False, sort_by=None):
         """
         Compute splits on dataset instance. For convenience, it can return
         BatchIterator objects instead of Dataset via method chaining.
@@ -309,20 +323,26 @@ class PairedDataset(Dataset):
         - shuffle: bool, whether to shuffle the datasets prior to splitting
         """
         if shuffle:
-            src, trg = shuffle_pairs(self.data['src'], self.data['trg'])
-        else:
-            src, trg = self.data['src'], self.data['trg']
-        splits = get_splits(len(src), test, dev=dev)
+            if self.autoregressive:
+                random.shuffle(self.data['src'])
+            else:
+                shuffle_pairs(self.data['src'], self.data['trg'])
+        splits = get_splits(len(self.data['src']), test, dev=dev)
         datasets = []
         for idx, (start, stop) in enumerate(zip(splits, splits[1:])):
             evaluation = self.evaluation if idx == 0 else True
-            subset = PairedDataset(
-                src[start:stop], trg[start:stop], self.d, self.batch_size,
-                fitted=True, gpu=self.gpu, evaluation=evaluation,
-                align_right=self.align_right)
-            if sort_key:
-                sort_key = sort_key if callable(sort_key) else default_sort_key
-                subset = subset.sort_(sort_key=sort_key)
+            if self.autoregressive:
+                subset = PairedDataset(
+                    self.data['src'][start:stop], None,
+                    self.d, self.batch_size, fitted=True, gpu=self.gpu,
+                    evaluation=evaluation, align_right=self.align_right)
+            else:
+                subset = PairedDataset(
+                    self.data['src'][start:stop], self.data['trg'][start:stop],
+                    self.d, self.batch_size, fitted=True, gpu=self.gpu,
+                    evaluation=evaluation, align_right=self.align_right)
+            if sort_by:
+                subset.sort_(sort_by=sort_by)
             datasets.append(subset)
         return tuple(datasets)
 
