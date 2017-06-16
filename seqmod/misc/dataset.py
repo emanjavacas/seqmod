@@ -437,6 +437,9 @@ class BlockDataset(Dataset):
         else:
             return self._getitem(self.data, idx)
 
+    def set_gpu(self, new_gpu):
+        self.gpu = new_gpu
+
     def split_data(self, start, stop):
         """
         Compute a split on the dataset for a batch range defined by start, stop

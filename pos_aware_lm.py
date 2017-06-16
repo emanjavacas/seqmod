@@ -124,33 +124,35 @@ class DoubleRNNPOSAwareLM(POSAwareLM):
         return (torch.stack(p_outs), torch.stack(w_outs)), (p_hid, w_hid)
 
     def generate(self, p_dict, w_dict, seed=None, max_seq_len=20,
-                 temperature=1., batch_size=1, gpu=False, ignore_eos=False):
+                 temperature=1., batch_size=5, gpu=False, ignore_eos=False):
         def sample(out):
             prev = out.div(temperature).exp_().multinomial().t()
             score = u.select_cols(out.data.cpu(), prev.squeeze().data.cpu())
             return prev, score
 
+        def init_prev(bos):
+            out = Variable(torch.LongTensor([bos] * batch_size), volatile=True)
+            if gpu:
+                out = out.cuda()
+            return out
+
         p_hyp, w_hyp, p_hid, w_hid = [], [], None, None
         p_scores, w_scores = 0, 0
         w_eos = word_dict.get_eos()
         finished = np.array([False] * batch_size)
-        p_prev = torch.LongTensor([pos_dict.get_bos()] * batch_size)
-        w_prev = torch.LongTensor([word_dict.get_bos()] * batch_size)
-        p_prev = Variable(p_prev, volatile=True)
-        w_prev = Variable(w_prev, volatile=True)
-        if gpu:
-            p_prev, w_prev = p_prev.cuda(), w_prev.cuda()
+        p_prev = init_prev(pos_dict.get_bos())
+        w_prev = init_prev(word_dict.get_bos())
         for _ in range(max_seq_len):
             # pos
             p_emb, w_emb = self.pos_emb(p_prev), self.word_emb(w_prev)
             w_hid = w_hid or self.init_hidden_for(w_emb, 'word')
             p_hid = p_hid or self.init_hidden_for(p_emb, 'pos')
             p_out, p_hid = self.pos_rnn(
-                torch.cat((p_emb, self.get_last_hid(w_hid)), 1),
+                torch.cat((p_emb.squeeze(0), self.get_last_hid(w_hid)), 1),
                 p_hid)
             # word
             w_out, w_hid = self.word_rnn(
-                torch.cat((w_emb, self.get_last_hid(p_hid)), 1),
+                torch.cat((w_emb.squeeze(0), self.get_last_hid(p_hid)), 1),
                 w_hid)
             (p_prev, p_score), (w_prev, w_score) = sample(p_out), sample(w_out)
             # hyps
@@ -158,7 +160,8 @@ class DoubleRNNPOSAwareLM(POSAwareLM):
             finished[mask] = True
             if all(finished == True):  # nopep8
                 break
-            p_hyp.append(p_prev.data[0]), w_hyp.append(w_prev.data[0])
+            p_hyp.append(p_prev.squeeze().data.tolist())
+            w_hyp.append(w_prev.squeeze().data.tolist())
             # scores
             p_score[torch.ByteTensor(finished.tolist())] = 0
             w_score[torch.ByteTensor(finished.tolist())] = 0
@@ -219,7 +222,7 @@ def make_pos_word_criterion(gpu=False):
 def make_generate_hook(pos_dict, word_dict):
     def hook(trainer, epoch, batch, checkpoints):
         p_hyp, w_hyp, p_score, w_score = \
-            trainer.model.generate(pos_dict, word_dict)
+            trainer.model.generate(pos_dict, word_dict, gpu=args.gpu)
         p_str, w_str = "", ""
         for p, w in zip(p_hyp, w_hyp):
             p = pos_dict.vocab[p]
@@ -243,12 +246,13 @@ if __name__ == '__main__':
     # model
     parser.add_argument('--pos_emb_dim', default=24, type=int)
     parser.add_argument('--word_emb_dim', default=64, type=int)
-    parser.add_argument('--pos_hid_dim', default=100, type=int)
+    parser.add_argument('--pos_hid_dim', default=200, type=int)
     parser.add_argument('--word_hid_dim', default=200, type=int)
     parser.add_argument('--pos_num_layers', default=1, type=int)
     parser.add_argument('--word_num_layers', default=1, type=int)
     # train
     parser.add_argument('--batch_size', default=100, type=int)
+    parser.add_argument('--bptt', default=50, type=int)
     parser.add_argument('--epochs', default=10, type=int)
     parser.add_argument('--num_checkpoints', default=10, type=int)
     parser.add_argument('--gpu', action='store_true')
@@ -265,7 +269,7 @@ if __name__ == '__main__':
             eos_token=u.EOS, bos_token=u.BOS, force_unk=False)
         word_dict.fit(words), pos_dict.fit(pos)
         dataset = BlockDataset(
-            (pos, words), (pos_dict, word_dict), args.batch_size, 20)
+            (pos, words), (pos_dict, word_dict), args.batch_size, args.bptt)
         if args.save_dataset and not os.path.isfile(args.dataset_path):
             dataset.to_disk(args.dataset_path)
     train, valid = dataset.splits(test=None)
@@ -277,6 +281,8 @@ if __name__ == '__main__':
         (args.pos_emb_dim, args.word_emb_dim),
         (args.pos_hid_dim, args.word_hid_dim),
         num_layers=(args.pos_num_layers, args.word_num_layers), dropout=0.3)
+
+    m.apply(u.make_initializer())
 
     if args.gpu:
         m.cuda(), train.set_gpu(args.gpu), valid.set_gpu(args.gpu)
