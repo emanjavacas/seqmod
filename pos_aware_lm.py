@@ -140,20 +140,22 @@ class DoubleRNNPOSAwareLM(POSAwareLM):
         p_scores, w_scores = 0, 0
         w_eos = word_dict.get_eos()
         finished = np.array([False] * batch_size)
-        p_prev = init_prev(pos_dict.get_bos())
-        w_prev = init_prev(word_dict.get_bos())
+        p_prev = init_prev(pos_dict.get_bos()).unsqueeze(0)
+        w_prev = init_prev(word_dict.get_bos()).unsqueeze(0)
         for _ in range(max_seq_len):
             # pos
             p_emb, w_emb = self.pos_emb(p_prev), self.word_emb(w_prev)
-            w_hid = w_hid or self.init_hidden_for(w_emb, 'word')
-            p_hid = p_hid or self.init_hidden_for(p_emb, 'pos')
+            w_hid = w_hid or self.init_hidden_for(w_emb[0], 'word')
+            p_hid = p_hid or self.init_hidden_for(p_emb[0], 'pos')
             p_out, p_hid = self.pos_rnn(
                 torch.cat((p_emb.squeeze(0), self.get_last_hid(w_hid)), 1),
                 p_hid)
+            p_out = self.pos_project(p_out)
             # word
             w_out, w_hid = self.word_rnn(
                 torch.cat((w_emb.squeeze(0), self.get_last_hid(p_hid)), 1),
                 w_hid)
+            w_out = self.word_project(w_out)
             (p_prev, p_score), (w_prev, w_score) = sample(p_out), sample(w_out)
             # hyps
             mask = (w_prev.squeeze().data == w_eos).cpu().numpy() == 1
@@ -193,11 +195,11 @@ class POSAwareLMTrainer(Trainer):
         (src_pos, src_word), (trg_pos, trg_word) = batch_data
         seq_len, batch_size = src_pos.size()
         hidden = self.batch_state.get('hidden')
-        (p_out, w_out), hidden = self.model(src_pos, src_word, hidden)
+        (p_out, w_out), hidden = self.model(src_pos, src_word, hidden=hidden)
         self.batch_state['hidden'] = repackage_hidden(hidden)
         p_loss, w_loss = self.criterion(
-            p_out.view(seq_len * batch_size, -1), src_pos.view(-1),
-            w_out.view(seq_len * batch_size, -1), src_word.view(-1))
+            p_out.view(seq_len * batch_size, -1), trg_pos.view(-1),
+            w_out.view(seq_len * batch_size, -1), trg_word.view(-1))
         if dataset == 'train':
             (p_loss + w_loss).backward()
             self.optimizer_step()
@@ -219,19 +221,25 @@ def make_pos_word_criterion(gpu=False):
     return criterion
 
 
+def hyp_to_str(p_hyp, w_hyp, pos_dict, word_dict):
+    p_str, w_str = "", ""
+    for p, w in zip(p_hyp, w_hyp):
+        p = pos_dict.vocab[p]
+        w = word_dict.vocab[w]
+        ljust = max(len(p), len(w)) + 2
+        p_str += p.ljust(ljust, ' ')
+        w_str += w.ljust(ljust, ' ')
+    return p_str, w_str
+
+
 def make_generate_hook(pos_dict, word_dict):
     def hook(trainer, epoch, batch, checkpoints):
-        p_hyp, w_hyp, p_score, w_score = \
+        (p_hyps, w_hyps), (p_scores, w_scores) = \
             trainer.model.generate(pos_dict, word_dict, gpu=args.gpu)
-        p_str, w_str = "", ""
-        for p, w in zip(p_hyp, w_hyp):
-            p = pos_dict.vocab[p]
-            w = word_dict.vocab[w]
-            ljust = max(len(p), len(w)) + 2
-            p_str += p.ljust(ljust, ' ')
-            w_str += w.ljust(ljust, ' ')
+        for p, w, p_score, w_score in zip(p_hyps, w_hyps, p_scores, w_scores):
+            p_str, w_str = hyp_to_str(p, w, pos_dict, word_dict)
         trainer.log("info", "Score [%g, %g]: \n%s\n%s" %
-                    (p_score, w_score, w_str, p_str))
+                    (p_score, w_score, p_str, w_str))
     return hook
 
 
@@ -254,12 +262,16 @@ if __name__ == '__main__':
     parser.add_argument('--batch_size', default=100, type=int)
     parser.add_argument('--bptt', default=50, type=int)
     parser.add_argument('--epochs', default=10, type=int)
-    parser.add_argument('--num_checkpoints', default=10, type=int)
+    parser.add_argument('--optim', default='Adam')
+    parser.add_argument('--lr', default=0.001, type=float)
+    parser.add_argument('--hooks_per_epoch', default=1, type=int)
+    parser.add_argument('--checkpoints', default=20, type=int)
     parser.add_argument('--gpu', action='store_true')
     args = parser.parse_args()
 
     if args.load_dataset:
         dataset = BlockDataset.from_disk(args.dataset_path)
+        dataset.set_batch_size(args.batch_size), dataset.set_gpu(args.gpu)
     else:
         words, pos = zip(*load_penn3(args.path, swbd=False))
         word_dict = Dict(
@@ -288,10 +300,10 @@ if __name__ == '__main__':
         m.cuda(), train.set_gpu(args.gpu), valid.set_gpu(args.gpu)
 
     crit = make_pos_word_criterion(gpu=args.gpu)
-    optim = Optimizer(m.parameters(), 'Adam', lr=0.001)
+    optim = Optimizer(m.parameters(), args.optim, lr=args.lr)
     trainer = POSAwareLMTrainer(
         m, {'train': train, 'valid': valid}, crit, optim)
     trainer.add_loggers(StdLogger())
-    trainer.add_hook(
-        make_generate_hook(pos_dict, word_dict), num_checkpoints=5)
-    trainer.train(args.epochs, args.num_checkpoints)
+    num_checkpoints = len(train) // (args.checkpoints * args.hooks_per_epoch)
+    trainer.add_hook(make_generate_hook(pos_dict, word_dict), num_checkpoints)
+    trainer.train(args.epochs, args.checkpoints)
