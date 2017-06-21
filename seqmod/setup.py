@@ -16,7 +16,5 @@ setup(
     url='https://www.github.com/emanjavacas/seqmod/',
     download_url='https://api.github.com/repos/emanjavacas/seqmod/tarball',
     install_requires=['numpy>=1.10.4',
-                      'torch>=0.1.10+ac9245a',
-                      'graphviz>=0.5.2',
-                      'visdom>=0.1.2'],
+                      'torch>=0.1.10+ac9245a'],
     license='MIT')

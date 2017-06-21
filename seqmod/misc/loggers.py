@@ -1,7 +1,24 @@
 
 import logging
-import numpy as np
-from visdom import Visdom
+try:
+    from visdom import Visdom
+    import numpy as np
+except ImportError:
+    print("Couldn't import visdom. VisdomLogger is disabled")
+    Visdom = None
+
+
+def skip_on_import_error(flag, verbose=True):
+    msg = 'Omitting call to [%s.%s]'
+
+    def decorator(func):
+        def func_wrapper(self, *args, **kwargs):
+            if flag:
+                return func(self, *args, **kwargs)
+            if verbose:
+                print(msg % (type(self).__name__, func.__name__))
+        return func_wrapper
+    return decorator
 
 
 class Logger(object):
@@ -95,17 +112,20 @@ class VisdomLogger(Logger):
                  port=8097,
                  max_y=None,
                  **opts):
-        self.viz = Visdom(server=server, port=port, env=env)
+        self.viz = None
+        if Visdom is not None:
+            self.viz = Visdom(server=server, port=port, env=env)
         self.legend = ['%s.%s' % (p, l) for p in phases for l in losses]
         opts.update({'legend': self.legend})
         self.opts = opts
         self.env = env
         self.max_y = max_y
-        self.pane = self._init_pane()
-        self.losses = set(losses)
         self.log_checkpoints = log_checkpoints
+        self.losses = set(losses)
         self.last = {p: {l: None for l in losses} for p in phases}
+        self.pane = self._init_pane()
 
+    @skip_on_import_error(Visdom)
     def _init_pane(self):
         nan = np.array([np.NAN, np.NAN])
         X = np.column_stack([nan] * len(self.legend))
@@ -116,7 +136,7 @@ class VisdomLogger(Logger):
     def _update_last(self, epoch, loss, phase, loss_label):
         self.last[phase][loss_label] = {'X': epoch, 'Y': loss}
 
-    def _line(self, X, Y, phase, loss_label):
+    def _plot_line(self, X, Y, phase, loss_label):
         name = "%s.%s" % (phase, loss_label)
         X = np.array([self.last[phase][loss_label]['X'], X])
         Y = np.array([self.last[phase][loss_label]['Y'], Y])
@@ -130,9 +150,10 @@ class VisdomLogger(Logger):
             if label not in self.losses:
                 continue
             if self.last[phase][label] is not None:
-                self._line(epoch, loss, phase=phase, loss_label=label)
+                self._plot_line(epoch, loss, phase=phase, loss_label=label)
             self._update_last(epoch, loss, phase, label)
 
+    @skip_on_import_error(Visdom)
     def epoch_end(self, payload):
         if self.log_checkpoints:
             # only use epoch end if checkpoint isn't being used
@@ -140,15 +161,18 @@ class VisdomLogger(Logger):
         losses, epoch = payload['loss'], payload['epoch'] + 1
         self._plot_payload(epoch, losses, 'train')
 
+    @skip_on_import_error(Visdom)
     def validation_end(self, payload):
         losses, epoch = payload['loss'], payload['epoch'] + 1
         self._plot_payload(epoch, losses, 'valid')
 
+    @skip_on_import_error(Visdom)
     def checkpoint(self, payload):
         epoch = payload['epoch'] + payload["batch"] / payload["total_batches"]
         losses = payload['loss']
         self._plot_payload(epoch, losses, 'train')
 
+    @skip_on_import_error(Visdom)
     def attention(self, payload):
         title = "epoch {epoch}/ batch {batch_num}".format(**payload)
         if 'title' in self.opts:
