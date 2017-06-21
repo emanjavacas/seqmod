@@ -1,12 +1,16 @@
 
-from graphviz import Digraph
+try:
+    from graphviz import Digraph
+except ImportError:
+    print("Couldn't import graphviz. Plotting disabled")
+    Digraph = None
 import torch
 from torch.autograd import Variable
 
 from seqmod.misc.dataset import Dict
 
 
-def make_dot(var):
+def _make_dot(var):
     node_attr = dict(style='filled',
                      shape='box',
                      align='left',
@@ -30,6 +34,13 @@ def make_dot(var):
                     add_nodes(u[0])
     add_nodes(var.creator)
     return dot
+
+
+def make_dot(var):
+    if Digraph is None:
+        return
+    else:
+        return _make_dot(var)
 
 
 def viz_encoder_decoder(**kwargs):
