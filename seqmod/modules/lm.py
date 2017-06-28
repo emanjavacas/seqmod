@@ -115,7 +115,7 @@ class Decoder(object):
     def argmax(self, seed_texts=None, max_seq_len=25, batch_size=10,
                ignore_eos=False, bos=False, eos=False, **kwargs):
         scores, prev, hidden = self._seed(
-            seed_texts, batch_size, 'argmax', bos)
+            seed_texts, batch_size, 'argmax', bos, eos)
         batch = prev.size(1)
         hyps = [prev.squeeze().data.tolist()]
         finished = np.array([False] * batch)
@@ -137,7 +137,8 @@ class Decoder(object):
                batch_size=10, ignore_eos=False, bos=False, eos=False,
                **kwargs):
         scores, prev, hidden = self._seed(
-            seed_texts, batch_size, 'sample', bos, temperature=temperature)
+            seed_texts, batch_size, 'sample', bos, eos,
+            temperature=temperature)
         batch = prev.size(1)
         hyps = [prev.squeeze().data.tolist()]
         finished = np.array([False] * batch)
@@ -161,7 +162,7 @@ class Decoder(object):
         if len(seed_text) > 1 or batch_size > 1:
             raise ValueError(
                 "Currently beam search is limited to single item batches")
-        prev, hidden = self._seed(seed_texts, batch_size, 'argmax', bos)
+        prev, hidden = self._seed(seed_texts, batch_size, 'argmax', bos, eos)
         eos = self.eos if not ignore_eos else None
         beam = Beam(width, prev.squeeze().data[0], eos=eos)
         while beam.active and len(beam) < max_seq_len:
