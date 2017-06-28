@@ -64,7 +64,7 @@ class Decoder(object):
         self.d = d
         self.bos, self.eos = self.d.get_bos(), self.d.get_eos()
 
-    def _seed(self, seed_texts, batch_size, method, bos, **kwargs):
+    def _seed(self, seed_texts, batch_size, method, bos, eos, **kwargs):
         """
         Parameters
         -----------
@@ -76,6 +76,8 @@ class Decoder(object):
         method: str, one of 'sample' or 'argmax' to use for sampling first item
         bos: bool, whether to prefix the seed with the bos_token. Only used if
             seed_texts is given and the dictionary has a bos_token.
+        eos: bool, whether to suffix the seed with the eos_token. Only used if
+            seed_texts is given and the dictionary has a eos_token.
 
         Returns
         ---------
@@ -87,11 +89,11 @@ class Decoder(object):
         if seed_texts is not None:
             if len(seed_texts) == 1:  # project over batch if only single seed
                 seed_texts = [seed_texts[0]] * batch_size
+            seed_texts = [[self.d.index(i) for i in s] for s in seed_texts]
             if bos and self.bos is not None:  # prepend bos to seeds
-                seed_texts = [[self.bos] + [self.d.index(i) for i in s]
-                              for s in seed_texts]
-            else:
-                seed_texts = [[self.d.index(i) for i in s] for s in seed_texts]
+                seed_texts = [[self.bos] + s for s in seed_texts]
+            if eos and self.eos is not None:
+                seed_texts = [s + [self.eos] for s in seed_texts]
             scores, prev, hidden = read_batch(
                 self.model, seed_texts, method, gpu=self.gpu, **kwargs)
             if self.gpu:
@@ -112,7 +114,7 @@ class Decoder(object):
         return scores, prev, hidden
 
     def argmax(self, seed_texts=None, max_seq_len=25, batch_size=10,
-               ignore_eos=False, bos=False, **kwargs):
+               ignore_eos=False, bos=False, eos=False, **kwargs):
         scores, prev, hidden = self._seed(
             seed_texts, batch_size, 'argmax', bos)
         batch = prev.size(1)
@@ -133,7 +135,8 @@ class Decoder(object):
         return scores.tolist(), list(zip(*hyps))
 
     def sample(self, temperature=1., seed_texts=None, max_seq_len=25,
-               batch_size=10, bos=False, ignore_eos=False, **kwargs):
+               batch_size=10, ignore_eos=False, bos=False, eos=False,
+               **kwargs):
         scores, prev, hidden = self._seed(
             seed_texts, batch_size, 'sample', bos, temperature=temperature)
         batch = prev.size(1)
@@ -155,7 +158,7 @@ class Decoder(object):
         return scores.tolist(), list(zip(*hyps))
 
     def beam(self, width=5, seed_texts=None, max_seq_len=25, batch_size=1,
-             ignore_eos=False, bos=False, **kwargs):
+             ignore_eos=False, bos=False, eos=False, **kwargs):
         if len(seed_text) > 1 or batch_size > 1:
             raise ValueError(
                 "Currently beam search is limited to single item batches")
@@ -432,7 +435,7 @@ class LM(nn.Module):
 
     def generate(self, d, seed_texts=None, max_seq_len=25, gpu=False,
                  method='sample', temperature=1., width=5, bos=False,
-                 ignore_eos=False, batch_size=10, **kwargs):
+                 eos=False, ignore_eos=False, batch_size=10, **kwargs):
         """
         Generate text using a specified method (argmax, sample, beam)
 
@@ -465,17 +468,17 @@ class LM(nn.Module):
         if method == 'argmax':
             scores, hyps = decoder.argmax(
                 seed_texts=seed_texts, max_seq_len=max_seq_len,
-                batch_size=batch_size, ignore_eos=ignore_eos, bos=bos,
+                batch_size=batch_size, ignore_eos=ignore_eos, bos=bos, eos=eos,
                 **kwargs)
         elif method == 'sample':
             scores, hyps = decoder.sample(
                 temperature=temperature, seed_texts=seed_texts,
                 batch_size=batch_size, max_seq_len=max_seq_len,
-                ignore_eos=ignore_eos, bos=bos, **kwargs)
+                ignore_eos=ignore_eos, bos=bos, eos=eos, **kwargs)
         elif method == 'beam':
             scores, hyps = decoder.beam(
                 width=width, seed_texts=seed_texts, max_seq_len=max_seq_len,
-                ignore_eos=ignore_eos, bos=bos, **kwargs)
+                ignore_eos=ignore_eos, bos=bos, eos=eos, **kwargs)
         else:
             raise ValueError("Wrong decoding method: %s" % method)
         if not ignore_eos and d.get_eos() is not None:
