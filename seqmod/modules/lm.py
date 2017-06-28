@@ -28,9 +28,10 @@ def strip_post_eos(sents, eos):
     return out
 
 
-def read_batch(m, seed_texts, method, temperature=1.):
-    assert method in ('sample', 'argmax'), 'method must be "sample" or "argmax"'
+def read_batch(m, seed_texts, method, temperature=1., gpu=False):
+    assert method in ('sample', 'argmax'), 'method must be sample or argmax'
     hs, cs, prev, scores = [], [], [], []
+    m.cpu()
     for seed_text in seed_texts:
         inp = Variable(torch.LongTensor(seed_text).unsqueeze(1), volatile=True)
         outs, hidden, _ = m(inp)
@@ -43,11 +44,13 @@ def read_batch(m, seed_texts, method, temperature=1.):
         if method == 'sample':
             prev_t = outs.div(temperature).exp_().multinomial()
             scores.append(outs[prev_t.data[0]].data)
-        else:
+        else:                   # argmax over single step
             score, prev_t = outs.max(0)
             scores.append(score.data)
         prev.append(prev_t)
     scores, prev = torch.cat(scores), torch.stack(prev, 1)
+    if gpu:
+        m.cuda()
     if m.cell.startswith('LSTM'):
         return scores, prev, (torch.cat(hs, 1), torch.cat(cs, 1))
     else:
@@ -72,7 +75,7 @@ class Decoder(object):
         batch_size: int, number of items in the seed batch.
         method: str, one of 'sample' or 'argmax' to use for sampling first item
         bos: bool, whether to prefix the seed with the bos_token. Only used if
-            seed_texts is given.
+            seed_texts is given and the dictionary has a bos_token.
 
         Returns
         ---------
@@ -84,13 +87,13 @@ class Decoder(object):
         if seed_texts is not None:
             if len(seed_texts) == 1:  # project over batch if only single seed
                 seed_texts = [seed_texts[0]] * batch_size
-            if bos and self.bos is not None:
+            if bos and self.bos is not None:  # prepend bos to seeds
                 seed_texts = [[self.bos] + [self.d.index(i) for i in s]
                               for s in seed_texts]
             else:
                 seed_texts = [[self.d.index(i) for i in s] for s in seed_texts]
             scores, prev, hidden = read_batch(
-                self.model, seed_texts, method, **kwargs)
+                self.model, seed_texts, method, gpu=self.gpu, **kwargs)
             if self.gpu:
                 if self.model.cell.startswith('LSTM'):
                     hidden = hidden[0].cuda(), hidden[1].cuda()
@@ -110,7 +113,8 @@ class Decoder(object):
 
     def argmax(self, seed_texts=None, max_seq_len=25, batch_size=10,
                ignore_eos=False, bos=False, **kwargs):
-        scores, prev, hidden = self._seed(seed_texts, batch_size, 'argmax', bos)
+        scores, prev, hidden = self._seed(
+            seed_texts, batch_size, 'argmax', bos)
         batch = prev.size(1)
         hyps = [prev.squeeze().data.tolist()]
         finished = np.array([False] * batch)
