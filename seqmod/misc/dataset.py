@@ -101,6 +101,16 @@ def block_batchify(vector, batch_size):
     return _block_batchify(vector, batch_size)
 
 
+def _debatchify(t):
+    return t.t().contiguous().view(-1)
+
+
+def debatchify(block_batchified):
+    if isinstance(block_batchified, tuple):
+        return tuple(_debatchify(b) for b in block_batchified)
+    return _debatchify(block_batchified)
+
+
 class Dict(object):
     """
     Dict class to vectorize discrete data.
@@ -283,6 +293,8 @@ class PairedDataset(Dataset):
         return src, trg
 
     def set_batch_size(self, new_batch_size):
+        if self.batch_size == new_batch_size:
+            return
         self.batch_size = new_batch_size
         self.num_batches = len(self.data['src']) // new_batch_size
 
@@ -439,6 +451,12 @@ class BlockDataset(Dataset):
 
     def set_gpu(self, new_gpu):
         self.gpu = new_gpu
+
+    def set_batch_size(self, new_batch_size):
+        if self.batch_size == new_batch_size:
+            return
+        self.batch_size = new_batch_size
+        self.data = block_batchify(debatchify(self.data), new_batch_size)
 
     def split_data(self, start, stop):
         """
