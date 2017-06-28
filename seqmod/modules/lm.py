@@ -31,9 +31,10 @@ def strip_post_eos(sents, eos):
 def read_batch(m, seed_texts, method, temperature=1., gpu=False):
     assert method in ('sample', 'argmax'), 'method must be sample or argmax'
     hs, cs, prev, scores = [], [], [], []
-    m.cpu()
     for seed_text in seed_texts:
         inp = Variable(torch.LongTensor(seed_text).unsqueeze(1), volatile=True)
+        if gpu:
+            inp = inp.cuda()
         outs, hidden, _ = m(inp)
         outs = outs[-1]         # pick last step
         if m.cell.startswith('LSTM'):
@@ -43,14 +44,12 @@ def read_batch(m, seed_texts, method, temperature=1., gpu=False):
             hs.append(hidden)
         if method == 'sample':
             prev_t = outs.div(temperature).exp_().multinomial()
-            scores.append(outs[prev_t.data[0]].data)
+            scores.append(outs[prev_t.data[0]].cpu().data)
         else:                   # argmax over single step
             score, prev_t = outs.max(0)
-            scores.append(score.data)
+            scores.append(score.cpu().data)
         prev.append(prev_t)
     scores, prev = torch.cat(scores), torch.stack(prev, 1)
-    if gpu:
-        m.cuda()
     if m.cell.startswith('LSTM'):
         return scores, prev, (torch.cat(hs, 1), torch.cat(cs, 1))
     else:
