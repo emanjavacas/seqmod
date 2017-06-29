@@ -80,14 +80,14 @@ class Decoder(object):
 
         Returns
         ---------
+        scores: (batch_size), torch Tensor holding the scores for the first
+            sampled item.
         prev: (1 x batch_size), first integer token to feed into the generator
         hidden: hidden state to seed the generator, may be None if no seed text
             was passed to the generation function.
         """
         hidden, scores = None, 0
         if seed_texts is not None:
-            if len(seed_texts) == 1:  # project over batch if only single seed
-                seed_texts = [seed_texts[0]] * batch_size
             seed_texts = [[self.d.index(i) for i in s] for s in seed_texts]
             if bos and self.bos is not None:  # prepend bos to seeds
                 seed_texts = [[self.bos] + s for s in seed_texts]
@@ -100,6 +100,16 @@ class Decoder(object):
                     hidden = hidden[0].cuda(), hidden[1].cuda()
                 else:
                     hidden = hidden.cuda()
+        if len(seed_texts) == 1:  # project over batch if only single seed
+            scores = scores.expand(batch_size)
+            prev = prev.expand(1, batch_size)
+            if self.model.cell.startswith('LSTM'):
+                layers, _, hid_dim = hidden[0].size()
+                hidden = (hidden[0].expand(layers, batch_size, hid_dim),
+                          hidden[1].expand(layers, batch_size, hid_dim))
+            else:
+                layers, _, hid_dim = hidden.size()
+                hidden = hidden.expand(layers, batch_size, hid_dim)
         elif self.bos is not None:
             # initialize with <bos>
             prev_data = torch.LongTensor([self.bos] * batch_size).unsqueeze(0)
