@@ -101,15 +101,13 @@ class Decoder(object):
                 else:
                     hidden = hidden.cuda()
             if len(seed_texts) == 1:  # project over batch if only single seed
-                scores = scores.expand(batch_size)
-                prev = prev.expand(1, batch_size)
+                scores = scores.repeat(batch_size)
+                prev = prev.repeat(1, batch_size)
                 if self.model.cell.startswith('LSTM'):
-                    layers, _, hid_dim = hidden[0].size()
-                    hidden = (hidden[0].expand(layers, batch_size, hid_dim),
-                              hidden[1].expand(layers, batch_size, hid_dim))
+                    hidden = (hidden[0].repeat(1, batch_size, 1),
+                              hidden[1].repeat(1, batch_size, 1))
                 else:
-                    layers, _, hid_dim = hidden.size()
-                    hidden = hidden.expand(layers, batch_size, hid_dim)
+                    hidden = hidden.repeat(1, batch_size, 1)
         elif self.bos is not None:
             # initialize with <bos>
             prev_data = torch.LongTensor([self.bos] * batch_size).unsqueeze(0)
