@@ -95,11 +95,6 @@ class Decoder(object):
                 seed_texts = [s + [self.eos] for s in seed_texts]
             scores, prev, hidden = read_batch(
                 self.model, seed_texts, method, gpu=self.gpu, **kwargs)
-            if self.gpu:
-                if self.model.cell.startswith('LSTM'):
-                    hidden = hidden[0].cuda(), hidden[1].cuda()
-                else:
-                    hidden = hidden.cuda()
             if len(seed_texts) == 1:  # project over batch if only single seed
                 scores = scores.repeat(batch_size)
                 prev = prev.repeat(1, batch_size)
