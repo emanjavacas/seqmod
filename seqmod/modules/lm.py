@@ -28,14 +28,15 @@ def strip_post_eos(sents, eos):
     return out
 
 
-def read_batch(m, seed_texts, method, temperature=1., gpu=False):
-    assert method in ('sample', 'argmax'), 'method must be sample or argmax'
+def read_batch(m, seed_texts, method, temperature=1., gpu=False, **kwargs):
+    if method not in ('sample', 'argmax'):
+        raise ValueError('method must be sample or argmax')
     hs, cs, prev, scores = [], [], [], []
     for seed_text in seed_texts:
         inp = Variable(torch.LongTensor(seed_text).unsqueeze(1), volatile=True)
         if gpu:
             inp = inp.cuda()
-        outs, hidden, _ = m(inp)
+        outs, hidden, _ = m(inp, **kwargs)
         outs = outs[-1]         # pick last step
         if m.cell.startswith('LSTM'):
             h, c = hidden
@@ -305,6 +306,14 @@ class LM(nn.Module):
     - cell: str, one of GRU, LSTM, RNN.
     - bias: bool, whether to include bias in the RNN.
     - dropout: float, amount of dropout to apply in between layers.
+    - conditions: list of condition-maps for a conditional language model
+        in the following form:
+            [{'name': str, 'varnum': int, 'emb_size': int}, ...]
+        where 'name' is a screen-name for the conditions, 'varnum' is the
+        cardinality of the conditional variable and 'emb_size' is the
+        embedding size for that condition.
+        Note that the conditions should be specified in the same order as
+        they are passed into the model at run-time.
     - tie_weights: bool, whether to tie input and output embedding layers.
         In case of unequal emb_dim and hid_dim values a linear project layer
         will be inserted after the RNN to match back to the embedding dim
@@ -319,7 +328,7 @@ class LM(nn.Module):
                  cell='GRU', bias=True, dropout=0.0, word_dropout=0.0,
                  target_code=None, reserved_codes=(),
                  att_dim=None, tie_weights=False,
-                 deepout_layers=0, deepout_act='MaxOut'):
+                 deepout_layers=0, deepout_act='MaxOut', conds=None):
         self.vocab = vocab
         self.emb_dim = emb_dim
         self.hid_dim = hid_dim
@@ -335,6 +344,7 @@ class LM(nn.Module):
         self.bias = bias
         self.has_dropout = bool(dropout)
         self.dropout = dropout
+        self.conds = conds
         super(LM, self).__init__()
 
         # word dropout
@@ -343,15 +353,25 @@ class LM(nn.Module):
         self.reserved_codes = reserved_codes
         # input embeddings
         self.embeddings = nn.Embedding(vocab, self.emb_dim)
+        rnn_input_size = self.emb_dim
+        if self.conds is not None:
+            conds = []
+            for c in self.conds:
+                conds.append(nn.Embedding(c['varnum'], c['emb_size']))
+                rnn_input_size += c['emb_size']
+            self.conds = nn.ModuleList(conds)
         # rnn
         self.rnn = getattr(nn, cell)(
-            self.emb_dim, self.hid_dim,
+            rnn_input_size, self.hid_dim,
             num_layers=num_layers, bias=bias, dropout=dropout)
         # attention
         if self.add_attn:
-            assert self.cell == 'RNN' or self.cell == 'GRU', \
-                "currently only RNN, GRU supports attention"
-            assert att_dim is not None, "Need to specify att_dim"
+            if self.conditions is not None:
+                raise ValueError("Attention is not supported with conditions")
+            if self.cell not in ('RNN', 'GRU'):
+                raise ValueError("currently only RNN, GRU supports attention")
+            if att_dim is None:
+                raise ValueError("Need to specify att_dim")
             self.att_dim = att_dim
             self.attn = AttentionalProjection(
                 self.att_dim, self.hid_dim, self.emb_dim)
@@ -404,7 +424,7 @@ class LM(nn.Module):
         else:
             return h_0
 
-    def forward(self, inp, hidden=None, schedule=None, **kwargs):
+    def forward(self, inp, hidden=None, conds=None, **kwargs):
         """
         Parameters:
         -----------
@@ -417,10 +437,16 @@ class LM(nn.Module):
         weights: None or list of weights (batch_size x seq_len),
             It will only be not None if attention is provided.
         """
+        if self.conditions is not None and conditions is None:
+            raise ValueError("Conditional model expects conditions as input")
         inp = word_dropout(
             inp, self.target_code, p=self.word_dropout,
             reserved_codes=self.reserved_codes, training=self.training)
         emb = self.embeddings(inp)
+        if conditions is not None:
+            emb = torch.cat(
+                [c_emb(c) for c_emb, c in zip(conds, self.conds)],
+                2)
         if self.has_dropout:
             emb = F.dropout(emb, p=self.dropout, training=self.training)
         outs, hidden = self.rnn(emb, hidden or self.init_hidden_for(emb))
