@@ -366,7 +366,7 @@ class LM(nn.Module):
             num_layers=num_layers, bias=bias, dropout=dropout)
         # attention
         if self.add_attn:
-            if self.conditions is not None:
+            if self.conds is not None:
                 raise ValueError("Attention is not supported with conditions")
             if self.cell not in ('RNN', 'GRU'):
                 raise ValueError("currently only RNN, GRU supports attention")
@@ -437,13 +437,13 @@ class LM(nn.Module):
         weights: None or list of weights (batch_size x seq_len),
             It will only be not None if attention is provided.
         """
-        if self.conditions is not None and conditions is None:
+        if self.conds is not None and conds is None:
             raise ValueError("Conditional model expects conditions as input")
         inp = word_dropout(
             inp, self.target_code, p=self.word_dropout,
             reserved_codes=self.reserved_codes, training=self.training)
         emb = self.embeddings(inp)
-        if conditions is not None:
+        if conds is not None:
             emb = torch.cat(
                 [c_emb(c) for c_emb, c in zip(conds, self.conds)],
                 2)
