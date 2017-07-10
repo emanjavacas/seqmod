@@ -20,12 +20,13 @@ from seqmod.misc.loggers import StdLogger
 
 class POSAwareLM(nn.Module):
     def __init__(self, vocab, emb_dim, hid_dim, num_layers,
-                 dropout=0.0, cell='LSTM', tie_weights=False):
+                 dropout=0.0, cell='LSTM'):
         self.pos_vocab, self.word_vocab = vocab
         self.pos_emb_dim, self.word_emb_dim = emb_dim
         self.hid_dim = hid_dim
         self.num_layers = num_layers
         self.cell = cell
+        self.dropout = dropout
         super(POSAwareLM, self).__init__()
 
         # embeddings
@@ -57,7 +58,7 @@ class POSAwareLM(nn.Module):
 
 
 class DoubleRNNPOSAwareLM(POSAwareLM):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, tie_word=True, tie_pos=False, **kwargs):
         super(DoubleRNNPOSAwareLM, self).__init__(*args, **kwargs)
         if not isinstance(self.hid_dim, tuple):
             raise ValueError("two hid_dim params needed for double network")
@@ -71,21 +72,38 @@ class DoubleRNNPOSAwareLM(POSAwareLM):
             self.pos_num_layers,
             self.pos_emb_dim + self.word_hid_dim,
             self.pos_hid_dim,
-            cell=self.cell)
-        self.pos_project = nn.Sequential(
-            nn.Linear(self.pos_hid_dim, self.pos_vocab),
-            nn.LogSoftmax())
+            cell=self.cell,
+            dropout=self.dropout)
+        if tie_pos:
+            pos_project = nn.Linear(self.pos_emb_dim, self.pos_vocab)
+            pos_project.weight = self.pos_emb.weight
+            self.pos_project = nn.Sequential(
+                nn.Linear(self.pos_hid_dim, self.pos_emb_dim),
+                pos_project,
+                nn.LogSoftmax())
+        else:
+            self.pos_project = nn.Sequential(
+                nn.Linear(self.pos_hid_dim, self.pos_vocab),
+                nn.LogSoftmax())
 
         # word network
         self.word_rnn = StackedRNN(
             self.word_num_layers,
-            # TODO: add rnn output instead of argmax embedding
             self.word_emb_dim + self.pos_hid_dim,
             self.word_hid_dim,
-            cell=self.cell)
-        self.word_project = nn.Sequential(
-            nn.Linear(self.word_hid_dim, self.word_vocab),
-            nn.LogSoftmax())
+            cell=self.cell,
+            dropout=self.dropout)
+        if tie_word:
+            word_project = nn.Linear(self.word_emb_dim, self.word_vocab)
+            word_project.weight = self.word_emb.weight
+            self.word_project = nn.Sequential(
+                nn.Linear(self.word_hid_dim, self.word_emb_dim),
+                word_project,
+                nn.LogSoftmax())
+        else:
+            self.word_project = nn.Sequential(
+                nn.Linear(self.word_hid_dim, self.word_vocab),
+                nn.LogSoftmax())
 
     def init_hidden_for(self, inp, source_type):
         batch = inp.size(0)
@@ -259,6 +277,7 @@ if __name__ == '__main__':
     parser.add_argument('--pos_num_layers', default=1, type=int)
     parser.add_argument('--word_num_layers', default=1, type=int)
     # train
+    parser.add_argument('--dropout', default=0.3, type=float)
     parser.add_argument('--batch_size', default=100, type=int)
     parser.add_argument('--bptt', default=50, type=int)
     parser.add_argument('--epochs', default=10, type=int)
@@ -292,8 +311,10 @@ if __name__ == '__main__':
         (len(pos_dict.vocab), len(word_dict.vocab)),  # vocabs
         (args.pos_emb_dim, args.word_emb_dim),
         (args.pos_hid_dim, args.word_hid_dim),
-        num_layers=(args.pos_num_layers, args.word_num_layers), dropout=0.3)
+        num_layers=(args.pos_num_layers, args.word_num_layers),
+        dropout=args.dropout)
 
+    print(m)
     m.apply(u.make_initializer())
 
     if args.gpu:

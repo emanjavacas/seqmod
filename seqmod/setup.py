@@ -5,7 +5,7 @@ from setuptools import setup
 
 setup(
     name='seqmod',
-    version='0.1',
+    version='0.2',
     package_dir={'seqmod.modules': 'modules',
                  'seqmod.misc': 'misc',
                  'seqmod': './'},
