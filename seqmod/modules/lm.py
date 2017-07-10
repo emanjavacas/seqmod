@@ -308,9 +308,9 @@ class LM(nn.Module):
     - dropout: float, amount of dropout to apply in between layers.
     - conditions: list of condition-maps for a conditional language model
         in the following form:
-            [{'name': str, 'varnum': int, 'emb_size': int}, ...]
+            [{'name': str, 'varnum': int, 'emb_dim': int}, ...]
         where 'name' is a screen-name for the conditions, 'varnum' is the
-        cardinality of the conditional variable and 'emb_size' is the
+        cardinality of the conditional variable and 'emb_dim' is the
         embedding size for that condition.
         Note that the conditions should be specified in the same order as
         they are passed into the model at run-time.
@@ -357,8 +357,8 @@ class LM(nn.Module):
         if self.conds is not None:
             conds = []
             for c in self.conds:
-                conds.append(nn.Embedding(c['varnum'], c['emb_size']))
-                rnn_input_size += c['emb_size']
+                conds.append(nn.Embedding(c['varnum'], c['emb_dim']))
+                rnn_input_size += c['emb_dim']
             self.conds = nn.ModuleList(conds)
         # rnn
         self.rnn = getattr(nn, cell)(
@@ -444,9 +444,10 @@ class LM(nn.Module):
             reserved_codes=self.reserved_codes, training=self.training)
         emb = self.embeddings(inp)
         if conds is not None:
-            emb = torch.cat(
-                [c_emb(c) for c_emb, c in zip(conds, self.conds)],
+            conds = torch.cat(
+                [c_emb(inp_c) for c_emb, inp_c in zip(self.conds, conds)],
                 2)
+            emb = torch.cat([emb, conds], 2)
         if self.has_dropout:
             emb = F.dropout(emb, p=self.dropout, training=self.training)
         outs, hidden = self.rnn(emb, hidden or self.init_hidden_for(emb))

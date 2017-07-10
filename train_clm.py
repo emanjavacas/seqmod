@@ -29,7 +29,7 @@ from seqmod.misc.early_stopping import EarlyStopping
 
 class CLMTrainer(LMTrainer):
     def run_batch(self, batch_data, dataset='train', **kwargs):
-        (src, conds), (trg, _) = self.datasets[dataset]
+        (src, *conds), (trg, *_) = batch_data
         hidden = self.batch_state.get('hidden', None)
         output, hidden, _ = self.model(src, hidden=hidden, conds=conds)
         self.batch_state['hidden'] = repackage_hidden(hidden)
@@ -43,7 +43,7 @@ class CLMTrainer(LMTrainer):
             self.batch_state['hidden'].zero_()
 
     def num_batch_examples(self, batch_data):
-        (src, _), _ = batch_data
+        (src, *_), _ = batch_data
         return src.nelement()
 
 
@@ -79,9 +79,10 @@ def load_lines(rootfiles, metapath,
     for idx, f in enumerate(rootfiles):
         if idx % 50 == 0:
             print("Processed [%d] files" % idx)
-        if os.path.splitext(f)[0] in metadata:
+        filename = os.path.basename(f)
+        if os.path.splitext(filename)[0] in metadata:
             conds = []
-            row = metadata[os.path.splitext(f)[0]]
+            row = metadata[os.path.splitext(filename)[0]]
             if include_author:
                 author = row['author:lastname']
                 if (not authors) or author in authors:
@@ -89,7 +90,7 @@ def load_lines(rootfiles, metapath,
                 if include_fields:
                     for c in categories:
                         conds.append(row[c])
-            with open(os.path.join(f), 'r') as lines:
+            with open(f, 'r') as lines:
                 for l in lines:
                     l = l.strip()
                     if l:
@@ -174,6 +175,8 @@ if __name__ == '__main__':
     parser.add_argument('--batch_size', default=20, type=int)
     parser.add_argument('--bptt', default=20, type=int)
     parser.add_argument('--gpu', action='store_true')
+    parser.add_argument('--test_split', type=float, default=0.1)
+    parser.add_argument('--dev_split', type=float, default=0.05)
     # - optimizer
     parser.add_argument('--optim', default='Adam', type=str)
     parser.add_argument('--learning_rate', default=0.01, type=float)
@@ -196,31 +199,35 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     print("Processing datasets...")
-    d = [Dict(max_size=args.max_size, min_freq=args.min_freq,
-              eos_token=u.EOS, bos_token=u.BOS)]
-    lines = load_lines(args.path, args.metapath)
+    filenames = [os.path.join(args.path, f) for f in os.listdir(args.path)]
+    lines = load_lines(filenames, args.metapath)
     nconds = len(next(lines)[1])
+    lang_d = Dict(max_size=args.max_size, min_freq=args.min_freq,
+                  eos_token=u.EOS, bos_token=u.BOS)
+    conds_d = []
     for _ in range(nconds):
-        d.append(Dict(sequential=False, force_unk=False))
+        conds_d.append(Dict(sequential=False, force_unk=False))
+
+    d = [lang_d] + conds_d
 
     print("Fitting dicts...")
     fit_dicts(lines, d)
 
-    print(' * vocabulary size. %d' % len(d[0].vocab))
-    for idx, subd in enumerate(d[1:]):
-        print(' * condition [%d] with cardinality %d' % (idx, len(subd.vocab)))
+    print(' * vocabulary size. %d' % len(lang_d))
+    for idx, subd in enumerate(conds_d):
+        print(' * condition [%d] with cardinality %d' % (idx, len(subd)))
 
-    conds = [{'varnum': len(d.vocab), 'emb_dim': args.cond_emb_dim}
-             for d in conds_d]
+    conds = [{'varnum': len(cond_d.vocab), 'emb_dim': args.cond_emb_dim}
+             for cond_d in conds_d]
 
     print('Building model...')
-    model = LM(len(d), args.emb_dim, args.hid_dim,
+    model = LM(len(lang_d), args.emb_dim, args.hid_dim,
                num_layers=args.layers, cell=args.cell,
                dropout=args.dropout, tie_weights=args.tie_weights,
                deepout_layers=args.deepout_layers,
                deepout_act=args.deepout_act,
                word_dropout=args.word_dropout,
-               target_code=d.get_unk(), conds=conds)
+               target_code=lang_d.get_unk(), conds=conds)
     model.apply(u.make_initializer())
 
     if args.gpu:
@@ -236,23 +243,20 @@ if __name__ == '__main__':
     early_stopping = None
     if args.early_stopping > 0:
         early_stopping = EarlyStopping(args.early_stopping)
-    model_check_hook = make_lm_check_hook(
-        d, method=args.decoding_method, temperature=args.temperature,
-        max_seq_len=args.max_seq_len, seed_text=args.seed, gpu=args.gpu,
-        early_stopping=early_stopping)
 
     # loggers
     visdom_logger = VisdomLogger(
         log_checkpoints=args.log_checkpoints, title=args.prefix, env='lm',
         server='http://' + args.visdom_server)
+    std_logger = StdLogger()
 
-    files = len(os.path.listdir(args.path))
-    for epoch in range(args.epoch):
-        for batch_num, batch in idx(chunk(files, args.filebatch)):
-            path = '/tmp/.seqmod_{path}_{batch}.pt'.format(
+    files = len(os.listdir(args.path))
+    for epoch in range(args.epochs):
+        for batch_num, batch in enumerate(chunk(filenames, args.filebatch)):
+            path = '/tmp/.seqmod_{filename}_{batch}.pt'.format(
+                filename=os.path.basename(args.path), batch=batch_num)
             if epoch == 0:
-                examples = examples_from_files(batch, arg.metapath, d)
-                    path=os.basename(args.path), batch=batch_num)
+                examples = examples_from_files(batch, args.metapath, d)
                 u.save_model(examples, path)
             else:
                 examples = u.load_model(path)
@@ -260,9 +264,10 @@ if __name__ == '__main__':
                 examples, d, args.batch_size, args.bptt, gpu=args.gpu, 
                 test=args.test_split, dev=args.dev_split)
 
-            trainer = CLMTrainer()
+            trainer = CLMTrainer(
+                model, {'train': train, 'valid': valid, 'test': test},
+                criterion, optim)
             num_checkpoints = \
                 len(train) // (args.checkpoint * args.hooks_per_epoch)
-            trainer.add_hook(model_check_hook, num_checkpoints=num_checkpoints)
-            trainer.add_loggers(StdLogger(), visdom_logger)
+            trainer.add_loggers(std_logger, visdom_logger)
             trainer.train(1, args.checkpoint, gpu=args.gpu)
