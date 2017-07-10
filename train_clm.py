@@ -14,17 +14,37 @@ except:
 import torch.nn as nn
 
 import numpy as np
-from itertools import chain
+from itertools import chain, islice
 
 from seqmod.modules.lm import LM
 from seqmod import utils as u
 
-#from seqmod.misc.trainer import CLMTrainer
+from seqmod.misc.trainer import LMTrainer, repackage_hidden
 from seqmod.misc.loggers import StdLogger, VisdomLogger
 from seqmod.misc.optimizer import Optimizer
 from seqmod.misc.dataset import Dict, BlockDataset
 from seqmod.misc.preprocess import text_processor
 from seqmod.misc.early_stopping import EarlyStopping
+
+
+class CLMTrainer(LMTrainer):
+    def run_batch(self, batch_data, dataset='train', **kwargs):
+        (src, conds), (trg, _) = self.datasets[dataset]
+        hidden = self.batch_state.get('hidden', None)
+        output, hidden, _ = self.model(src, hidden=hidden, conds=conds)
+        self.batch_state['hidden'] = repackage_hidden(hidden)
+        loss = self.criterion(output, trg.view(-1))
+        if dataset == 'train':
+            loss.backward(), self.optimizer_step()
+        return (loss.data[0], )
+
+    def on_batch_end(self, batch, loss):
+        if hasattr(self, 'reset_hidden'):
+            self.batch_state['hidden'].zero_()
+
+    def num_batch_examples(self, batch_data):
+        (src, _), _ = batch_data
+        return src.nelement()
 
 
 def read_meta(path):
@@ -47,7 +67,7 @@ def read_meta(path):
     return metadata
 
 
-def load_lines(rootdir, metapath,
+def load_lines(rootfiles, metapath,
                input_format='txt',
                include_length=True,
                length_bins=[50, 100, 150, 300],
@@ -56,7 +76,7 @@ def load_lines(rootdir, metapath,
                include_fields=True,
                categories=('fictie',)):
     metadata = read_meta(metapath)
-    for idx, f in enumerate(os.listdir(rootdir)):
+    for idx, f in enumerate(rootfiles):
         if idx % 50 == 0:
             print("Processed [%d] files" % idx)
         if os.path.splitext(f)[0] in metadata:
@@ -69,7 +89,7 @@ def load_lines(rootdir, metapath,
                 if include_fields:
                     for c in categories:
                         conds.append(row[c])
-            with open(os.path.join(rootdir, f), 'r') as lines:
+            with open(os.path.join(f), 'r') as lines:
                 for l in lines:
                     l = l.strip()
                     if l:
@@ -87,20 +107,19 @@ def load_lines(rootdir, metapath,
             print("Couldn't find [%s]" % f)
 
 
-def fit_dicts(lines, lang_d, conds_d):
-    ls, cs = zip(*lines())
-    lang_d.fit(ls)
-    for d, c in zip(conds_d, zip(*cs)):
-        d.fit([c])
-
-
 def flatten(l):
     return list(chain.from_iterable(l))
 
 
-def expand_conditions(lines, lang_d, conds_d):
+def chunk(it, size):
+    it = iter(it)
+    return iter(lambda: tuple(islice(it, size)), ())
+
+
+def expand_conditions(lines, d):
+    lang_d, *conds_d = d
+    ls, cs = zip(*lines)
     # transform lines
-    ls, cs = zip(*lines())
     ls = list(lang_d.transform(ls))
     # transform conditions
     conds = zip(*cs)
@@ -112,6 +131,19 @@ def expand_conditions(lines, lang_d, conds_d):
     return tuple([ls] + [flatten(c) for c in conds])
 
 
+def examples_from_files(rootfiles, metapath, d, **kwargs):
+    lines = load_lines(rootfiles, metapath, **kwargs)
+    return expand_conditions(lines, d)
+
+
+def fit_dicts(lines, d):
+    lang_d, *conds_d = d
+    ls, cs = zip(*lines)
+    lang_d.fit(ls)
+    for d, c in zip(conds_d, zip(*cs)):
+        d.fit([c])
+
+
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
@@ -119,6 +151,7 @@ if __name__ == '__main__':
     parser.add_argument('--layers', default=2, type=int)
     parser.add_argument('--cell', default='LSTM')
     parser.add_argument('--emb_dim', default=200, type=int)
+    parser.add_argument('--cond_emb_dim', default=50)
     parser.add_argument('--hid_dim', default=200, type=int)
     parser.add_argument('--dropout', default=0.3, type=float)
     parser.add_argument('--word_dropout', default=0.0, type=float)
@@ -127,6 +160,7 @@ if __name__ == '__main__':
     parser.add_argument('--deepout_act', default='MaxOut')
     # dataset
     parser.add_argument('--metapath', required=True)
+    parser.add_argument('--filebatch', type=int, default=500)
     parser.add_argument('--path', required=True)
     parser.add_argument('--processed', action='store_true')
     parser.add_argument('--dict_path', type=str)
@@ -161,22 +195,74 @@ if __name__ == '__main__':
     parser.add_argument('--prefix', default='model', type=str)
     args = parser.parse_args()
 
-    if args.processed:
-        print("Loading preprocessed datasets...")
-        raise NotImplementedError
-    else:
-        print("Processing datasets...")
-        lang_d = Dict(max_size=args.max_size, min_freq=args.min_freq,
-                      eos_token=u.EOS, bos_token=u.BOS)
-        generator = lambda: load_lines(args.path, args.metapath)
-        nconds = len(next(generator())[1])
-        conds_d = [Dict(sequential=False, force_unk=False)
-                   for _ in range(nconds)]
-        print("Fitting dicts...")
-        fit_dicts(generator, lang_d, conds_d)
-        print("Transforming data...")
-        examples = expand_conditions(generator, lang_d, conds_d)
-        dataset = BlockDataset(
-            tuple(examples), tuple([lang_d] + conds_d),
-            args.batch_size, args.bptt, fitted=True, gpu=args.gpu)
-        dataset.to_disk('dataset')
+    print("Processing datasets...")
+    d = [Dict(max_size=args.max_size, min_freq=args.min_freq,
+              eos_token=u.EOS, bos_token=u.BOS)]
+    lines = load_lines(args.path, args.metapath)
+    nconds = len(next(lines)[1])
+    for _ in range(nconds):
+        d.append(Dict(sequential=False, force_unk=False))
+
+    print("Fitting dicts...")
+    fit_dicts(lines, d)
+
+    print(' * vocabulary size. %d' % len(d[0].vocab))
+    for idx, subd in enumerate(d[1:]):
+        print(' * condition [%d] with cardinality %d' % (idx, len(subd.vocab)))
+
+    conds = [{'varnum': len(d.vocab), 'emb_dim': args.cond_emb_dim}
+             for d in conds_d]
+
+    print('Building model...')
+    model = LM(len(d), args.emb_dim, args.hid_dim,
+               num_layers=args.layers, cell=args.cell,
+               dropout=args.dropout, tie_weights=args.tie_weights,
+               deepout_layers=args.deepout_layers,
+               deepout_act=args.deepout_act,
+               word_dropout=args.word_dropout,
+               target_code=d.get_unk(), conds=conds)
+    model.apply(u.make_initializer())
+
+    if args.gpu:
+        model.cuda()
+
+    optim = Optimizer(
+        model.parameters(), args.optim, args.learning_rate, args.max_grad_norm,
+        lr_decay=args.learning_rate_decay, start_decay_at=args.start_decay_at,
+        decay_every=args.decay_every)
+    criterion = nn.CrossEntropyLoss()
+
+    # hooks
+    early_stopping = None
+    if args.early_stopping > 0:
+        early_stopping = EarlyStopping(args.early_stopping)
+    model_check_hook = make_lm_check_hook(
+        d, method=args.decoding_method, temperature=args.temperature,
+        max_seq_len=args.max_seq_len, seed_text=args.seed, gpu=args.gpu,
+        early_stopping=early_stopping)
+
+    # loggers
+    visdom_logger = VisdomLogger(
+        log_checkpoints=args.log_checkpoints, title=args.prefix, env='lm',
+        server='http://' + args.visdom_server)
+
+    files = len(os.path.listdir(args.path))
+    for epoch in range(args.epoch):
+        for batch_num, batch in idx(chunk(files, args.filebatch)):
+            path = '/tmp/.seqmod_{path}_{batch}.pt'.format(
+            if epoch == 0:
+                examples = examples_from_files(batch, arg.metapath, d)
+                    path=os.basename(args.path), batch=batch_num)
+                u.save_model(examples, path)
+            else:
+                examples = u.load_model(path)
+            train, valid, test = BlockDataset.splits_from_data(
+                examples, d, args.batch_size, args.bptt, gpu=args.gpu, 
+                test=args.test_split, dev=args.dev_split)
+
+            trainer = CLMTrainer()
+            num_checkpoints = \
+                len(train) // (args.checkpoint * args.hooks_per_epoch)
+            trainer.add_hook(model_check_hook, num_checkpoints=num_checkpoints)
+            trainer.add_loggers(StdLogger(), visdom_logger)
+            trainer.train(1, args.checkpoint, gpu=args.gpu)
