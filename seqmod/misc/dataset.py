@@ -497,10 +497,15 @@ class BlockDataset(Dataset):
         corpus. It can be used to avoid creating the parent dataset before
         creating the children splits if the data is already in vector form.
         """
-        datasets, splits = [], get_splits(len(data), test, dev=dev)
+        size = len(data[0]) if isinstance(data, tuple) else len(data)
+        datasets, splits = [], get_splits(size, test, dev=dev)
         for idx, (start, stop) in enumerate(zip(splits, splits[1:])):
             evaluation = evaluation if idx == 0 else True
-            datasets.append(cls(data[start:stop], d, batch_size, bptt,
+            if isinstance(data, tuple):
+                split = tuple(d[start:stop] for d in data)
+            else:
+                split = data[start:stop]
+            datasets.append(cls(split, d, batch_size, bptt,
                                 fitted=True, gpu=gpu, evaluation=evaluation))
         return tuple(datasets)
 
