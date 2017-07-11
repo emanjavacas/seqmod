@@ -349,6 +349,26 @@ class LMTrainer(Trainer):
         return trg.nelement()
 
 
+class CLMTrainer(LMTrainer):
+    def run_batch(self, batch_data, dataset='train', **kwargs):
+        (src, *conds), (trg, *_) = batch_data
+        hidden = self.batch_state.get('hidden', None)
+        output, hidden, _ = self.model(src, hidden=hidden, conds=conds)
+        self.batch_state['hidden'] = repackage_hidden(hidden)
+        loss = self.criterion(output, trg.view(-1))
+        if dataset == 'train':
+            loss.backward(), self.optimizer_step()
+        return (loss.data[0], )
+
+    def on_batch_end(self, batch, loss):
+        if hasattr(self, 'reset_hidden'):
+            self.batch_state['hidden'].zero_()
+
+    def num_batch_examples(self, batch_data):
+        (src, *_), _ = batch_data
+        return src.nelement()
+
+
 class EncoderDecoderTrainer(Trainer):
     def __init__(self, *args, **kwargs):
         super(EncoderDecoderTrainer, self).__init__(*args, **kwargs)

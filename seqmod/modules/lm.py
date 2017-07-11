@@ -463,15 +463,19 @@ class LM(nn.Module):
         outs = F.log_softmax(self.project(outs))
         return outs, hidden, weights
 
-    def generate(self, d, seed_texts=None, max_seq_len=25, gpu=False,
-                 method='sample', temperature=1., width=5, bos=False,
-                 eos=False, ignore_eos=False, batch_size=10, **kwargs):
+    def generate(self, d, conds=None, seed_texts=None, max_seq_len=25,
+                 gpu=False, method='sample', temperature=1., width=5,
+                 bos=False, eos=False, ignore_eos=False, batch_size=10,
+                 **kwargs):
         """
         Generate text using a specified method (argmax, sample, beam)
 
         Parameters:
         -----------
         d: Dict used during training to fit the vocabulary
+        conds: list, list of integers specifying the input conditions for
+            sampling from a conditional language model. Implies that all output
+            elements in the batch will have same conditions
         seed_texts: None or list of sentences to use as seed for the generator
         max_seq_len: int, maximum number of symbols to be generated. The output
             might actually be less than this number if the Dict was fitted with
@@ -494,26 +498,37 @@ class LM(nn.Module):
         """
         if self.training:
             logging.warn("Generating in training modus!")
+
+        if self.conds is not None:
+            # expand conds to batch
+            assert conds, "conds must be passed for generating with a CLM"
+            conds = [torch.LongTensor([c]).repeat(1, batch_size) for c in conds]
+            conds = [Variable(c, volatile=True) for c in conds]
+            if gpu:
+                conds = [c.cuda() for c in conds]
+
         decoder = Decoder(self, d, gpu=gpu)
         if method == 'argmax':
             scores, hyps = decoder.argmax(
-                seed_texts=seed_texts, max_seq_len=max_seq_len,
+                seed_texts=seed_texts, max_seq_len=max_seq_len, conds=conds,
                 batch_size=batch_size, ignore_eos=ignore_eos, bos=bos, eos=eos,
                 **kwargs)
         elif method == 'sample':
             scores, hyps = decoder.sample(
-                temperature=temperature, seed_texts=seed_texts,
+                temperature=temperature, seed_texts=seed_texts, conds=conds,
                 batch_size=batch_size, max_seq_len=max_seq_len,
                 ignore_eos=ignore_eos, bos=bos, eos=eos, **kwargs)
         elif method == 'beam':
             scores, hyps = decoder.beam(
                 width=width, seed_texts=seed_texts, max_seq_len=max_seq_len,
-                ignore_eos=ignore_eos, bos=bos, eos=eos, **kwargs)
+                conds=conds, ignore_eos=ignore_eos, bos=bos, eos=eos, **kwargs)
         else:
             raise ValueError("Wrong decoding method: %s" % method)
+
         if not ignore_eos and d.get_eos() is not None:
             # strip content after <eos> for each batch
             hyps = strip_post_eos(hyps, d.get_eos())
+
         return [s/len(hyps[idx]) for idx, s in enumerate(scores)], hyps
 
     def predict_proba(self, inp, gpu=False, **kwargs):
