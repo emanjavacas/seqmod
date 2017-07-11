@@ -37,7 +37,7 @@ def save_model(model, prefix, d=None, mode='torch'):
         save_fn, ext = p.dump, 'pkl'
     elif mode == 'npy':
         import numpy as np
-        save_fn, ext = np.save, 'npy'
+        save_fn, ext = lambda model, f: np.save(f, model), 'npy'
     else:
         raise ValueError("Unknown mode [%s]" % mode)
     with open(prefix + "." + ext, 'wb') as f:
