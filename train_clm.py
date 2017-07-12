@@ -1,6 +1,5 @@
 
 import os
-import sys
 
 import random; random.seed(1001)
 
@@ -21,6 +20,33 @@ from seqmod.misc.loggers import StdLogger, VisdomLogger
 from seqmod.misc.optimizer import Optimizer
 from seqmod.misc.dataset import Dict, BlockDataset
 from seqmod.misc.early_stopping import EarlyStopping
+
+
+def make_clm_hook(d, max_seq_len=200, gpu=False, samples=5,
+                  method='sample', temperature=1, batch_size=10):
+    lang_d, *conds_d = d
+    sampled_conds = []
+    for _ in range(samples):
+        sample = [d.index(random.sample(d.vocab, 1)[0]) for d in conds_d]
+        sampled_conds.append(sample)
+
+    def hook(trainer, epoch, batch_num, checkpoint):
+        trainer.log('info', 'Generating text...')
+        for conds in sampled_conds:
+            conds_str = ''
+            for idx, (cond_d, sampled_c) in enumerate(zip(conds_d, conds)):
+                conds_str += (str(cond_d.vocab[sampled_c]) + '; ')
+            trainer.log("info", "\n***\nConditions: " + conds_str)
+            scores, hyps = trainer.model.generate(
+                lang_d, max_seq_len=max_seq_len, gpu=gpu,
+                method=method, temperature=temperature,
+                batch_size=batch_size, conds=conds)
+            hyps = [u.format_hyp(score, hyp, hyp_num + 1, lang_d)
+                    for hyp_num, (score, hyp) in enumerate(zip(scores, hyps))]
+            trainer.log("info", ''.join(hyps) + "\n")
+        trainer.log("info", '***\n')
+
+    return hook
 
 
 def read_meta(path, sep=';', fileid='filepath'):
@@ -188,6 +214,9 @@ if __name__ == '__main__':
     early_stopping = None
     if args.early_stopping > 0:
         early_stopping = EarlyStopping(args.early_stopping)
+    check_hook = make_clm_hook(
+        d, max_seq_len=args.max_seq_len, samples=5, gpu=args.gpu,
+        method=args.decoding_method, temperature=args.temperature)
 
     # loggers
     visdom_logger = VisdomLogger(
@@ -201,4 +230,5 @@ if __name__ == '__main__':
     num_checkpoints = min(
         1, len(train) // (args.checkpoint * args.hooks_per_epoch))
     trainer.add_loggers(std_logger, visdom_logger)
+    trainer.add_hook(check_hook, num_checkpoints=num_checkpoints)
     trainer.train(args.epochs, args.checkpoint, gpu=args.gpu)
