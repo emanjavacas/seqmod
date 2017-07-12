@@ -11,43 +11,19 @@ except:
     print('no NVIDIA driver found')
     torch.manual_seed(1001)
 
-import torch.nn as nn
-
-import numpy as np
-from itertools import chain, islice
+from torch import nn
 
 from seqmod.modules.lm import LM
 from seqmod import utils as u
 
-from seqmod.misc.trainer import LMTrainer, repackage_hidden
+from seqmod.misc.trainer import CLMTrainer
 from seqmod.misc.loggers import StdLogger, VisdomLogger
 from seqmod.misc.optimizer import Optimizer
 from seqmod.misc.dataset import Dict, BlockDataset
-from seqmod.misc.preprocess import text_processor
 from seqmod.misc.early_stopping import EarlyStopping
 
 
-class CLMTrainer(LMTrainer):
-    def run_batch(self, batch_data, dataset='train', **kwargs):
-        (src, *conds), (trg, *_) = batch_data
-        hidden = self.batch_state.get('hidden', None)
-        output, hidden, _ = self.model(src, hidden=hidden, conds=conds)
-        self.batch_state['hidden'] = repackage_hidden(hidden)
-        loss = self.criterion(output, trg.view(-1))
-        if dataset == 'train':
-            loss.backward(), self.optimizer_step()
-        return (loss.data[0], )
-
-    def on_batch_end(self, batch, loss):
-        if hasattr(self, 'reset_hidden'):
-            self.batch_state['hidden'].zero_()
-
-    def num_batch_examples(self, batch_data):
-        (src, *_), _ = batch_data
-        return src.nelement()
-
-
-def read_meta(path):
+def read_meta(path, sep=';', fileid='filepath'):
     import csv
     metadata = {}
     with open(path) as f:
@@ -55,94 +31,55 @@ def read_meta(path):
         header = next(rows)
         for row in rows:
             row = dict(zip(header, row))
-            metadata[row['filepath']] = row
-            for c in row['categories'].split(','):
-                c = c.lower()
-                if 'non-fictie' in c:
-                    row['fictie'] = False
-                elif 'fictie' in c:
-                    row['fictie'] = True
-                else:
-                    row['fictie'] = 'NA'
+            metadata[row[fileid]] = row
     return metadata
+
+
+def compute_length(l, length_bins):
+    length = len(l)
+    output = None
+    for length_bin in length_bins[::-1]:
+        if length > length_bin:
+            output = length_bin
+            break
+    else:
+        output = -1
+    return output
 
 
 def load_lines(rootfiles, metapath,
                input_format='txt',
                include_length=True,
                length_bins=[50, 100, 150, 300],
-               include_author=True,
-               authors=(),
-               include_fields=True,
-               categories=('fictie',)):
+               categories=()):
     metadata = read_meta(metapath)
     for idx, f in enumerate(rootfiles):
-        if idx % 50 == 0:
-            print("Processed [%d] files" % idx)
         filename = os.path.basename(f)
-        if os.path.splitext(filename)[0] in metadata:
+        if filename in metadata:
             conds = []
-            row = metadata[os.path.splitext(filename)[0]]
-            if include_author:
-                author = row['author:lastname']
-                if (not authors) or author in authors:
-                    conds.append(author)
-                if include_fields:
-                    for c in categories:
-                        conds.append(row[c])
+            row = metadata[filename]
+            for c in categories:
+                conds.append(row[c])
             with open(f, 'r') as lines:
                 for l in lines:
                     l = l.strip()
-                    if l:
-                        lconds = [c for c in conds]
-                        if include_length:
-                            length = len(l)
-                            for length_bin in length_bins[::-1]:
-                                if length > length_bin:
-                                    lconds.append(length_bin)
-                                    break
-                            else:
-                                lconds.append(-1)
-                        yield l, lconds
+                    if not l:
+                        continue
+                    lconds = [c for c in conds]
+                    if include_length:
+                        lconds.append(compute_length(l, length_bins))
+                    yield l, lconds
         else:
             print("Couldn't find [%s]" % f)
 
 
-def flatten(l):
-    return list(chain.from_iterable(l))
-
-
-def chunk(it, size):
-    it = iter(it)
-    return iter(lambda: tuple(islice(it, size)), ())
-
-
-def expand_conditions(lines, d):
-    lang_d, *conds_d = d
-    ls, cs = zip(*lines)
-    # transform lines
-    ls = list(lang_d.transform(ls))
-    # transform conditions
-    conds = zip(*cs)
-    conds = [list(d.transform([c]))[0] for d, c in zip(conds_d, conds)]
-    # expand conditions to lists matching sents sizes
-    conds = [[[c] * len(l) for c, l in zip(cond, ls)] for cond in conds]
-    # concat to single vectors
-    ls = flatten(ls)
-    return tuple([ls] + [flatten(c) for c in conds])
-
-
-def examples_from_files(rootfiles, metapath, d, **kwargs):
-    lines = load_lines(rootfiles, metapath, **kwargs)
-    return expand_conditions(lines, d)
-
-
-def fit_dicts(lines, d):
-    lang_d, *conds_d = d
-    ls, cs = zip(*lines)
-    lang_d.fit(ls)
-    for d, c in zip(conds_d, zip(*cs)):
-        d.fit([c])
+def tensor_from_files(lines, lang_d, conds_d):
+    def chars_gen():
+        for line, conds in lines:
+            conds = [d.index(c) for d, c in zip(conds_d, conds)]
+            for char in next(lang_d.transform([line])):
+                yield [char] + conds
+    return torch.LongTensor(list(chars_gen())).t().contiguous()
 
 
 if __name__ == '__main__':
@@ -152,7 +89,7 @@ if __name__ == '__main__':
     parser.add_argument('--layers', default=2, type=int)
     parser.add_argument('--cell', default='LSTM')
     parser.add_argument('--emb_dim', default=200, type=int)
-    parser.add_argument('--cond_emb_dim', default=50)
+    parser.add_argument('--cond_emb_dim', default=20)
     parser.add_argument('--hid_dim', default=200, type=int)
     parser.add_argument('--dropout', default=0.3, type=float)
     parser.add_argument('--word_dropout', default=0.0, type=float)
@@ -198,27 +135,35 @@ if __name__ == '__main__':
     parser.add_argument('--prefix', default='model', type=str)
     args = parser.parse_args()
 
-    print("Processing datasets...")
     filenames = [os.path.join(args.path, f) for f in os.listdir(args.path)]
-    lines = load_lines(filenames, args.metapath)
-    nconds = len(next(lines)[1])
+    lines_gen = lambda: load_lines(filenames, args.metapath)
+    print("Processing datasets...")
     lang_d = Dict(max_size=args.max_size, min_freq=args.min_freq,
                   eos_token=u.EOS, bos_token=u.BOS)
-    conds_d = []
-    for _ in range(nconds):
-        conds_d.append(Dict(sequential=False, force_unk=False))
-
+    n_conds = len(next(lines_gen())[1])
+    conds_d = [Dict(sequential=False, force_unk=False) for _ in range(n_conds)]
     d = [lang_d] + conds_d
 
     print("Fitting dicts...")
-    fit_dicts(lines, d)
+    ls, cs = zip(*lines_gen())
+    print("Fitting language Dict...")
+    lang_d.fit(ls)
+    print("Fitting condition Dicts...")
+    for cond_d, c in zip(conds_d, zip(*cs)):
+        cond_d.fit([c])
 
     print(' * vocabulary size. %d' % len(lang_d))
+    # conditional structure
+    conds = []
     for idx, subd in enumerate(conds_d):
         print(' * condition [%d] with cardinality %d' % (idx, len(subd)))
+        conds.append({'varnum': len(subd), 'emb_dim': args.cond_emb_dim})
 
-    conds = [{'varnum': len(cond_d.vocab), 'emb_dim': args.cond_emb_dim}
-             for cond_d in conds_d]
+    print("Transforming dataset...")
+    examples = tuple(tensor_from_files(lines_gen(), lang_d, conds_d))
+    train, valid, test = BlockDataset.splits_from_data(
+        examples, d, args.batch_size, args.bptt, gpu=args.gpu,
+        test=args.test_split, dev=args.dev_split)
 
     print('Building model...')
     model = LM(len(lang_d), args.emb_dim, args.hid_dim,
@@ -250,24 +195,10 @@ if __name__ == '__main__':
         server='http://' + args.visdom_server)
     std_logger = StdLogger()
 
-    files = len(os.listdir(args.path))
-    for epoch in range(args.epochs):
-        for batch_num, batch in enumerate(chunk(filenames, args.filebatch)):
-            path = '/tmp/.seqmod_{filename}_{batch}.pt'.format(
-                filename=os.path.basename(args.path), batch=batch_num)
-            if epoch == 0:
-                examples = examples_from_files(batch, args.metapath, d)
-                u.save_model(examples, path)
-            else:
-                examples = u.load_model(path)
-            train, valid, test = BlockDataset.splits_from_data(
-                examples, d, args.batch_size, args.bptt, gpu=args.gpu, 
-                test=args.test_split, dev=args.dev_split)
-
-            trainer = CLMTrainer(
-                model, {'train': train, 'valid': valid, 'test': test},
-                criterion, optim)
-            num_checkpoints = \
-                len(train) // (args.checkpoint * args.hooks_per_epoch)
-            trainer.add_loggers(std_logger, visdom_logger)
-            trainer.train(1, args.checkpoint, gpu=args.gpu)
+    trainer = CLMTrainer(
+        model, {'train': train, 'valid': valid, 'test': test},
+        criterion, optim)
+    num_checkpoints = min(
+        1, len(train) // (args.checkpoint * args.hooks_per_epoch))
+    trainer.add_loggers(std_logger, visdom_logger)
+    trainer.train(args.epochs, args.checkpoint, gpu=args.gpu)
