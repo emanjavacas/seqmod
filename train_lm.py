@@ -2,28 +2,26 @@
 import os
 import sys
 
-seed = 1001
-import random                   # nopep8
-random.seed(seed)
+import random; random.seed(1001)
 
-import torch                    # nopep8
+import torch
 try:
-    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed(1001)
 except:
     print('no NVIDIA driver found')
-torch.manual_seed(seed)
+    torch.manual_seed(1001)
 
-import torch.nn as nn           # nopep8
+import torch.nn as nn
 
-from seqmod.modules.lm import LM       # nopep8
-from seqmod import utils as u  # nopep8
+from seqmod.modules.lm import LM
+from seqmod import utils as u
 
-from seqmod.misc.trainer import LMTrainer               # nopep8
-from seqmod.misc.loggers import StdLogger, VisdomLogger  # nopep8
-from seqmod.misc.optimizer import Optimizer              # nopep8
-from seqmod.misc.dataset import Dict, BlockDataset       # nopep8
-from seqmod.misc.preprocess import text_processor        # nopep8
-from seqmod.misc.early_stopping import EarlyStopping     # nopep8
+from seqmod.misc.trainer import LMTrainer
+from seqmod.misc.loggers import StdLogger, VisdomLogger
+from seqmod.misc.optimizer import Optimizer
+from seqmod.misc.dataset import Dict, BlockDataset
+from seqmod.misc.preprocess import text_processor
+from seqmod.misc.early_stopping import EarlyStopping
 
 
 # Load data
