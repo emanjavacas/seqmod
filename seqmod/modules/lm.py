@@ -17,6 +17,9 @@ from seqmod.misc.beam_search import Beam
 
 
 def strip_post_eos(sents, eos):
+    """
+    remove suffix of symbols after <eos> in generated sentences
+    """
     out = []
     for sent in sents:
         for idx, item in enumerate(sent):
@@ -29,6 +32,24 @@ def strip_post_eos(sents, eos):
 
 
 def read_batch(m, seed_texts, method, temperature=1., gpu=False, **kwargs):
+    """
+    Computes the hidden states for a bunch of seeds in iterative fashion.
+    This is currently being done so because LM doesn't use padding and
+    input seeds might have different sizes (in the future this will have
+    to be implemented using pack_padded_sequence which allows for variable
+    length inputs)
+
+    Parameters:
+    -----------
+    seed_texts: list of lists of ints
+    method: one of 'sample' or 'argmax', how to sample the first item right
+
+    Returns:
+    --------
+    scores: torch.FloatTensor (batch_size), scores for samples in the batch
+    prev: torch.LongTensor (1 x batch_size), sampled symbols in the batch
+    hidden: torch.FloatTensor (num_layers x batch_size x hid_dim)
+    """
     if method not in ('sample', 'argmax'):
         raise ValueError('method must be sample or argmax')
     hs, cs, prev, scores = [], [], [], []
@@ -58,6 +79,15 @@ def read_batch(m, seed_texts, method, temperature=1., gpu=False, **kwargs):
 
 
 class Decoder(object):
+    """
+    General Decoder class for language models.
+
+    Parameters:
+    -----------
+    model: LM, fitted LM model to use for generation.
+    d: Dict, dictionary fitted on the LM's input vocabulary.
+    gpu: bool, whether to run generation on the gpu.
+    """
     def __init__(self, model, d, gpu=False):
         self.gpu = gpu
         self.model = model
@@ -66,6 +96,18 @@ class Decoder(object):
 
     def _seed(self, seed_texts, batch_size, method, bos, eos, **kwargs):
         """
+        Handles the input to the actual generation method taking into account
+        multiple variables. If seed_texts are given, it takes care of reading
+        them to initialize the hidden state. In that case the input to the
+        generation is a symbol predicted right after reading the batch.
+        In case of generation from scratch (seed_texts is None), it will
+        feed in the <bos> symbol if it exists, otherwise, it will just randomly
+        sample a symbol from the vocabulary.
+
+        If seed_texts isn't given or its length is just one, the generation
+        will be done in a batch of size `batch_size` thus generating as many
+        outputs.
+
         Parameters
         -----------
         seed_texts: list (of list (of string)) or None,
@@ -78,6 +120,7 @@ class Decoder(object):
             seed_texts is given and the dictionary has a bos_token.
         eos: bool, whether to suffix the seed with the eos_token. Only used if
             seed_texts is given and the dictionary has a eos_token.
+        kwargs: extra LM.forward parameters
 
         Returns
         ---------
@@ -118,6 +161,10 @@ class Decoder(object):
 
     def argmax(self, seed_texts=None, max_seq_len=25, batch_size=10,
                ignore_eos=False, bos=False, eos=False, **kwargs):
+        """
+        Generate a sequence sampling the element with highest probability
+        in the output distribution at each generation step.
+        """
         scores, prev, hidden = self._seed(
             seed_texts, batch_size, 'argmax', bos, eos)
         batch = prev.size(1)
@@ -140,6 +187,11 @@ class Decoder(object):
     def sample(self, temperature=1., seed_texts=None, max_seq_len=25,
                batch_size=10, ignore_eos=False, bos=False, eos=False,
                **kwargs):
+        """
+        Generate a sequence multinomially sampling from the output
+        distribution at each generation step. The output distribution
+        can be tweaked by the input parameter `temperature`.
+        """
         scores, prev, hidden = self._seed(
             seed_texts, batch_size, 'sample', bos, eos,
             temperature=temperature)
@@ -163,6 +215,11 @@ class Decoder(object):
 
     def beam(self, width=5, seed_texts=None, max_seq_len=25, batch_size=1,
              ignore_eos=False, bos=False, eos=False, **kwargs):
+        """
+        Approximation to the highest probability output over the generated
+        sequence using beam search. Currently it only generates on sequence
+        at a time.
+        """
         if len(seed_text) > 1 or batch_size > 1:
             raise ValueError(
                 "Currently beam search is limited to single item batches")
@@ -306,7 +363,7 @@ class LM(nn.Module):
     - cell: str, one of GRU, LSTM, RNN.
     - bias: bool, whether to include bias in the RNN.
     - dropout: float, amount of dropout to apply in between layers.
-    - conditions: list of condition-maps for a conditional language model
+    - conds: list of condition-maps for a conditional language model
         in the following form:
             [{'name': str, 'varnum': int, 'emb_dim': int}, ...]
         where 'name' is a screen-name for the conditions, 'varnum' is the
@@ -429,6 +486,10 @@ class LM(nn.Module):
         Parameters:
         -----------
         inp: torch.Tensor (seq_len x batch_size)
+        hidden: None or torch.Tensor (num_layers x batch_size x hid_dim)
+        conds: None or tuple of torch.Tensor (seq_len x batch_size) of length
+            equal to the number of model conditions. `conditions` are required
+            in case of a CLM.
 
         Returns:
         --------
@@ -532,11 +593,26 @@ class LM(nn.Module):
         return [s/len(hyps[idx]) for idx, s in enumerate(scores)], hyps
 
     def predict_proba(self, inp, gpu=False, **kwargs):
+        """
+        Compute the probability assigned by the model to an input sequence.
+        In the future this should use pack_padded_sequence to run prediction
+        on multiple input sentences at once.
+
+        Parameters:
+        -----------
+        inp: list of ints representing the input sequence
+        gpu: bool, whether to use the gpu
+        kwargs: other model parameters
+
+        Returns:
+        --------
+        float representing the log probability of the input sequence
+        """
         if self.training:
             logging.warn("Generating in training modus!")
         inp_vec = Variable(torch.LongTensor([inp]), volatile=True)
         if gpu:
-            inp_vec.cuda()
+            inp_vec = inp_vec.cuda()
         outs, _, _ = self(inp_vec, **kwargs)
         log_probs = u.select_cols(outs[:-1], inp[1:])
         return log_probs.sum().data[0] / len(log_probs)

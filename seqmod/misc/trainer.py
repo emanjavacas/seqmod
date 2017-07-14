@@ -303,33 +303,23 @@ class Trainer(object):
 
 
 class LMTrainer(Trainer):
+    """
+    General LMTrainer for standard LMs
+    """
+    def __init__(self, *args, reset_on_hidden=True, **kwargs):
+        super(LMTrainer, self).__init__(*args, **kwargs)
+        self.reset_on_hidden = reset_on_hidden
+
     def format_loss(self, loss):
-        """
-        Turn loss into perplexity.
-        """
         return tuple(math.exp(min(l, 100)) for l in loss)
 
-    def run_batch(self, batch_data, dataset='train', subset=None, **kwargs):
-        # get dataset
-        data = self.datasets[dataset]
+    def run_batch(self, batch_data, dataset='train', **kwargs):
         # compute loss
-        if isinstance(data, CyclicBlockDataset):
-            source, targets, head = batch_data
-            if subset is not None and subset != head:
-                # if subset is given, skip all other subsets
-                return          # skip batch
-            hidden = self.batch_state.get('hidden', {}).get(head, None)
-            output, hidden, _ = self.model(source, hidden=hidden, head=head)
-            if 'hidden' not in self.batch_state:
-                self.batch_state['hidden'] = {}
-            # dettach hidden from graph
-            self.batch_state['hidden'][head] = repackage_hidden(hidden)
-        else:
-            source, targets = batch_data
-            hidden = self.batch_state.get('hidden', None)
-            output, hidden, _ = self.model(source, hidden=hidden)
-            # detach hidden from graph
-            self.batch_state['hidden'] = repackage_hidden(hidden)
+        source, targets = batch_data
+        hidden = self.batch_state.get('hidden', None)
+        output, hidden, _ = self.model(source, hidden=hidden)
+        # detach hidden from graph
+        self.batch_state['hidden'] = repackage_hidden(hidden)
         loss = self.criterion(output, targets.view(-1))
         # optimize
         if dataset == 'train':
@@ -337,19 +327,42 @@ class LMTrainer(Trainer):
         return (loss.data[0], )
 
     def on_batch_end(self, batch, loss):
-        if hasattr(self, 'reset_hidden'):
-            if isinstance(next(self.datasets.values()), CyclicBlockDataset):
-                for v in self.batch_state['hidden'].values():
-                    v.zero_()
-            else:
-                self.batch_state['hidden'].zero_()
+        if self.reset_on_hidden and hasattr(self, 'reset_hidden'):
+            self.batch_state['hidden'].zero_()
 
     def num_batch_examples(self, batch_data):
         src, trg, *_ = batch_data
         return trg.nelement()
 
 
+class CyclicLMTrainer(LMTrainer):
+    """
+    Trainer to be used with a multiheaded LM and a CyclicBlockDataset
+    that iterates over batches from different source datasets and finetunes
+    a different output distribution per source dataset.
+    """
+    def run_batch(self, batch_data, dataset='train', subset=None):
+        source, targets, head = batch_data
+        if subset != head:
+            # if subset is given, skip all other subsets
+            return          # skip batch
+        hidden = self.batch_state.get('hidden', {}).get(head, None)
+        output, hidden, _ = self.model(source, hidden=hidden, head=head)
+        if 'hidden' not in self.batch_state:
+            self.batch_state['hidden'] = {}
+        # dettach hidden from graph
+        self.batch_state['hidden'][head] = repackage_hidden(hidden)
+
+    def on_batch_end(self, batch, loss):
+        if self.reset_on_hidden and hasattr(self, 'reset_hidden'):
+            for v in self.batch_state['hidden'].values():
+                v.zero_()
+
+
 class CLMTrainer(LMTrainer):
+    """
+    Trainer for the conditional language model
+    """
     def run_batch(self, batch_data, dataset='train', **kwargs):
         (src, *conds), (trg, *_) = batch_data
         hidden = self.batch_state.get('hidden', None)
@@ -360,16 +373,15 @@ class CLMTrainer(LMTrainer):
             loss.backward(), self.optimizer_step()
         return (loss.data[0], )
 
-    def on_batch_end(self, batch, loss):
-        if hasattr(self, 'reset_hidden'):
-            self.batch_state['hidden'].zero_()
-
     def num_batch_examples(self, batch_data):
         (src, *_), _ = batch_data
         return src.nelement()
 
 
 class EncoderDecoderTrainer(Trainer):
+    """
+    Trainer for a general Encoder-Decoder model
+    """
     def __init__(self, *args, **kwargs):
         super(EncoderDecoderTrainer, self).__init__(*args, **kwargs)
         # sum loss over batch samples instead of average

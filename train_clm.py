@@ -1,6 +1,5 @@
 
 import os
-import sys
 
 import random; random.seed(1001)
 
@@ -14,8 +13,6 @@ from torch.autograd import Variable
 
 import torch.nn as nn
 
-import numpy as np
-
 from seqmod.modules.lm import LM
 from seqmod import utils as u
 
@@ -23,7 +20,6 @@ from seqmod.misc.trainer import CLMTrainer
 from seqmod.misc.loggers import StdLogger, VisdomLogger
 from seqmod.misc.optimizer import Optimizer
 from seqmod.misc.dataset import Dict, BlockDataset
-from seqmod.misc.preprocess import text_processor
 from seqmod.misc.early_stopping import EarlyStopping
 
 
@@ -52,6 +48,65 @@ def make_clm_hook(d, max_seq_len=200, gpu=False, samples=5,
         trainer.log("info", '***\n')
 
     return hook
+
+
+def read_meta(path, sep=';', fileid='filepath'):
+    import csv
+    metadata = {}
+    with open(path) as f:
+        rows = csv.reader(f)
+        header = next(rows)
+        for row in rows:
+            row = dict(zip(header, row))
+            metadata[row[fileid]] = row
+    return metadata
+
+
+def compute_length(l, length_bins):
+    length = len(l)
+    output = None
+    for length_bin in length_bins[::-1]:
+        if length > length_bin:
+            output = length_bin
+            break
+    else:
+        output = -1
+    return output
+
+
+def load_lines(rootfiles, metapath,
+               input_format='txt',
+               include_length=True,
+               length_bins=[50, 100, 150, 300],
+               categories=()):
+    metadata = read_meta(metapath)
+    for idx, f in enumerate(rootfiles):
+        filename = os.path.basename(f)
+        if filename in metadata:
+            conds = []
+            row = metadata[filename]
+            for c in categories:
+                conds.append(row[c])
+            with open(f, 'r') as lines:
+                for l in lines:
+                    l = l.strip()
+                    if not l:
+                        continue
+                    lconds = [c for c in conds]
+                    if include_length:
+                        lconds.append(compute_length(l, length_bins))
+                    yield l, lconds
+        else:
+            print("Couldn't find [%s]" % f)
+
+
+def tensor_from_files(lines, lang_d, conds_d):
+    def chars_gen():
+        for line, conds in lines:
+            conds = [d.index(c) for d, c in zip(conds_d, conds)]
+            for char in next(lang_d.transform([line])):
+                yield [char] + conds
+    return torch.LongTensor(list(chars_gen())).t().contiguous()
 
 
 if __name__ == '__main__':
@@ -114,7 +169,6 @@ if __name__ == '__main__':
     parser.add_argument('--prefix', default='model', type=str)
     args = parser.parse_args()
 
-    print("Processing datasets...")
     filenames = [os.path.join(args.path, f) for f in os.listdir(args.path)]
     if args.load_dict:
         print('Loading dicts...')
@@ -140,6 +194,8 @@ if __name__ == '__main__':
     # conditional structure
     conds = []
     print(' * vocabulary size. %d' % len(lang_d))
+    # conditional structure
+    conds = []
     for idx, subd in enumerate(conds_d):
         print(' * condition [%d] with cardinality %d' % (idx, len(subd)))
         conds.append({'varnum': len(subd), 'emb_dim': args.cond_emb_dim})
@@ -160,7 +216,7 @@ if __name__ == '__main__':
         model.apply(u.make_initializer())
     print(model)
     print(' * n parameters. %d' % model.n_params())
-    
+
     if args.gpu:
         model.cuda()
 
