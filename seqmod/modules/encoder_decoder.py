@@ -258,14 +258,12 @@ class EncoderDecoder(nn.Module):
 
         src: torch.LongTensor (seq_len x 1)
         """
-        pad = self.src_dict.get_pad()
         eos = self.src_dict.get_eos()
         bos = self.src_dict.get_bos()
         gpu = src.is_cuda
         # encode
         emb = self.src_embeddings(src)
-        enc_outs, enc_hidden = self.encoder(
-            emb, compute_mask=False, mask_symbol=pad)
+        enc_outs, enc_hidden = self.encoder(emb)
         # decode
         dec_hidden = self.decoder.init_hidden_for(enc_hidden)
         dec_out, enc_att = None, None
@@ -302,14 +300,12 @@ class EncoderDecoder(nn.Module):
 
         src: torch.LongTensor (seq_len x 1)
         """
-        pad = self.src_dict.get_pad()
         eos = self.src_dict.get_eos()
         bos = self.src_dict.get_bos()
         gpu = src.is_cuda
         # encode
         emb = self.src_embeddings(src)
-        enc_outs, enc_hidden = self.encoder(
-            emb, compute_mask=False, mask_symbol=pad)
+        enc_outs, enc_hidden = self.encoder(emb)
         # decode
         enc_outs = enc_outs.repeat(1, beam_width, 1)
         if self.cell.startswith('LSTM'):

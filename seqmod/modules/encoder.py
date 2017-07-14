@@ -36,7 +36,7 @@ class Encoder(nn.Module):
         else:
             return h_0
 
-    def forward(self, inp, hidden=None, compute_mask=False, mask_symbol=None):
+    def forward(self, inp, hidden=None):
         """
         Paremeters:
         -----------
@@ -52,23 +52,7 @@ class Encoder(nn.Module):
         h_t: (num_layers x batch x hidden_size * num_directions)
         c_t: (num_layers x batch x hidden_size * num_directions)
         """
-        if compute_mask:        # fixme, somehow not working
-            seqlen, batch, _ = inp.size()
-            outs, hidden = [], hidden or self.init_hidden_for(inp)
-            for inp_t in inp.chunk(seqlen):
-                out_t, hidden = self.rnn(inp_t, hidden)
-                mask_t = inp_t.data.squeeze(0).eq(mask_symbol).nonzero()
-                if mask_t.nelement() > 0:
-                    mask_t = mask_t.squeeze(1)
-                    if self.cell.startswith('LSTM'):
-                        hidden[0].data.index_fill_(1, mask_t, 0)
-                        hidden[1].data.index_fill_(1, mask_t, 0)
-                    else:
-                        hidden.data.index_fill_(1, mask_t, 0)
-                outs.append(out_t)
-            outs = torch.cat(outs)
-        else:
-            outs, hidden = self.rnn(inp, hidden or self.init_hidden_for(inp))
+        outs, hidden = self.rnn(inp, hidden or self.init_hidden_for(inp))
         if self.bidi:
             # BiRNN encoder outputs (num_layers * 2 x batch x hid_dim)
             # but decoder expects   (num_layers x batch x hid_dim * 2)
