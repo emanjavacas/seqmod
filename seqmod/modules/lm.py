@@ -498,7 +498,7 @@ class LM(nn.Module):
         weights: None or list of weights (batch_size x seq_len),
             It will only be not None if attention is provided.
         """
-        if self.conds is not None and conds is None:
+        if hasattr(self, 'conds') and self.conds is not None and conds is None:
             raise ValueError("Conditional model expects conditions as input")
         inp = word_dropout(
             inp, self.target_code, p=self.word_dropout,
@@ -560,9 +560,10 @@ class LM(nn.Module):
         if self.training:
             logging.warn("Generating in training modus!")
 
-        if self.conds is not None:
+        if hasattr(self, 'conds') and self.conds is not None:
             # expand conds to batch
-            assert conds, "conds must be passed for generating with a CLM"
+            if conds is None:
+                raise ValueError("conds is required for generating with a CLM")
             conds = [torch.LongTensor([c]).repeat(1, batch_size) for c in conds]
             conds = [Variable(c, volatile=True) for c in conds]
             if gpu:
