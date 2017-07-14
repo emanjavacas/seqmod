@@ -7,6 +7,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.autograd import Variable
+import torch.nn.functional as F
 
 from seqmod import utils as u
 
@@ -128,6 +129,9 @@ class DoubleRNNPOSAwareLM(POSAwareLM):
         p_outs, w_outs = [], []
         p_hid, w_hid = hidden if hidden is not None else (None, None)
         p_emb, w_emb = self.pos_emb(pos), self.word_emb(word)
+        if self.dropout:
+            p_emb = F.dropout(p_emb, self.dropout)
+            w_emb = F.dropout(w_emb, self.dropout)
         for p, w in zip(p_emb, w_emb):
             w_hid = w_hid or self.init_hidden_for(w, 'word')
             p_hid = p_hid or self.init_hidden_for(p, 'pos')
@@ -202,8 +206,11 @@ def repackage_hidden(hidden):
 
 
 class POSAwareLMTrainer(Trainer):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, pos_weight=0.5, **kwargs):
         super(POSAwareLMTrainer, self).__init__(*args, **kwargs)
+        if pos_weight < 0 or pos_weight > 1:
+            raise ValueError("pos_weight must be between 0 and 1")
+        self.pos_weight = pos_weight
         self.loss_labels = ('pos', 'word')
 
     def format_loss(self, losses):
@@ -219,7 +226,7 @@ class POSAwareLMTrainer(Trainer):
             p_out.view(seq_len * batch_size, -1), trg_pos.view(-1),
             w_out.view(seq_len * batch_size, -1), trg_word.view(-1))
         if dataset == 'train':
-            (p_loss + w_loss).backward()
+            (self.pos_weight * p_loss + (1 - self.pos_weight) * w_loss).backward()
             self.optimizer_step()
         return p_loss.data[0], w_loss.data[0]
 
@@ -277,6 +284,7 @@ if __name__ == '__main__':
     parser.add_argument('--pos_num_layers', default=1, type=int)
     parser.add_argument('--word_num_layers', default=1, type=int)
     # train
+    parser.add_argument('--pos_weight', default=0.5, type=float)
     parser.add_argument('--dropout', default=0.3, type=float)
     parser.add_argument('--batch_size', default=100, type=int)
     parser.add_argument('--bptt', default=50, type=int)
@@ -314,8 +322,9 @@ if __name__ == '__main__':
         num_layers=(args.pos_num_layers, args.word_num_layers),
         dropout=args.dropout)
 
-    print(m)
     m.apply(u.make_initializer())
+
+    print(m)
 
     if args.gpu:
         m.cuda(), train.set_gpu(args.gpu), valid.set_gpu(args.gpu)
@@ -323,7 +332,8 @@ if __name__ == '__main__':
     crit = make_pos_word_criterion(gpu=args.gpu)
     optim = Optimizer(m.parameters(), args.optim, lr=args.lr)
     trainer = POSAwareLMTrainer(
-        m, {'train': train, 'valid': valid}, crit, optim)
+        m, {'train': train, 'valid': valid}, crit, optim,
+        pos_weight=args.pos_weight)
     trainer.add_loggers(StdLogger())
     num_checkpoints = len(train) // (args.checkpoints * args.hooks_per_epoch)
     trainer.add_hook(make_generate_hook(pos_dict, word_dict), num_checkpoints)
