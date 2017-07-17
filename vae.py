@@ -8,11 +8,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 
-from seqmod.modules.custom import word_dropout, StackedRNN
+from seqmod.modules.custom import word_dropout, StackedLSTM, StackedGRU
 from seqmod.modules.encoder import Encoder
-from seqmod import utils as u
-
-from seqmod.misc.beam_search import Beam
 
 
 class EncoderVAE(Encoder):
@@ -50,8 +47,8 @@ class DecoderVAE(nn.Module):
         self.z_dim = z_dim
         self.emb_dim = emb_dim
         self.hid_dim = hid_dim
-        self.num_layers = num_layers
         self.cell = cell
+        self.num_layers = num_layers
         self.dropout = dropout
         self.add_z = add_z
         self.project_init = project_init
@@ -64,9 +61,9 @@ class DecoderVAE(nn.Module):
             self.project_z = nn.Linear(z_dim, self.hid_dim * self.num_layers)
 
         # rnn
-        self.rnn_step = StackedRNN(
-            self.num_layers, in_dim, self.hid_dim,
-            cell=self.cell, dropout=dropout)
+        stacked = StackedLSTM if self.cell == 'LSTM' else StackedGRU
+        self.rnn_step = stacked(
+            self.num_layers, in_dim, self.hid_dim, dropout=dropout)
 
     def init_hidden_for(self, z):
         batch = z.size(0)

@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 
 from seqmod.modules import attention as attn
-from seqmod.modules.custom import StackedRNN, MaxOut
+from seqmod.modules.custom import StackedLSTM, StackedGRU, MaxOut
 
 
 class Decoder(nn.Module):
@@ -18,6 +18,7 @@ class Decoder(nn.Module):
     init_hidden: one of 'last', 'project', optional
         Whether to use the last layer or an extra projection
         of the last encoder hidden state to initialize decoder hidden state.
+    add_prev: bool, whether to append last hidden state.
     """
     def __init__(self, emb_dim, hid_dim, num_layers, cell, att_dim,
                  att_type='Bahdanau', dropout=0.0, maxout=2,
@@ -36,8 +37,9 @@ class Decoder(nn.Module):
         super(Decoder, self).__init__()
 
         # rnn layers
-        self.rnn_step = StackedRNN(
-            self.num_layers, in_dim, hid_dim, cell=cell, dropout=dropout)
+        stacked = StackedLSTM if cell == 'LSTM' else StackedGRU
+        self.rnn_step = stacked(
+            self.num_layers, in_dim, hid_dim, dropout=dropout)
 
         # attention network
         self.att_type = att_type

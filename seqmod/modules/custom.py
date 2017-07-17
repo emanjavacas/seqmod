@@ -1,40 +1,23 @@
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch.autograd import Variable
 
 
-# Legacy Modules
-class TiedEmbedding(nn.Embedding):
-    def __init__(self, num_embeddings, embedding_dim, weight, **kwargs):
-        super(TiedEmbedding, self).__init__(
-            num_embeddings, embedding_dim, **kwargs)
-        assert isinstance(weight, nn.parameter.Parameter)
-        self.weight = weight
-
-
-class TiedLinear(nn.Linear):
-    def __init__(self, in_features, out_features, weight, bias=True):
-        super(TiedLinear, self).__init__(in_features, out_features, bias=bias)
-        assert isinstance(weight, nn.parameter.Parameter)
-        self.weight = weight
-
-
 # Stateful Modules
-class StackedRNN(nn.Module):
-    def __init__(self, num_layers, in_dim, hid_dim, cell='LSTM', dropout=0.0):
+class _StackedRNN(nn.Module):
+    def __init__(self, cell, num_layers, in_dim, hid_dim, dropout=0.0):
+        super(StackedLSTM, self).__init__()
+        self.has_dropout = False
+        if dropout:
+            self.has_dropout = True
+            self.dropout = nn.Dropout(dropout)
         self.num_layers = num_layers
-        self.in_dim = in_dim
-        self.hid_dim = hid_dim
-        self.cell = cell
-        self.has_dropout = bool(dropout)
-        self.dropout = dropout
-        super(StackedRNN, self).__init__()
+        self.layers = nn.ModuleList()
 
-        for i in range(self.num_layers):
-            layer = getattr(nn, cell + 'Cell')(in_dim, hid_dim)
-            self.add_module(cell + 'Cell_%d' % i, layer)
+        cell = getattr(nn, cell)
+        for i in range(num_layers):
+            self.layers.append(cell(in_dim, hid_dim))
             in_dim = hid_dim
 
     def forward(self, inp, hidden):
@@ -54,33 +37,41 @@ class StackedRNN(nn.Module):
         h_n: torch.Tensor (num_layers x batch x hid_dim)
         c_n: torch.Tensor (num_layers x batch x hid_dim)
         """
-        batch, inp_dim = inp.size()
-        if self.cell.startswith('LSTM'):
-            num_layers, batch, hid_dim = hidden[0].size()
-            h_0, c_0 = hidden
-            h_1, c_1 = [], []
-            for i in range(self.num_layers):
-                layer = getattr(self, self.cell + ('Cell_%d' % i))
-                h_1_i, c_1_i = layer(inp, (h_0[i], c_0[i]))
-                h_1.append(h_1_i), c_1.append(c_1_i)
-                inp = h_1_i
-                # only add dropout to hidden layer (not output)
-                if i + 1 != self.num_layers and self.has_dropout:
-                    inp = F.dropout(
-                        inp, p=self.dropout, training=self.training)
-            output, hidden = inp, (torch.stack(h_1), torch.stack(c_1))
-        else:
-            h_0, h_1 = hidden, []
-            for i in range(self.num_layers):
-                layer = getattr(self, self.cell + ('Cell_%d' % i))
-                h_1_i = layer(inp, h_0[i])
-                h_1.append(h_1_i)
-                inp = h_1_i
-                if i + 1 != self.num_layers and self.has_dropout:
-                    inp = F.dropout(
-                        inp, p=self.dropout, training=self.training)
-            output, hidden = inp, torch.stack(h_1)
-        return output, hidden
+        raise NotImplementedError
+
+
+class StackedLSTM(_StackedRNN):
+    def __init__(self, *args, **kwargs):
+        super(StackedLSTM, self).__init__('LSTMCell', *args, **kwargs)
+
+    def forward(self, inp, hidden):
+        h_0, c_0 = hidden
+        h_1, c_1 = [], []
+        for i, layer in enumerate(self.layers):
+            h_1_i, c_1_i = layer(inp, (h_0[i], c_0[i]))
+            inp = h_1_i
+            if i + 1 != self.num_layers and self.has_dropout:
+                inp = self.dropout(inp)
+            h_1 += [h_1_i]
+            c_1 += [c_1_i]
+
+        return inp, (torch.stack(h_1), torch.stack(c_1))
+
+
+class StackedGRU(_StackedRNN):
+    def __init__(self, *args, **kwargs):
+        super(StackedGRU, self).__init__('GRUCell', *args, **kwargs)
+
+    def forward(self, inp, hidden):
+        h_1 = []
+        for i, layer in enumerate(self.layers):
+            h_1_i = layer(inp, hidden[0][i])
+            inp = h_1_i
+            if i + 1 != self.num_layers and self.has_dropout:
+                inp = self.dropout(inp)
+            h_1 += [h_1_i]
+
+        return inp, torch.stack(h_1)
 
 
 class MaxOut(nn.Module):

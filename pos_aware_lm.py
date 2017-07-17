@@ -10,7 +10,7 @@ from torch.autograd import Variable
 
 from seqmod import utils as u
 
-from seqmod.modules.custom import StackedRNN
+from seqmod.modules.custom import StackedGRU, StackedLSTM
 from seqmod.loaders import load_penn3
 from seqmod.misc.dataset import Dict, BlockDataset
 from seqmod.misc.optimizer import Optimizer
@@ -67,12 +67,12 @@ class DoubleRNNPOSAwareLM(POSAwareLM):
         self.pos_hid_dim, self.word_hid_dim = self.hid_dim
         self.pos_num_layers, self.word_num_layers = self.num_layers
 
+        stacked = StackedLSTM if self.cell == 'LSTM' else StackedGRU
         # pos network
-        self.pos_rnn = StackedRNN(
+        self.pos_rnn = stacked(
             self.pos_num_layers,
             self.pos_emb_dim + self.word_hid_dim,
             self.pos_hid_dim,
-            cell=self.cell,
             dropout=self.dropout)
         if tie_pos:
             pos_project = nn.Linear(self.pos_emb_dim, self.pos_vocab)
@@ -87,11 +87,10 @@ class DoubleRNNPOSAwareLM(POSAwareLM):
                 nn.LogSoftmax())
 
         # word network
-        self.word_rnn = StackedRNN(
+        self.word_rnn = stacked(
             self.word_num_layers,
             self.word_emb_dim + self.pos_hid_dim,
             self.word_hid_dim,
-            cell=self.cell,
             dropout=self.dropout)
         if tie_word:
             word_project = nn.Linear(self.word_emb_dim, self.word_vocab)
