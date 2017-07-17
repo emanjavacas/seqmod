@@ -74,7 +74,6 @@ class DoubleRNNPOSAwareLM(POSAwareLM):
             self.pos_num_layers,
             self.pos_emb_dim + self.word_hid_dim,
             self.pos_hid_dim,
-            residual=True,
             dropout=self.dropout)
         if tie_pos:
             pos_project = nn.Linear(self.pos_emb_dim, self.pos_vocab)
@@ -93,7 +92,6 @@ class DoubleRNNPOSAwareLM(POSAwareLM):
             self.word_num_layers,
             self.word_emb_dim + self.pos_hid_dim,
             self.word_hid_dim,
-            residual=True,
             dropout=self.dropout)
         if tie_word:
             word_project = nn.Linear(self.word_emb_dim, self.word_vocab)
@@ -134,10 +132,10 @@ class DoubleRNNPOSAwareLM(POSAwareLM):
             w_hid = w_hid or self.init_hidden_for(w, 'word')
             p_hid = p_hid or self.init_hidden_for(p, 'pos')
             p_out, p_hid = self.pos_rnn(
-                torch.cat((p, self.get_last_hid(w_hid)), 1),
+                torch.cat([p, self.get_last_hid(w_hid)], 1),
                 hidden=p_hid)
             w_out, w_hid = self.word_rnn(
-                torch.cat((w, self.get_last_hid(p_hid)), 1),
+                torch.cat([w, self.get_last_hid(p_hid)], 1),
                 hidden=w_hid)
             p_outs.append(self.pos_project(p_out))
             w_outs.append(self.word_project(w_out))
@@ -168,12 +166,12 @@ class DoubleRNNPOSAwareLM(POSAwareLM):
             w_hid = w_hid or self.init_hidden_for(w_emb[0], 'word')
             # pos
             p_out, p_hid = self.pos_rnn(
-                torch.cat((p_emb.squeeze(0), self.get_last_hid(w_hid)), 1),
+                torch.cat([p_emb.squeeze(0), self.get_last_hid(w_hid)], 1),
                 hidden=p_hid)
             p_out = self.pos_project(p_out)
             # word
             w_out, w_hid = self.word_rnn(
-                torch.cat((w_emb.squeeze(0), self.get_last_hid(p_hid)), 1),
+                torch.cat([w_emb.squeeze(0), self.get_last_hid(p_hid)], 1),
                 hidden=w_hid)
             w_out = self.word_project(w_out)
             (p_prev, p_score), (w_prev, w_score) = sample(p_out), sample(w_out)
