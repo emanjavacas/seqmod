@@ -334,6 +334,7 @@ if __name__ == '__main__':
         m, {'train': train, 'valid': valid}, crit, optim,
         pos_weight=args.pos_weight)
     trainer.add_loggers(StdLogger())
-    num_checkpoints = len(train) // (args.checkpoints * args.hooks_per_epoch)
+    num_checkpoints = max(
+        1, len(train) // (args.checkpoints * args.hooks_per_epoch))
     trainer.add_hook(make_generate_hook(pos_dict, word_dict), num_checkpoints)
     trainer.train(args.epochs, args.checkpoints)
