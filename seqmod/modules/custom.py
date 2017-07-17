@@ -6,19 +6,25 @@ from torch.autograd import Variable
 
 # Stateful Modules
 class _StackedRNN(nn.Module):
-    def __init__(self, cell, num_layers, in_dim, hid_dim, dropout=0.0):
+    def __init__(self, cell, num_layers, in_dim, hid_dim,
+                 dropout=0.0, residual=False):
         super(_StackedRNN, self).__init__()
+        self.in_dim = in_dim
         self.has_dropout = False
         if dropout:
             self.has_dropout = True
             self.dropout = nn.Dropout(dropout)
+        self.residual = residual
         self.num_layers = num_layers
         self.layers = nn.ModuleList()
 
         cell = getattr(nn, cell)
         for i in range(num_layers):
             self.layers.append(cell(in_dim, hid_dim))
-            in_dim = hid_dim
+            if residual:
+                in_dim = self.in_dim + hid_dim
+            else:
+                in_dim = hid_dim
 
     def forward(self, inp, hidden):
         """
@@ -45,11 +51,14 @@ class StackedLSTM(_StackedRNN):
         super(StackedLSTM, self).__init__('LSTMCell', *args, **kwargs)
 
     def forward(self, inp, hidden):
+        inp_0 = inp    # original input for residual connections
         h_0, c_0 = hidden
         h_1, c_1 = [], []
         for i, layer in enumerate(self.layers):
             h_1_i, c_1_i = layer(inp, (h_0[i], c_0[i]))
             inp = h_1_i
+            if i + 1 != self.num_layers and self.residual:
+                inp = torch.cat([inp, inp_0], 1)
             if i + 1 != self.num_layers and self.has_dropout:
                 inp = self.dropout(inp)
             h_1 += [h_1_i]
@@ -63,10 +72,13 @@ class StackedGRU(_StackedRNN):
         super(StackedGRU, self).__init__('GRUCell', *args, **kwargs)
 
     def forward(self, inp, hidden):
+        inp_0 = inp    # original input for residual connections
         h_1 = []
         for i, layer in enumerate(self.layers):
             h_1_i = layer(inp, hidden[0][i])
             inp = h_1_i
+            if i + 1 != self.num_layers and self.residual:
+                inp = torch.cat([inp, inp_0], 1)
             if i + 1 != self.num_layers and self.has_dropout:
                 inp = self.dropout(inp)
             h_1 += [h_1_i]
