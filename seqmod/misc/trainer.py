@@ -1,14 +1,11 @@
 
 import time
 import math
-import torch
 import numpy as np
 from torch.autograd import Variable
 
-from seqmod.misc.dataset import CyclicBlockDataset
-from seqmod.misc.early_stopping import EarlyStopping, EarlyStoppingException
-
 from seqmod import utils as u
+from seqmod.misc.early_stopping import EarlyStoppingException
 
 
 # Utility functions (repackage_hidden, memory effective loss, etc.)
@@ -23,7 +20,7 @@ def repackage_hidden(h):
 class Trainer(object):
     def __init__(self, model, datasets, criterion, optimizer,
                  test_name='test', valid_name='valid', loss_labels=('loss',),
-                 size_average=True, verbose=True, loggers=None, hooks=None):
+                 size_average=True, verbose=True):
         """
         Parameter:
         ==========
@@ -45,17 +42,8 @@ class Trainer(object):
         self.verbose = verbose
         self.size_average = size_average
         # containers
+        self.loggers = []
         self.hooks = []
-        if hooks is not None:
-            assert isinstance(hooks, list), "hooks must be list"
-            for hook in hooks:
-                if isinstance(hook, dict):
-                    num_checkpoints = hook.get('num_checkpoints', 1)
-                    hook = hook['hook']
-                else:
-                    num_checkpoints = 1
-                self.add_hook(hook, num_checkpoints=num_checkpoints)
-        self.loggers = loggers or []
         self.batch_state = {}  # instance var to share state across batches
         # properties
         self.test_name = test_name
@@ -71,17 +59,29 @@ class Trainer(object):
             logger.log(event, payload, verbose=self.verbose)
 
     # hooks
-    def add_hook(self, hook, num_checkpoints=1, clear=False):
-        if clear:
-            self.hooks = []
-        self.hooks.append({'hook': hook, 'num_checkpoints': num_checkpoints})
+    def add_hook(self, hook, hooks_per_epoch=None, clear=False):
+        """
+        Add a trainer hook that gets executed after a number of checkpoints.
+        The number of times a hook gets executed per epoch can be specified
+
+        Parameters:
+        -----------
+        hook: fn(trainer, epoch, batch_num, checkpoint)
+        """
+        self.hooks = [] if clear else self.hooks
+        self.hooks.append({'hook': hook, 'hooks_per_epoch': hooks_per_epoch})
 
     def run_hooks(self, epoch, batch_num, checkpoint):
+        batches = len(self.datasets['train'])
         for hook in self.hooks:
-            num_checkpoints = batch_num // checkpoint
-            if hook['num_checkpoints'] > 0 and \
-               num_checkpoints % hook['num_checkpoints'] == 0:
-                hook['hook'](self, epoch, batch_num, num_checkpoints)
+            _num_checkpoints = batch_num // checkpoint  # checkpoints in epoch
+            if hook['hooks_per_epoch'] is not None:
+                _execute_every = max(
+                    1, batches // (checkpoint * hook['hooks_per_epoch']))
+            else:
+                _execute_every = 1
+            if _execute_every > 0 and _num_checkpoints % _execute_every == 0:
+                hook['hook'](self, epoch, batch_num, _num_checkpoints)
 
     # callbacks
     def on_batch_end(self, batch, batch_loss):

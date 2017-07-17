@@ -1,33 +1,29 @@
 
 import string
 
-seed = 1005
+import random; random.seed(1001)
 
-import random                   # nopep8
-random.seed(seed)
-
-import torch                    # nopep8
+import torch
 try:
-    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed(1001)
+    torch.manual_seed(1001)
 except:
     print('no NVIDIA driver found')
-torch.manual_seed(seed)
 
-import numpy as np              # nopep8
-np.random.seed(seed)
+import numpy as np; np.random.seed(1001)
 
-from torch import nn            # nopep8
-from torch.autograd import Variable  # nopep8
+from torch import nn
+from torch.autograd import Variable
 
-from seqmod.modules.encoder_decoder import EncoderDecoder  # nopep8
-from seqmod import utils as u                      # nopep8
+from seqmod.modules.encoder_decoder import EncoderDecoder
+from seqmod import utils as u
 
-from seqmod.misc.optimizer import Optimizer             # nopep8
-from seqmod.misc.trainer import EncoderDecoderTrainer   # nopep8
-from seqmod.misc.loggers import StdLogger, VisdomLogger  # nopep8
-from seqmod.misc.dataset import PairedDataset, Dict      # nopep8
+from seqmod.misc.optimizer import Optimizer
+from seqmod.misc.trainer import EncoderDecoderTrainer
+from seqmod.misc.loggers import StdLogger, VisdomLogger
+from seqmod.misc.dataset import PairedDataset, Dict
 
-import dummy as d                                 # nopep8
+import dummy as d
 
 
 def translate(model, target, gpu, beam=False):
@@ -182,7 +178,6 @@ if __name__ == '__main__':
     trainer.add_loggers(VisdomLogger(env='encdec'))
 
     hook = make_encdec_hook(args.target, args.gpu, beam=args.beam)
-    num_checkpoints = len(train) // (args.checkpoint * args.hooks_per_epoch)
-    trainer.add_hook(hook, num_checkpoints=num_checkpoints)
+    trainer.add_hook(hook, hooks_per_epoch=args.hooks_per_epoch)
 
     trainer.train(args.epochs, args.checkpoint, shuffle=True, gpu=args.gpu)

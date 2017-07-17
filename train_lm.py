@@ -49,30 +49,6 @@ def load_from_file(path):
     return data
 
 
-# hook
-def make_lm_check_hook(d, seed_text, max_seq_len=25, gpu=False,
-                       method='sample', temperature=1, width=5,
-                       early_stopping=None, validate=True):
-
-    def hook(trainer, epoch, batch_num, checkpoint):
-        trainer.log("info", "Checking training...")
-        if validate:
-            loss = trainer.validate_model()
-            trainer.log("info", "Valid loss: %g" % loss)
-            trainer.log("info", "Registering early stopping loss...")
-            if early_stopping is not None:
-                early_stopping.add_checkpoint(loss)
-        trainer.log("info", "Generating text...")
-        scores, hyps = trainer.model.generate(
-            d, seed_text=seed_text, max_seq_len=max_seq_len, gpu=gpu,
-            method=method, temperature=temperature, width=width)
-        hyps = [u.format_hyp(score, hyp, hyp_num + 1, d)
-                for hyp_num, (score, hyp) in enumerate(zip(scores, hyps))]
-        trainer.log("info", '\n***' + ''.join(hyps) + "\n***")
-
-    return hook
-
-
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
@@ -182,12 +158,11 @@ if __name__ == '__main__':
     early_stopping = None
     if args.early_stopping > 0:
         early_stopping = EarlyStopping(args.early_stopping)
-    model_check_hook = make_lm_check_hook(
+    model_check_hook = u.make_lm_check_hook(
         d, method=args.decoding_method, temperature=args.temperature,
         max_seq_len=args.max_seq_len, seed_text=args.seed, gpu=args.gpu,
         early_stopping=early_stopping)
-    num_checkpoints = len(train) // (args.checkpoint * args.hooks_per_epoch)
-    trainer.add_hook(model_check_hook, num_checkpoints=num_checkpoints)
+    trainer.add_hook(model_check_hook, hooks_per_epoch=args.hooks_per_epoch)
 
     # loggers
     visdom_logger = VisdomLogger(

@@ -109,7 +109,6 @@ if __name__ == '__main__':
     trainer.add_loggers(StdLogger(), VisdomLogger(env='encdec'))
     target = args.target.split() if args.target else None
     hook = make_encdec_hook(args.target, args.gpu)
-    num_checkpoints = len(train) // (args.checkpoint * args.hooks_per_epoch)
-    trainer.add_hook(hook, num_checkpoints=num_checkpoints)
+    trainer.add_hook(hook, hooks_per_epoch=args.hooks_per_epoch)
 
     trainer.train(args.epochs, args.checkpoint, shuffle=True, gpu=args.gpu)

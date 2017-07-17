@@ -141,9 +141,7 @@ if __name__ == '__main__':
         criterion, optimizer)
     trainer.add_loggers(
         stdlogger, VisdomLogger(env='multitarget', title='general'))
-    num_checkpoints = \
-        max(len(train) // (args.checkpoint * args.hooks_per_epoch), 1)
-    trainer.add_hook(hook, num_checkpoints=num_checkpoints)
+    trainer.add_hook(hook, hooks_per_epoch=args.hooks_per_epoch)
 
     trainer.log('info', ' * vocabulary size. %d' % len(src_dict))
     trainer.log('info', ' * maximum batch size. %d' % args.batch_size)
@@ -168,9 +166,7 @@ if __name__ == '__main__':
             model, datasets[target], criterion, optimizer)
         trainer.add_loggers(
             stdlogger, VisdomLogger(env='multitarget', title=target))
-        num_checkpoints = \
-            max(1, len(train) // (args.checkpoint * args.hooks_per_epoch))
-        trainer.add_hook(hook, num_checkpoints=num_checkpoints)
+        trainer.add_hook(hook, hooks_per_epoch=args.hooks_per_epoch)
         trainer.add_hook(make_att_hook(args.target, args.gpu),
                          num_checkpoints=num_checkpoints)
         trainer.train(args.epochs, args.checkpoint, shuffle=True, gpu=args.gpu)

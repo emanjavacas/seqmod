@@ -34,13 +34,13 @@ class vae_criterion(object):
         return self.log_loss(logs, targets), self.KL_loss(mu, logvar)
 
 
-def kl_weight_hook(trainer, epoch, batch, num_checkpoints):
+def kl_weight_hook(trainer, epoch, batch, checkpoints):
     trainer.log("info", "kl weight: [%g]" % trainer.kl_weight)
 
 
 def make_generate_hook(target="This is just a tweet and not much more", n=5):
 
-    def hook(trainer, epoch, batch, num_checkpoints):
+    def hook(trainer, epoch, batch, checkpoints):
         d = trainer.datasets['train'].d['src']
         inp = torch.LongTensor([d.index(i) for i in target.split()])
         inp = Variable(inp, volatile=True).unsqueeze(1)

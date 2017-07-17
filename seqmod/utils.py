@@ -1,4 +1,5 @@
 
+import random; random.seed(1001)
 from collections import OrderedDict
 from itertools import groupby
 
@@ -232,7 +233,7 @@ def log_grad(module, grad_input, grad_output):
 
 
 # Training code
-def make_criterion(vocab_size, mask_ids=()):
+def make_xent_criterion(vocab_size, mask_ids=()):
     weight = torch.ones(vocab_size)
     for mask in mask_ids:
         weight[mask] = 0
@@ -241,5 +242,76 @@ def make_criterion(vocab_size, mask_ids=()):
 
 def format_hyp(score, hyp, hyp_num, d):
     return '\n* [{hyp}] [Score:{score:.3f}]: {sent}'.format(
-        hyp=hyp_num, score=score/len(hyp),
+        hyp=hyp_num,
+        score=score/len(hyp),
         sent=' '.join([d.vocab[c] for c in hyp]))
+
+
+def make_lm_check_hook(d, seed_text, max_seq_len=25, gpu=False,
+                       method='sample', temperature=1, width=5,
+                       early_stopping=None, validate=True):
+    """
+    Make a generator hook for a normal language model
+    """
+
+    def hook(trainer, epoch, batch_num, checkpoint):
+        trainer.log("info", "Checking training...")
+        if validate:
+            loss = trainer.validate_model()
+            trainer.log("info", "Valid loss: %g" % loss)
+            trainer.log("info", "Registering early stopping loss...")
+            if early_stopping is not None:
+                early_stopping.add_checkpoint(loss)
+        trainer.log("info", "Generating text...")
+        scores, hyps = trainer.model.generate(
+            d, seed_text=seed_text, max_seq_len=max_seq_len, gpu=gpu,
+            method=method, temperature=temperature, width=width)
+        hyps = [format_hyp(score, hyp, hyp_num + 1, d)
+                for hyp_num, (score, hyp) in enumerate(zip(scores, hyps))]
+        trainer.log("info", '\n***' + ''.join(hyps) + "\n***")
+
+    return hook
+
+
+def make_clm_hook(d, sampled_conds=None, max_seq_len=200, gpu=False,
+                  method='sample', temperature=1, batch_size=10):
+    """
+    Make a generator hook for a CLM.
+
+    Parameters:
+    -----------
+    d: list of Dicts, the first one being the Dict for language, the tail
+        being Dicts for conditions in the same order as passed to the model
+    sampled_conds: list of lists of str, or int, or None,
+        if a list, it is supposed to contain lists specifying the conditions
+        for each sample [[cond1, cond2], [cond1, cond2], ...]
+        if an int, a total of `sampled_conds` samples will be produced with
+        random values for the conditions.
+        if None, 5 samples will be taken (resulting in 5 combinations of conds)
+    """
+    lang_d, *conds_d = d
+
+    # sample conditions if needed
+    if isinstance(sampled_conds, int) or sampled_conds is None:
+        samples, sampled_conds = sampled_conds or 5, []
+        for _ in range(samples):
+            sample = [d.index(random.sample(d.vocab, 1)[0]) for d in conds_d]
+            sampled_conds.append(sample)
+
+    def hook(trainer, epoch, batch_num, checkpoint):
+        trainer.log('info', 'Generating text...')
+        for conds in sampled_conds:
+            conds_str = ''
+            for idx, (cond_d, sampled_c) in enumerate(zip(conds_d, conds)):
+                conds_str += (str(cond_d.vocab[sampled_c]) + '; ')
+            trainer.log("info", "\n***\nConditions: " + conds_str)
+            scores, hyps = trainer.model.generate(
+                lang_d, max_seq_len=max_seq_len, gpu=gpu,
+                method=method, temperature=temperature,
+                batch_size=batch_size, conds=conds)
+            hyps = [format_hyp(score, hyp, hyp_num + 1, lang_d)
+                    for hyp_num, (score, hyp) in enumerate(zip(scores, hyps))]
+            trainer.log("info", ''.join(hyps) + "\n")
+        trainer.log("info", '***\n')
+
+    return hook
