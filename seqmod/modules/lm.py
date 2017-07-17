@@ -200,7 +200,7 @@ class Decoder(object):
         finished = np.array([False] * batch)
         for _ in range(max_seq_len):
             outs, hidden, _ = self.model(prev, hidden=hidden, **kwargs)
-            prev = outs.div(temperature).exp_().multinomial().t()
+            prev = outs.div_(temperature).exp().multinomial(1).t()
             score = u.select_cols(outs.data.cpu(), prev.squeeze().data.cpu())
             hyps.append(prev.squeeze().data.tolist())
             if self.eos is not None and not ignore_eos:
