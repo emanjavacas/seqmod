@@ -276,6 +276,7 @@ if __name__ == '__main__':
     parser.add_argument('--dataset_path')
     parser.add_argument('--load_dataset', action='store_true')
     parser.add_argument('--save_dataset', action='store_true')
+    parser.add_argument('--max_size', default=1000000, type=int)
     # model
     parser.add_argument('--pos_emb_dim', default=24, type=int)
     parser.add_argument('--word_emb_dim', default=64, type=int)
@@ -303,7 +304,7 @@ if __name__ == '__main__':
         words, pos = zip(*load_penn3(args.path, swbd=False))
         word_dict = Dict(
             eos_token=u.EOS, bos_token=u.BOS, force_unk=True,
-            max_size=100000)
+            max_size=args.max_size)
         pos_dict = Dict(
             eos_token=u.EOS, bos_token=u.BOS, force_unk=False)
         word_dict.fit(words), pos_dict.fit(pos)
