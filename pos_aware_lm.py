@@ -74,6 +74,7 @@ class DoubleRNNPOSAwareLM(POSAwareLM):
             self.pos_num_layers,
             self.pos_emb_dim + self.word_hid_dim,
             self.pos_hid_dim,
+            residual=True,
             dropout=self.dropout)
         if tie_pos:
             pos_project = nn.Linear(self.pos_emb_dim, self.pos_vocab)
@@ -92,6 +93,7 @@ class DoubleRNNPOSAwareLM(POSAwareLM):
             self.word_num_layers,
             self.word_emb_dim + self.pos_hid_dim,
             self.word_hid_dim,
+            residual=True,
             dropout=self.dropout)
         if tie_word:
             word_project = nn.Linear(self.word_emb_dim, self.word_vocab)
@@ -128,18 +130,15 @@ class DoubleRNNPOSAwareLM(POSAwareLM):
         p_outs, w_outs = [], []
         p_hid, w_hid = hidden if hidden is not None else (None, None)
         p_emb, w_emb = self.pos_emb(pos), self.word_emb(word)
-        if self.dropout:
-            p_emb = F.dropout(p_emb, self.dropout)
-            w_emb = F.dropout(w_emb, self.dropout)
         for p, w in zip(p_emb, w_emb):
             w_hid = w_hid or self.init_hidden_for(w, 'word')
             p_hid = p_hid or self.init_hidden_for(p, 'pos')
             p_out, p_hid = self.pos_rnn(
                 torch.cat((p, self.get_last_hid(w_hid)), 1),
-                p_hid)
+                hidden=p_hid)
             w_out, w_hid = self.word_rnn(
                 torch.cat((w, self.get_last_hid(p_hid)), 1),
-                w_hid)
+                hidden=w_hid)
             p_outs.append(self.pos_project(p_out))
             w_outs.append(self.word_project(w_out))
         return (torch.stack(p_outs), torch.stack(w_outs)), (p_hid, w_hid)
@@ -164,18 +163,18 @@ class DoubleRNNPOSAwareLM(POSAwareLM):
         p_prev = init_prev(pos_dict.get_bos()).unsqueeze(0)
         w_prev = init_prev(word_dict.get_bos()).unsqueeze(0)
         for _ in range(max_seq_len):
-            # pos
             p_emb, w_emb = self.pos_emb(p_prev), self.word_emb(w_prev)
-            w_hid = w_hid or self.init_hidden_for(w_emb[0], 'word')
             p_hid = p_hid or self.init_hidden_for(p_emb[0], 'pos')
+            w_hid = w_hid or self.init_hidden_for(w_emb[0], 'word')
+            # pos
             p_out, p_hid = self.pos_rnn(
                 torch.cat((p_emb.squeeze(0), self.get_last_hid(w_hid)), 1),
-                p_hid)
+                hidden=p_hid)
             p_out = self.pos_project(p_out)
             # word
             w_out, w_hid = self.word_rnn(
                 torch.cat((w_emb.squeeze(0), self.get_last_hid(p_hid)), 1),
-                w_hid)
+                hidden=w_hid)
             w_out = self.word_project(w_out)
             (p_prev, p_score), (w_prev, w_score) = sample(p_out), sample(w_out)
             # hyps
