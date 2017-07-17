@@ -188,8 +188,8 @@ class Dict(object):
 
     def transform(self, examples, bos=True, eos=True):
         assert self.fitted, "Attempt to index without fitted data"
-        bos = [self.get_bos() if self.bos_token and bos else []]
-        eos = [self.get_eos() if self.eos_token and eos else []]
+        bos = [self.get_bos()] if self.bos_token and bos else []
+        eos = [self.get_eos()] if self.eos_token and eos else []
         for example in examples:
             if self.sequential:
                 yield bos + [self.index(s) for s in example] + eos
