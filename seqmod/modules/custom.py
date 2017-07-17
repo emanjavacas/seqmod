@@ -7,7 +7,7 @@ from torch.autograd import Variable
 # Stateful Modules
 class _StackedRNN(nn.Module):
     def __init__(self, cell, num_layers, in_dim, hid_dim, dropout=0.0):
-        super(StackedLSTM, self).__init__()
+        super(_StackedRNN, self).__init__()
         self.has_dropout = False
         if dropout:
             self.has_dropout = True
