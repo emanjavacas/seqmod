@@ -20,6 +20,20 @@ def argsort(seq, reverse=False):
     return sorted(range(len(seq)), reverse=reverse, key=seq.__getitem__)
 
 
+def destruct(tup, idx):
+    """
+    Destruct a tuple into three tuples corresponding to the prefix,
+    the actual target value `idx`, and the suffix (which might be empty)
+    if the idx refers to the last tuple value
+    """
+    if idx >= len(tup):
+        raise ValueError("Index out of range")
+    if idx == 0:
+        return (), tup[0:1], tup[1:]
+    else:
+        return tup[0:idx], tup[idx], tup[idx+1:]
+
+
 def cumsum(seq):
     seq = [0] + list(seq)
     subseqs = (seq[:i] for i in range(1, len(seq)+1))
@@ -195,6 +209,47 @@ class Dict(object):
                 yield bos + [self.index(s) for s in example] + eos
             else:
                 yield [self.index(s) for s in example]
+
+
+class CompressionTable(object):
+    """
+    Simple implementation of a compression mechanism to map input tuples
+    to single integers and back.
+
+    Parameters:
+    -----------
+    nvals: int, expected number of integers in the input tuple
+    """
+    def __init__(self, nvals):
+        self.index2vals = []
+        self.vals2index = {}
+        self.nvals = nvals
+
+    def hash_vals(self, vals):
+        if len(vals) != self.nvals:
+            raise ValueError("Wrong number of input values [%d]" % len(vals))
+        if vals in self.vals2index:
+            return self.vals2index[vals]
+        else:
+            self.index2vals.append(vals)
+            self.vals2index[vals] = len(self.vals2index)
+            return len(self.vals2index) - 1
+
+    def get_vals(self, index):
+        return self.index2vals[index]
+
+    def expand(self, t):
+        """
+        Transform a 2D input tensor into `nval` tensors of same dimensionality
+        as the input tensor applying the learned decompressiong to each entry
+        """
+        seq_len, batch_size = t.size()
+        vals1d = (c for i in t.view(-1) for c in self.get_vals(i))
+        t = torch.LongTensor(list(vals1d))
+        return tuple(t.view(seq_len, batch_size, self.nvals)
+                      .transpose(2, 0)
+                      .transpose(1, 2)
+                      .contiguous())
 
 
 class Dataset(Sequence, torch.utils.data.Dataset):
@@ -379,7 +434,8 @@ class BlockDataset(Dataset):
         Backprop through time (max context the RNN conditions predictions on)
     """
     def __init__(self, examples, d, batch_size, bptt,
-                 fitted=False, gpu=False, evaluation=False):
+                 fitted=False, gpu=False, evaluation=False,
+                 table=None, table_idx=1):
         if not fitted:
             examples = self._fit(examples, d, batch_size)
         self.data = block_batchify(examples, batch_size)
@@ -389,6 +445,8 @@ class BlockDataset(Dataset):
         self.fitted = fitted
         self.gpu = gpu
         self.evaluation = evaluation
+        self.table = table
+        self.table_idx = table_idx
 
     def _fit(self, examples, d, batch_size):
         too_short = ValueError(
@@ -444,10 +502,21 @@ class BlockDataset(Dataset):
         - trg: torch.LongTensor of maximum size self.bptt x self.batch_size,
             corresponding to a shifted batch
         """
+        src, trg = None, None
         if isinstance(self.data, tuple):
-            return tuple(zip(*(self._getitem(d, idx) for d in self.data)))
+            src, trg = tuple(zip(*(self._getitem(d, idx) for d in self.data)))
+            if self.table is not None:
+                src_pre, src_target, src_suf = destruct(src, self.table_idx)
+                src_target = tuple(wrap_variable(t, self.evaluation, self.gpu)
+                                   for t in self.table.expand(src_target.data))
+                src = tuple(src_pre + src_target + src_suf)
+                trg_pre, trg_target, trg_suf = destruct(trg, self.table_idx)
+                trg_target = tuple(wrap_variable(t, self.evaluation, self.gpu)
+                                   for t in self.table.expand(trg_target.data))
+                trg = tuple(trg_pre + trg_target + trg_suf)
         else:
-            return self._getitem(self.data, idx)
+            src, trg = self._getitem(self.data, idx)
+        return src, trg
 
     def set_gpu(self, new_gpu):
         self.gpu = new_gpu
@@ -486,12 +555,13 @@ class BlockDataset(Dataset):
             evaluation = self.evaluation if idx == 0 else True
             datasets.append(type(self)(
                 self.split_data(start, stop), self.d, self.batch_size,
-                self.bptt, fitted=True, gpu=self.gpu, evaluation=evaluation))
+                self.bptt, fitted=True, gpu=self.gpu, evaluation=evaluation,
+                table=self.table, table_idx=self.table_idx))
         return tuple(datasets)
 
     @classmethod
-    def splits_from_data(cls, data, d, batch_size, bptt,
-                         gpu=False, test=0.1, dev=0.1, evaluation=False):
+    def splits_from_data(cls, data, d, batch_size, bptt, test=0.1, dev=0.1,
+                         **kwargs):
         """
         Shortcut classmethod for loading splits from a vector-serialized
         corpus. It can be used to avoid creating the parent dataset before
