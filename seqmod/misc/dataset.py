@@ -1,4 +1,5 @@
 
+import math
 import logging
 import random
 from collections import Counter, Sequence
@@ -7,6 +8,8 @@ from functools import singledispatch
 import torch
 import torch.utils.data
 from torch.autograd import Variable
+
+from seqmod import utils as u
 
 
 def shuffle_pairs(pair1, pair2):
@@ -143,7 +146,7 @@ class Dict(object):
         they are None).
     """
     def __init__(self, pad_token=None, eos_token=None, bos_token=None,
-                 unk_token='<unk>', force_unk=True, max_size=None, min_freq=1,
+                 unk_token=u.UNK, force_unk=True, max_size=None, min_freq=1,
                  sequential=True):
         self.counter = Counter()
         self.fitted = False
@@ -367,15 +370,14 @@ class PairedDataset(Dataset):
             of the source or the target dataset.
         """
         assert sort_by in ('src', 'trg')
-        indices = None
         if self.autoregressive:
             if sort_by == 'trg':
                 logging.warn("Omitting sort_by in autoregressive dataset")
             self.data['src'].sort(reverse=reverse)
         else:
-            index = argsort(list(map(len, self.data[sort_by])), reverse=reverse)
-            self.data['src'] = [self.data['src'][idx] for idx in index]
-            self.data['trg'] = [self.data['trg'][idx] for idx in index]
+            idx = argsort(list(map(len, self.data[sort_by])), reverse=reverse)
+            self.data['src'] = [self.data['src'][i] for i in idx]
+            self.data['trg'] = [self.data['trg'][i] for i in idx]
         return self
 
     def splits(self, test=0.1, dev=0.2, shuffle=False, sort_by=None):
@@ -461,13 +463,12 @@ class BlockDataset(Dataset):
                 "all input examples must be equal size"
             if len(examples[0]) // batch_size == 0:
                 raise too_short
-            return tuple(
-                [item for seq in subd.transform(subex) for item in seq]
-                for (subex, subd) in zip(examples, d))
+            return tuple([it for seq in subd.transform(subex) for it in seq]
+                         for (subex, subd) in zip(examples, d))
         else:
             if len(examples) // batch_size == 0:
                 raise too_short
-            return [item for seq in d.transform(examples) for item in seq]
+            return [it for seq in d.transform(examples) for it in seq]
 
     def _getitem(self, data, idx):
         """
@@ -477,10 +478,9 @@ class BlockDataset(Dataset):
         """
         idx *= self.bptt
         seq_len = min(self.bptt, len(data) - 1 - idx)
-        src = Variable(data[idx:idx+seq_len], volatile=self.evaluation)
-        trg = Variable(data[idx+1:idx+seq_len+1], volatile=self.evaluation)
-        if self.gpu:
-            src, trg = src.cuda(), trg.cuda()
+        src_data, trg_data = data[idx:idx+seq_len], data[idx+1:idx+seq_len+1]
+        src = wrap_variable(src_data, self.evaluation, self.gpu)
+        trg = wrap_variable(trg_data, self.evaluation, self.gpu)
         return src, trg
 
     def __len__(self):
@@ -488,9 +488,8 @@ class BlockDataset(Dataset):
         The length of the dataset is computed as the number of bptt'ed batches
         to conform the way batches are computed. See __getitem__.
         """
-        if isinstance(self.data, tuple):
-            return len(self.data[0]) // self.bptt
-        return len(self.data) // self.bptt
+        basis = self.data[0] if isinstance(self.data, tuple) else self.data
+        return math.ceil((len(basis) - 1) / self.bptt)
 
     def __getitem__(self, idx):
         """
@@ -570,13 +569,14 @@ class BlockDataset(Dataset):
         size = len(data[0]) if isinstance(data, tuple) else len(data)
         datasets, splits = [], get_splits(size, test, dev=dev)
         for idx, (start, stop) in enumerate(zip(splits, splits[1:])):
-            evaluation = evaluation if idx == 0 else True
+            evaluation = False if idx == 0 else True
             if isinstance(data, tuple):
                 split = tuple(d[start:stop] for d in data)
             else:
                 split = data[start:stop]
-            datasets.append(cls(split, d, batch_size, bptt,
-                                fitted=True, gpu=gpu, evaluation=evaluation))
+            dataset = cls(split, d, batch_size, bptt,
+                          fitted=True, evaluation=evaluation, **kwargs)
+            datasets.append(dataset)
         return tuple(datasets)
 
 

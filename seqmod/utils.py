@@ -11,6 +11,7 @@ from torch.autograd import Variable
 BOS = '<bos>'
 EOS = '<eos>'
 PAD = '<pad>'
+UNK = '<unk>'
 
 
 # General utils
