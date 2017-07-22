@@ -489,6 +489,8 @@ class BlockDataset(Dataset):
         to conform the way batches are computed. See __getitem__.
         """
         basis = self.data[0] if isinstance(self.data, tuple) else self.data
+        # if batches don't divide evenly by bptt there will be an extra last
+        # batch with lower bptt
         return math.ceil((len(basis) - 1) / self.bptt)
 
     def __getitem__(self, idx):

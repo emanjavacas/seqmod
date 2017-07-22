@@ -161,3 +161,8 @@ class TestBlockDataset(unittest.TestCase):
             words,
             flattened[:len(words)],
             "Batch-accessed transformed data conforms to flattened data")
+
+
+class TestCompressionTable(unittest.TestCase):
+    def setUp(self):
+        pass
