@@ -3,12 +3,10 @@ import hashlib
 from collections import Counter
 import unittest
 
+import torch
+
 from seqmod.misc import dataset
 from seqmod import utils as u
-
-
-def fake_tags(w):
-    return w, hashlib.md5(w.encode('utf-8')), hashlib.sha1(w.encode('utf-8'))
 
 
 test_corpus = [
@@ -22,7 +20,6 @@ test_corpus = [
 ]
 
 test_corpus = [s.split() for s in test_corpus]
-tagged_test_corpus = [[fake_tags(w) for w in s] for s in test_corpus]
 
 
 class TestDict(unittest.TestCase):
@@ -59,11 +56,13 @@ class TestBlockDataset(unittest.TestCase):
         self.seq_d.fit(test_corpus)
         self.tag1_d = dataset.Dict(eos_token=u.EOS, bos_token=u.BOS,
                                    force_unk=True, sequential=True)
-        self.tag1_corpus = [[tup[1] for tup in s] for s in tagged_test_corpus]
+        self.tagged_corpus = \
+            [[self._fake_tags(w) for w in s] for s in test_corpus]
+        self.tag1_corpus = [[tup[1] for tup in s] for s in self.tagged_corpus]
         self.tag1_d.fit(self.tag1_corpus)
         self.tag2_d = dataset.Dict(eos_token=u.EOS, bos_token=u.BOS,
                                    force_unk=True, sequential=True)
-        self.tag2_corpus = [[tup[2] for tup in s] for s in tagged_test_corpus]
+        self.tag2_corpus = [[tup[2] for tup in s] for s in self.tagged_corpus]
         self.tag2_d.fit(self.tag2_corpus)
         # props
         self.batch_size = 10
@@ -72,13 +71,18 @@ class TestBlockDataset(unittest.TestCase):
         self.simple_dataset = dataset.BlockDataset(
             test_corpus, self.seq_d, self.batch_size, self.bptt)
         words, tags1, tags2 = [], [], []
-        for s in tagged_test_corpus:
+        for s in self.tagged_corpus:
             words.append([tup[0] for tup in s])
             tags1.append([tup[1] for tup in s])
             tags2.append([tup[2] for tup in s])
         self.multi_dataset = dataset.BlockDataset(
             (words, tags1, tags2), (self.seq_d, self.tag1_d, self.tag2_d),
             self.batch_size, self.bptt)
+
+    def _fake_tags(self, w):
+        return (w,
+                hashlib.md5(w.encode('utf-8')),
+                hashlib.sha1(w.encode('utf-8')))
 
     def test_target(self):
         for src, trg in self.simple_dataset:
@@ -156,7 +160,7 @@ class TestBlockDataset(unittest.TestCase):
         # merge by tuples [(word, tag1, tag2, ...), ...]
         words = list(zip(*words))
         # flatten original data into tuples
-        flattened = [tup for seq in tagged_test_corpus for tup in seq]
+        flattened = [tup for seq in self.tagged_corpus for tup in seq]
         self.assertEqual(
             words,
             flattened[:len(words)],
@@ -165,4 +169,38 @@ class TestBlockDataset(unittest.TestCase):
 
 class TestCompressionTable(unittest.TestCase):
     def setUp(self):
-        pass
+        # corpus
+        self.nvals, self.batch_size = 3, 15
+        self.tagged_corpus = \
+            [[tuple([w, *self._encode_variables(self.nvals)]) for w in s]
+             for s in test_corpus]
+        self.conds = [conds for s in self.tagged_corpus for (w, *conds) in s]
+        # compression table
+        self.table = dataset.CompressionTable(self.nvals)
+        self.hashed = [self.table.hash_vals(tuple(v)) for v in self.conds]
+
+    def _encode_variables(self, nvals, card=3):
+        import random
+        return (random.randint(0, card) for _ in range(nvals))
+
+    def test_mapping(self):
+        for hashed, vals in zip(self.hashed, self.conds):
+            self.assertEqual(tuple(vals), self.table.get_vals(hashed))
+
+    def test_expand(self):
+        # hashed conditions as tensor
+        as_tensor = torch.LongTensor([h for h in self.hashed])
+        # expand requires batched tensor
+        num_batches, pad = divmod(len(as_tensor), self.batch_size)
+        if pad != 0:            # pad tensor in case uneven length
+            num_batches += 1
+        # create 0-pad tensor and copy from source tensor
+        t = torch.zeros([num_batches, self.batch_size]).long().view(-1)
+        index = torch.LongTensor(list(range(len(as_tensor))))
+        t.index_copy_(0, index, as_tensor)
+        # expand
+        conds = self.table.expand(t.view(-1, self.batch_size))
+        # transform into original form for comparison
+        conds = [c.view(-1) for c in conds]
+        conds = [list(c) for c in zip(*conds)]
+        self.assertEqual(self.conds, conds[:len(as_tensor)])

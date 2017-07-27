@@ -243,15 +243,15 @@ class CompressionTable(object):
 
     def expand(self, t):
         """
-        Transform a 2D input tensor into `nval` tensors of same dimensionality
+        Transform a 2D input tensor into `nvals` tensors of same dimensionality
         as the input tensor applying the learned decompressiong to each entry
         """
         seq_len, batch_size = t.size()
         vals1d = (c for i in t.view(-1) for c in self.get_vals(i))
         t = torch.LongTensor(list(vals1d))
         return tuple(t.view(seq_len, batch_size, self.nvals)
-                      .transpose(2, 0)
-                      .transpose(1, 2)
+                      .transpose(2, 0)  # (nvals, batch_size, seq_len)
+                      .transpose(1, 2)  # (nvals, seq_len, batch_size)
                       .contiguous())
 
 
