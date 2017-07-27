@@ -292,9 +292,9 @@ class LMTrainer(Trainer):
     """
     General LMTrainer for standard LMs
     """
-    def __init__(self, *args, reset_on_hidden=True, **kwargs):
+    def __init__(self, *args, reset_hidden=False, **kwargs):
         super(LMTrainer, self).__init__(*args, **kwargs)
-        self.reset_on_hidden = reset_on_hidden
+        self.reset_hidden = reset_hidden
 
     def format_loss(self, loss):
         return tuple(math.exp(min(l, 100)) for l in loss)
@@ -313,8 +313,12 @@ class LMTrainer(Trainer):
         return (loss.data[0], )
 
     def on_batch_end(self, batch, loss):
-        if self.reset_on_hidden and hasattr(self, 'reset_hidden'):
-            self.batch_state['hidden'].zero_()
+        if self.reset_hidden:
+            if isinstance(self.batch_state['hidden'], tuple):
+                for h in self.batch_state['hidden']:
+                    h.data.zero_()
+            else:
+                self.batch_state['hidden'].data.zero_()
 
     def num_batch_examples(self, batch_data):
         src, trg, *_ = batch_data
@@ -340,7 +344,7 @@ class CyclicLMTrainer(LMTrainer):
         self.batch_state['hidden'][head] = repackage_hidden(hidden)
 
     def on_batch_end(self, batch, loss):
-        if self.reset_on_hidden and hasattr(self, 'reset_hidden'):
+        if self.reset_hidden:
             for v in self.batch_state['hidden'].values():
                 v.zero_()
 
