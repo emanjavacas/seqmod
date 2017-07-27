@@ -25,10 +25,6 @@ def load_lines(path, processor=text_processor()):
     return lines
 
 
-def make_mock_labels(lines, label='0'):
-    return [[label] for _ in range(len(lines))]
-
-
 def load_from_lines(
         path, batch_size, max_size=1000000, min_freq=5, gpu=False,
         shuffle=True, sort_key=True, **kwargs):
@@ -36,11 +32,8 @@ def load_from_lines(
     ldict = Dict(pad_token=u.PAD, eos_token=u.EOS, bos_token=u.BOS,
                  max_size=max_size, min_freq=min_freq)
     ldict.fit(lines)
-    mock_labels = make_mock_labels(train)
-    mock = Dict()
-    mock.fit(mock_labels)
-    d = {'src': ldict, 'trg': mock}
-    splits = PairedDataset(lines, mock_labels, d, batch_size, gpu=gpu).splits(
+    d = {'src': ldict}
+    splits = PairedDataset(lines, None, d, batch_size, gpu=gpu).splits(
         shuffle=shuffle, sort_key=sort_key, **kwargs)
     return splits
 
@@ -49,24 +42,20 @@ def load_penn(path, batch_size,
               max_size=1000000, min_freq=1, gpu=False, shuffle=True,
               sort_key=True):
     train_data = load_lines(os.path.join(path, 'train.txt'))
-    train_labels = make_mock_labels(train_data)
     valid_data = load_lines(os.path.join(path, 'valid.txt'))
-    valid_labels = make_mock_labels(valid_data)
     test_data = load_lines(os.path.join(path, 'test.txt'))
-    test_labels = make_mock_labels(test_data)
     ldict = Dict(pad_token=u.PAD, eos_token=u.EOS, bos_token=u.BOS,
                  max_size=max_size, min_freq=min_freq)
     ldict.fit(train_data, valid_data)
-    mock = Dict().fit(train_labels)
-    d = {'src': ldict, 'trg': mock}
+    d = {'src': ldict}
     train = PairedDataset(
-        train_data, train_labels, d, batch_size, gpu=gpu
+        train_data, None, d, batch_size, gpu=gpu
     ).sort_(sort_key=sort_key)
     valid = PairedDataset(
-        valid_data, valid_labels, d, batch_size, gpu=gpu, evaluation=True
+        valid_data, None, d, batch_size, gpu=gpu, evaluation=True
     ).sort_(sort_key=sort_key)
     test = PairedDataset(
-        test_data, test_labels, d, batch_size, gpu=gpu, evaluation=True
+        test_data, None, d, batch_size, gpu=gpu, evaluation=True
     ).sort_(sort_key=sort_key)
     return train, valid, test
 
