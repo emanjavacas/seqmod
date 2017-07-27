@@ -239,6 +239,8 @@ class CompressionTable(object):
             return len(self.vals2index) - 1
 
     def get_vals(self, index):
+        if index >= len(self.index2vals):
+            raise ValueError("Unknown input index [{}]".format(index))
         return self.index2vals[index]
 
     def expand(self, t):
@@ -470,6 +472,16 @@ class BlockDataset(Dataset):
                 raise too_short
             return [it for seq in d.transform(examples) for it in seq]
 
+    def __len__(self):
+        """
+        The length of the dataset is computed as the number of bptt'ed batches
+        to conform the way batches are computed. See __getitem__.
+        """
+        basis = self.data[0] if isinstance(self.data, tuple) else self.data
+        # if batches don't divide evenly by bptt there will be an extra last
+        # batch with lower bptt
+        return math.ceil((len(basis) - 1) / self.bptt)
+
     def _getitem(self, data, idx):
         """
         General function to get the source data to compute the batch. This
@@ -482,16 +494,6 @@ class BlockDataset(Dataset):
         src = wrap_variable(src_data, self.evaluation, self.gpu)
         trg = wrap_variable(trg_data, self.evaluation, self.gpu)
         return src, trg
-
-    def __len__(self):
-        """
-        The length of the dataset is computed as the number of bptt'ed batches
-        to conform the way batches are computed. See __getitem__.
-        """
-        basis = self.data[0] if isinstance(self.data, tuple) else self.data
-        # if batches don't divide evenly by bptt there will be an extra last
-        # batch with lower bptt
-        return math.ceil((len(basis) - 1) / self.bptt)
 
     def __getitem__(self, idx):
         """
@@ -507,10 +509,12 @@ class BlockDataset(Dataset):
         if isinstance(self.data, tuple):
             src, trg = tuple(zip(*(self._getitem(d, idx) for d in self.data)))
             if self.table is not None:
+                # source
                 src_pre, src_target, src_suf = destruct(src, self.table_idx)
                 src_target = tuple(wrap_variable(t, self.evaluation, self.gpu)
                                    for t in self.table.expand(src_target.data))
                 src = tuple(src_pre + src_target + src_suf)
+                # target
                 trg_pre, trg_target, trg_suf = destruct(trg, self.table_idx)
                 trg_target = tuple(wrap_variable(t, self.evaluation, self.gpu)
                                    for t in self.table.expand(trg_target.data))
