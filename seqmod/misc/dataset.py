@@ -230,13 +230,14 @@ class CompressionTable(object):
 
     def hash_vals(self, vals):
         if len(vals) != self.nvals:
-            raise ValueError("Wrong number of input values [%d]" % len(vals))
+            raise ValueError("Wrong number of values {}".format(len(vals)))
         if vals in self.vals2index:
             return self.vals2index[vals]
         else:
+            idx = len(self.vals2index)
             self.index2vals.append(vals)
-            self.vals2index[vals] = len(self.vals2index)
-            return len(self.vals2index) - 1
+            self.vals2index[vals] = idx
+            return idx
 
     def get_vals(self, index):
         if index >= len(self.index2vals):

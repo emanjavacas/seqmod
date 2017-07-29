@@ -1,7 +1,4 @@
 
-import math
-import functools
-import operator
 import logging
 
 import numpy as np
