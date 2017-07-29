@@ -12,7 +12,7 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 
 from seqmod import utils as u
-from seqmod.modules.custom import word_dropout, MaxOut
+from seqmod.modules.custom import word_dropout, MaxOut, NormalizedGRU
 from seqmod.misc.beam_search import Beam
 
 
@@ -418,7 +418,11 @@ class LM(nn.Module):
                 rnn_input_size += c['emb_dim']
             self.conds = nn.ModuleList(conds)
         # rnn
-        self.rnn = getattr(nn, cell)(
+        if cell == 'NormalizedGRU':
+            cell = NormalizedGRU
+        else:
+            cell = getattr(nn, cell)
+        self.rnn = cell(
             rnn_input_size, self.hid_dim,
             num_layers=num_layers, bias=bias, dropout=dropout)
         # attention
