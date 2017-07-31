@@ -241,11 +241,22 @@ def make_xent_criterion(vocab_size, mask_ids=()):
     return torch.nn.CrossEntropyLoss(weight=weight)
 
 
-def format_hyp(score, hyp, hyp_num, d):
+def format_hyp(score, hyp, hyp_num, d, level='word'):
+    """
+    Transform a hypothesis into a string for visualization purposes
+
+    score: float, normalized probability
+    hyp: list of integers
+    hyp_num: int, index of the hypothesis
+    d: Dict, dictionary used for fitting the vocabulary
+    """
+    if level not in ('word', 'char'):
+        raise ValueError('level must be "word" or "char"')
+    sep = ' ' if level == 'word' else ''
     return '\n* [{hyp}] [Score:{score:.3f}]: {sent}'.format(
         hyp=hyp_num,
         score=score/len(hyp),
-        sent=' '.join([d.vocab[c] for c in hyp]))
+        sent=sep.join([d.vocab[c] for c in hyp]))
 
 
 def make_lm_check_hook(d, seed_text, max_seq_len=25, gpu=False,
