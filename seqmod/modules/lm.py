@@ -29,7 +29,7 @@ def strip_post_eos(sents, eos):
     return out
 
 
-def read_batch(m, seed_texts, method, temperature=1., gpu=False, **kwargs):
+def read_batch(m, seed_texts, temperature=1., gpu=False, **kwargs):
     """
     Computes the hidden states for a bunch of seeds in iterative fashion.
     This is currently being done so because LM doesn't use padding and
@@ -40,40 +40,29 @@ def read_batch(m, seed_texts, method, temperature=1., gpu=False, **kwargs):
     Parameters:
     -----------
     seed_texts: list of lists of ints
-    method: one of 'sample' or 'argmax', how to sample the first item right
 
     Returns:
     --------
-    scores: torch.FloatTensor (batch_size), scores for samples in the batch
     prev: torch.LongTensor (1 x batch_size), sampled symbols in the batch
     hidden: torch.FloatTensor (num_layers x batch_size x hid_dim)
     """
-    if method not in ('sample', 'argmax'):
-        raise ValueError('method must be sample or argmax')
-    hs, cs, prev, scores = [], [], [], []
+    prev, hs, cs = [], [], []
     for seed_text in seed_texts:
+        seed_text, prev_i = seed_text[:-1], seed_text[-1]
+        prev.append(prev_i)
         inp = Variable(torch.LongTensor(seed_text).unsqueeze(1), volatile=True)
         if gpu:
             inp = inp.cuda()
-        outs, hidden, _ = m(inp, **kwargs)
-        outs = outs[-1]         # pick last step
+        _, hidden, _ = m(inp, **kwargs)
         if m.cell.startswith('LSTM'):
             h, c = hidden
             hs.append(h), cs.append(c)
         else:
             hs.append(hidden)
-        if method == 'sample':
-            prev_t = outs.div(temperature).exp_().multinomial()
-            scores.append(outs[prev_t.data[0]].cpu().data)
-        else:                   # argmax over single step
-            score, prev_t = outs.max(0)
-            scores.append(score.cpu().data)
-        prev.append(prev_t)
-    scores, prev = torch.cat(scores), torch.stack(prev, 1)
     if m.cell.startswith('LSTM'):
-        return scores, prev, (torch.cat(hs, 1), torch.cat(cs, 1))
+        return torch.LongTensor(prev), (torch.cat(hs, 1), torch.cat(cs, 1))
     else:
-        return scores, prev, torch.cat(hs, 1)
+        return torch.LongTensor(prev), torch.cat(hs, 1)
 
 
 class Decoder(object):
@@ -92,7 +81,7 @@ class Decoder(object):
         self.d = d
         self.bos, self.eos = self.d.get_bos(), self.d.get_eos()
 
-    def _seed(self, seed_texts, batch_size, method, bos, eos, **kwargs):
+    def _seed(self, seed_texts, batch_size, bos, eos, **kwargs):
         """
         Handles the input to the actual generation method taking into account
         multiple variables. If seed_texts are given, it takes care of reading
@@ -113,7 +102,6 @@ class Decoder(object):
             lists of strings over vocabulary tokens. If seed_texts is given and
             is of length 1, the seed will be broadcasted to batch_size.
         batch_size: int, number of items in the seed batch.
-        method: str, one of 'sample' or 'argmax' to use for sampling first item
         bos: bool, whether to prefix the seed with the bos_token. Only used if
             seed_texts is given and the dictionary has a bos_token.
         eos: bool, whether to suffix the seed with the eos_token. Only used if
@@ -122,56 +110,54 @@ class Decoder(object):
 
         Returns
         ---------
-        scores: (batch_size), torch Tensor holding the scores for the first
-            sampled item.
         prev: (1 x batch_size), first integer token to feed into the generator
         hidden: hidden state to seed the generator, may be None if no seed text
             was passed to the generation function.
         """
-        hidden, scores = None, 0
+        hidden = None
         if seed_texts is not None:
+            # read input seed batch
             seed_texts = [[self.d.index(i) for i in s] for s in seed_texts]
             if bos and self.bos is not None:  # prepend bos to seeds
                 seed_texts = [[self.bos] + s for s in seed_texts]
-            if eos and self.eos is not None:
+            if eos and self.eos is not None:  # append eos to seeds
                 seed_texts = [s + [self.eos] for s in seed_texts]
-            scores, prev, hidden = read_batch(
-                self.model, seed_texts, method, gpu=self.gpu, **kwargs)
+            prev_data, hidden = read_batch(
+                self.model, seed_texts, gpu=self.gpu, **kwargs)
             if len(seed_texts) == 1:  # project over batch if only single seed
-                scores = scores.repeat(batch_size)
-                prev = prev.repeat(1, batch_size)
+                prev_data = prev_data.repeat(1, batch_size)
                 if self.model.cell.startswith('LSTM'):
                     hidden = (hidden[0].repeat(1, batch_size, 1),
                               hidden[1].repeat(1, batch_size, 1))
                 else:
                     hidden = hidden.repeat(1, batch_size, 1)
-        elif self.bos is not None:
-            # initialize with <bos>
-            prev_data = torch.LongTensor([self.bos] * batch_size).unsqueeze(0)
-            prev = Variable(prev_data, volatile=True)
+        elif self.eos is not None:
+            # initialize with <eos>
+            prev_data = torch.LongTensor([self.eos] * batch_size).unsqueeze(0)
         else:
             # random uniform sample from vocab
             prev_data = (torch.rand(batch_size) * self.model.vocab).long()
-            prev = Variable(prev_data, volatile=True)
+            prev_data = prev_data.unsqueeze(0)
+        # wrap prev in variable
+        prev = Variable(prev_data, volatile=True)
         if self.gpu:
             prev = prev.cuda()
-        return scores, prev, hidden
+        return prev, hidden
 
-    def argmax(self, seed_texts=None, max_seq_len=25, batch_size=10,
+    def argmax(self, seed_texts=None, max_seq_len=25,
                ignore_eos=False, bos=False, eos=False, **kwargs):
         """
         Generate a sequence sampling the element with highest probability
         in the output distribution at each generation step.
         """
-        scores, prev, hidden = self._seed(
-            seed_texts, batch_size, 'argmax', bos, eos)
-        batch = prev.size(1)
-        hyps = [prev.squeeze().data.tolist()]
-        finished = np.array([False] * batch)
+        prev, hidden = self._seed(seed_texts, 1, bos, eos)
+        hyps, scores = [], 0
+        finished = np.array([False])
         for _ in range(max_seq_len):
             outs, hidden, _ = self.model(prev, hidden=hidden, **kwargs)
             score, prev = outs.max(1)
-            hyps.append(prev.data.tolist())
+            score, prev = score.squeeze(), prev.t()
+            hyps.append(prev.squeeze().data.tolist())
             if self.eos is not None and not ignore_eos:
                 mask = (prev.squeeze().data == self.eos).cpu().numpy() == 1
                 finished[mask] = True
@@ -182,6 +168,28 @@ class Decoder(object):
             scores += score.data
         return scores.tolist(), list(zip(*hyps))
 
+    def beam(self, width=5, seed_texts=None, max_seq_len=25,
+             ignore_eos=False, bos=False, eos=False, **kwargs):
+        """
+        Approximation to the highest probability output over the generated
+        sequence using beam search.
+        """
+        prev, hidden = self._seed(seed_texts, 1, bos, eos)
+        eos = self.eos if not ignore_eos else None
+        beam = Beam(width, prev.squeeze().data[0], eos=eos)
+        while beam.active and len(beam) < max_seq_len:
+            prev_data = beam.get_current_state().unsqueeze(0)
+            prev = Variable(prev_data, volatile=True)
+            outs, hidden, _ = self.model(prev, hidden=hidden, **kwargs)
+            beam.advance(outs.data)
+            if self.model.cell.startswith('LSTM'):
+                hidden = (u.swap(hidden[0], 1, beam.get_source_beam()),
+                          u.swap(hidden[1], 1, beam.get_source_beam()))
+            else:
+                hidden = u.swap(hidden, 1, beam.get_source_beam())
+        scores, hyps = beam.decode(n=width)
+        return scores, hyps
+
     def sample(self, temperature=1., seed_texts=None, max_seq_len=25,
                batch_size=10, ignore_eos=False, bos=False, eos=False,
                **kwargs):
@@ -190,11 +198,10 @@ class Decoder(object):
         distribution at each generation step. The output distribution
         can be tweaked by the input parameter `temperature`.
         """
-        scores, prev, hidden = self._seed(
-            seed_texts, batch_size, 'sample', bos, eos,
-            temperature=temperature)
+        prev, hidden = self._seed(
+            seed_texts, batch_size, bos, eos, temperature=temperature)
         batch = prev.size(1)
-        hyps = [prev.squeeze().data.tolist()]
+        hyps, scores = [], 0
         finished = np.array([False] * batch)
         for _ in range(max_seq_len):
             outs, hidden, _ = self.model(prev, hidden=hidden, **kwargs)
@@ -210,32 +217,6 @@ class Decoder(object):
                 score[torch.ByteTensor(finished.tolist())] = 0
             scores += score
         return scores.tolist(), list(zip(*hyps))
-
-    def beam(self, width=5, seed_texts=None, max_seq_len=25, batch_size=1,
-             ignore_eos=False, bos=False, eos=False, **kwargs):
-        """
-        Approximation to the highest probability output over the generated
-        sequence using beam search. Currently it only generates on sequence
-        at a time.
-        """
-        if len(seed_texts) > 1 or batch_size > 1:
-            raise ValueError(
-                "Currently beam search is limited to single item batches")
-        prev, hidden = self._seed(seed_texts, batch_size, 'argmax', bos, eos)
-        eos = self.eos if not ignore_eos else None
-        beam = Beam(width, prev.squeeze().data[0], eos=eos)
-        while beam.active and len(beam) < max_seq_len:
-            prev_data = beam.get_current_state().unsqueeze(0)
-            prev = Variable(prev_data, volatile=True)
-            outs, hidden, _ = self.model(prev, hidden=hidden, **kwargs)
-            beam.advance(outs.data)
-            if self.model.cell.startswith('LSTM'):
-                hidden = (u.swap(hidden[0], 1, beam.get_source_beam()),
-                          u.swap(hidden[1], 1, beam.get_source_beam()))
-            else:
-                hidden = u.swap(hidden, 1, beam.get_source_beam())
-        scores, hyps = beam.decode(n=width)
-        return scores, hyps
 
 
 class Attention(nn.Module):
@@ -608,7 +589,8 @@ class LM(nn.Module):
             # strip content after <eos> for each batch
             hyps = strip_post_eos(hyps, d.get_eos())
 
-        return [s/len(hyps[idx]) for idx, s in enumerate(scores)], hyps
+        norm_scores = [s/len(hyps[idx]) for idx, s in enumerate(scores)]
+        return norm_scores, hyps
 
     def predict_proba(self, inp, gpu=False, **kwargs):
         """
@@ -628,7 +610,8 @@ class LM(nn.Module):
         """
         if self.training:
             logging.warn("Generating in training modus!")
-        inp_vec = Variable(torch.LongTensor([inp]), volatile=True)
+        inp_vec = Variable(torch.LongTensor(inp), volatile=True)
+        inp_vec = inp_vec.unsqueeze(1)  # add batch dim
         if gpu:
             inp_vec = inp_vec.cuda()
         outs, _, _ = self(inp_vec, **kwargs)
