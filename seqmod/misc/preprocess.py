@@ -1,6 +1,8 @@
 
 import os
 import time
+import warnings
+
 import numpy as np
 import pickle as p
 
@@ -14,14 +16,14 @@ def segmenter(sent, level='char'):
         raise ValueError
 
 
-def text_processor(language='en', num=True, lower=True, level='token'):
+def text_processor(language='en', num=False, lower=False, level='token'):
     try:
         from normalizr import Normalizr
     except ImportError:
         try:
             from cucco import Cucco as Normalizr
         except ImportError:
-            print("Try installing normalizr or cucco")
+            warnings.warn("Try installing normalizr or cucco")
             return lambda sent: sent
 
     normalizations = [
@@ -78,7 +80,8 @@ if __name__ == '__main__':
         max_size=args.max_size, min_freq=args.min_freq,
         bos_token=args.bos_token, eos_token=args.eos_token)
 
-    processor = text_processor(num=args.num, lower=args.lower, level=args.level)
+    processor = text_processor(
+        num=args.num, lower=args.lower, level=args.level)
 
     if os.path.isfile(args.path):
         files = [args.path]

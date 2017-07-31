@@ -1,6 +1,7 @@
 
 import os
 import sys
+import warnings
 
 import random; random.seed(1001)
 
@@ -8,7 +9,7 @@ import torch
 try:
     torch.cuda.manual_seed(1001)
 except:
-    print('no NVIDIA driver found')
+    warnings.warn('no NVIDIA driver found')
     torch.manual_seed(1001)
 
 import torch.nn as nn
