@@ -303,7 +303,7 @@ class DeepOut(nn.Module):
     layers: iterable of output dimensions for the hidden layers
     activation: str (ReLU, Tanh, MaxOut), activation after linear layer
     """
-    def __init__(self, in_dim, layers, activation, dropout=0.0):
+    def __init__(self, in_dim, layers, activation, maxouts=2, dropout=0.0):
         self.in_dim = in_dim
         self.layers = layers
         self.activation = activation
@@ -313,7 +313,7 @@ class DeepOut(nn.Module):
         self.layers, in_dim = [], self.in_dim
         for idx, out_dim in enumerate(layers):
             if activation == 'MaxOut':
-                layer = MaxOut(in_dim, out_dim, 2)
+                layer = MaxOut(in_dim, out_dim, maxouts)
             else:
                 layer = nn.Sequential(
                     nn.Linear(in_dim, out_dim), getattr(nn, activation))
@@ -359,12 +359,14 @@ class LM(nn.Module):
         before output projection layer. No deep output will be added if
         deepout_layers is 0 or None.
     - deepout_act: str, activation function for the deepout module in camelcase
+    - maxouts: int, only used if deepout_act is MaxOut (number of parts to use
+        to compose the non-linearity function).
     """
     def __init__(self, vocab, emb_dim, hid_dim, num_layers=1,
-                 cell='GRU', bias=True, dropout=0.0,
+                 cell='GRU', bias=True, dropout=0.0, conds=None,
                  word_dropout=0.0, target_code=None, reserved_codes=(),
                  att_dim=None, tie_weights=False, train_init=False,
-                 deepout_layers=0, deepout_act='MaxOut', conds=None):
+                 deepout_layers=0, deepout_act='MaxOut', maxouts=2):
         self.vocab = vocab
         self.emb_dim = emb_dim
         self.hid_dim = hid_dim
@@ -425,6 +427,7 @@ class LM(nn.Module):
                 in_dim=self.hid_dim,
                 layers=tuple([self.hid_dim] * deepout_layers),
                 activation=deepout_act,
+                maxouts=maxouts,
                 dropout=self.dropout)
         # output projection
         if self.tie_weights:
