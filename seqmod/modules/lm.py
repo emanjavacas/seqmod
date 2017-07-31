@@ -379,9 +379,9 @@ class LM(nn.Module):
     - deepout_act: str, activation function for the deepout module in camelcase
     """
     def __init__(self, vocab, emb_dim, hid_dim, num_layers=1,
-                 cell='GRU', bias=True, dropout=0.0, word_dropout=0.0,
-                 target_code=None, reserved_codes=(),
-                 att_dim=None, tie_weights=False,
+                 cell='GRU', bias=True, dropout=0.0,
+                 word_dropout=0.0, target_code=None, reserved_codes=(),
+                 att_dim=None, tie_weights=False, train_init=False,
                  deepout_layers=0, deepout_act='MaxOut', conds=None):
         self.vocab = vocab
         self.emb_dim = emb_dim
@@ -415,8 +415,12 @@ class LM(nn.Module):
                 rnn_input_size += c['emb_dim']
             self.conds = nn.ModuleList(conds)
         # rnn
-        if cell == 'NormalizedGRU':
-            cell = NormalizedGRU
+        if train_init:
+            self.h_0 = nn.Parameter(torch.zeros(hid_dim * num_layers))
+            if cell.startswith('LSTM'):
+                self.c_0 = nn.Parameter(torch.zeros(hid_dim * num_layers))
+        if cell.startswith('Normalized'):  # normalized layers are custom
+            cell = getattr(custom, cell)
         else:
             cell = getattr(nn, cell)
         self.rnn = cell(
@@ -474,6 +478,17 @@ class LM(nn.Module):
 
     def init_hidden_for(self, inp):
         batch = inp.size(1)
+        # trainable initial hidden state
+        if hasattr(self, 'h_0'):
+            h_0 = self.h_0.view(self.num_layers, self.hid_dim)
+            h_0 = h_0.unsqueeze(1).repeat(1, batch, 1)
+            if hasattr(self, 'c_0'):
+                c_0 = self.c_0.view(self.num_layers, self.hid_dim)
+                c_0 = c_0.unsqueeze(1).repeat(1, batch, 1)
+                return h_0, c_0
+            else:
+                return h_0
+        # non-trainable intial hidden state
         size = (self.num_layers, batch, self.hid_dim)
         h_0 = Variable(inp.data.new(*size).zero_(), requires_grad=False)
         if self.cell.startswith('LSTM'):

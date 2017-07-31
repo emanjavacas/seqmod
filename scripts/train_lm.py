@@ -63,6 +63,7 @@ if __name__ == '__main__':
     parser.add_argument('--tie_weights', action='store_true')
     parser.add_argument('--deepout_layers', default=0, type=int)
     parser.add_argument('--deepout_act', default='MaxOut')
+    parser.add_argument('--train_init', action='store_true')
     # dataset
     parser.add_argument('--path', required=True)
     parser.add_argument('--processed', action='store_true')
@@ -133,7 +134,7 @@ if __name__ == '__main__':
     model = LM(len(d), args.emb_dim, args.hid_dim,
                num_layers=args.layers, cell=args.cell, dropout=args.dropout,
                att_dim=args.att_dim, tie_weights=args.tie_weights,
-               deepout_layers=args.deepout_layers,
+               deepout_layers=args.deepout_layers, train_init=args.train_init,
                deepout_act=args.deepout_act, word_dropout=args.word_dropout,
                target_code=d.get_unk())
 
