@@ -94,7 +94,8 @@ if __name__ == '__main__':
     parser.add_argument('--checkpoint', default=200, type=int)
     parser.add_argument('--hooks_per_epoch', default=5, type=int)
     parser.add_argument('--log_checkpoints', action='store_true')
-    parser.add_argument('--visdom_server', default='localhost')
+    parser.add_argument('--visdom', type=bool, default=True)
+    parser.add_argument('--visdom_host', default='localhost')
     parser.add_argument('--save', action='store_true')
     parser.add_argument('--prefix', default='model', type=str)
     args = parser.parse_args()
@@ -166,10 +167,12 @@ if __name__ == '__main__':
     trainer.add_hook(model_check_hook, hooks_per_epoch=args.hooks_per_epoch)
 
     # loggers
-    visdom_logger = VisdomLogger(
-        log_checkpoints=args.log_checkpoints, title=args.prefix, env='lm',
-        server='http://' + args.visdom_server)
-    trainer.add_loggers(StdLogger(), visdom_logger)
+    trainer.add_loggers(StdLogger())
+    if args.visdom:
+        visdom_logger = VisdomLogger(
+            log_checkpoints=args.log_checkpoints, title=args.prefix, env='lm',
+            server='http://' + args.visdom_host)
+        trainer.add_loggers(visdom_logger)
 
     trainer.train(args.epochs, args.checkpoint, gpu=args.gpu)
 

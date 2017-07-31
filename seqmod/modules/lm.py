@@ -9,7 +9,8 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 
 from seqmod import utils as u
-from seqmod.modules.custom import word_dropout, MaxOut, NormalizedGRU
+from seqmod.modules import custom
+from seqmod.modules.custom import word_dropout, MaxOut
 from seqmod.misc.beam_search import Beam
 
 
@@ -217,7 +218,7 @@ class Decoder(object):
         sequence using beam search. Currently it only generates on sequence
         at a time.
         """
-        if len(seed_text) > 1 or batch_size > 1:
+        if len(seed_texts) > 1 or batch_size > 1:
             raise ValueError(
                 "Currently beam search is limited to single item batches")
         prev, hidden = self._seed(seed_texts, batch_size, 'argmax', bos, eos)
@@ -405,7 +406,7 @@ class LM(nn.Module):
         self.word_dropout = word_dropout
         self.target_code = target_code
         self.reserved_codes = reserved_codes
-        # input embeddings
+        # embeddings
         self.embeddings = nn.Embedding(vocab, self.emb_dim)
         rnn_input_size = self.emb_dim
         if self.conds is not None:
