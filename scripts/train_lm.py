@@ -64,6 +64,7 @@ if __name__ == '__main__':
     parser.add_argument('--tie_weights', action='store_true')
     parser.add_argument('--deepout_layers', default=0, type=int)
     parser.add_argument('--deepout_act', default='MaxOut')
+    parser.add_argument('--maxouts', default=2)
     parser.add_argument('--train_init', action='store_true')
     # dataset
     parser.add_argument('--path', required=True)
@@ -137,8 +138,8 @@ if __name__ == '__main__':
                num_layers=args.layers, cell=args.cell, dropout=args.dropout,
                att_dim=args.att_dim, tie_weights=args.tie_weights,
                deepout_layers=args.deepout_layers, train_init=args.train_init,
-               deepout_act=args.deepout_act, word_dropout=args.word_dropout,
-               target_code=d.get_unk())
+               deepout_act=args.deepout_act, maxouts=args.maxouts,
+               word_dropout=args.word_dropout, target_code=d.get_unk())
 
     model.apply(u.make_initializer())
     if args.gpu:
