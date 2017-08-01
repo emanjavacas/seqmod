@@ -19,6 +19,7 @@ from seqmod.modules.encoder_decoder import EncoderDecoder
 from seqmod import utils as u
 
 from seqmod.misc.optimizer import Optimizer
+from seqmod.misc.early_stopping import EarlyStopping
 from seqmod.misc.trainer import EncoderDecoderTrainer
 from seqmod.misc.loggers import StdLogger, VisdomLogger
 from seqmod.misc.dataset import PairedDataset, Dict
@@ -110,6 +111,7 @@ if __name__ == '__main__':
     parser.add_argument('--learning_rate', default=0.01, type=float)
     parser.add_argument('--dropout', default=0.0, type=float)
     parser.add_argument('--word_dropout', default=0.0, type=float)
+    parser.add_argument('--patience', default=3, type=int)
     parser.add_argument('--learning_rate_decay', default=0.5, type=float)
     parser.add_argument('--start_decay_at', default=8, type=int)
     parser.add_argument('--max_grad_norm', default=5., type=float)
@@ -172,12 +174,15 @@ if __name__ == '__main__':
     if args.gpu:
         model.cuda(), criterion.cuda()
 
+    early_stopping = EarlyStopping(max(10, args.patience), args.patience)
     trainer = EncoderDecoderTrainer(
-        model, {'train': train, 'valid': valid}, criterion, optimizer)
+        model, {'train': train, 'valid': valid}, criterion, optimizer,
+        early_stopping=early_stopping)
     trainer.add_loggers(StdLogger())
     trainer.add_loggers(VisdomLogger(env='encdec'))
 
     hook = make_encdec_hook(args.target, args.gpu, beam=args.beam)
     trainer.add_hook(hook, hooks_per_epoch=args.hooks_per_epoch)
 
-    trainer.train(args.epochs, args.checkpoint, shuffle=True, gpu=args.gpu)
+    (model, valid_loss), test_loss = trainer.train(
+        args.epochs, args.checkpoint, shuffle=True, gpu=args.gpu)

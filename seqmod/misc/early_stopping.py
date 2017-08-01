@@ -88,8 +88,8 @@ class EarlyStopping(pqueue):
         if checkpoint > smallest:
             self.fails += 1
             if self.fails == self.patience:
-                msg = ("Stop after {} checkpoints. ".format(len(self)))
-                msg += "Best score [%g]" % smallest
+                msg = ("Stop after {:d} checkpoints. ".format(self.patience))
+                msg += "Best score {:.3f}".format(smallest)
                 raise EarlyStoppingException(
                     msg, {'model': model, 'smallest': smallest})
         if self.is_full():

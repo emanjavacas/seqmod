@@ -1,5 +1,6 @@
 
 import time
+import copy
 import math
 import numpy as np
 from torch.autograd import Variable
@@ -93,14 +94,14 @@ class Trainer(object):
     def on_epoch_begin(self, epoch):
         self.log("epoch_begin", {"epoch": epoch})
 
-    def on_epoch_end(self, epoch, loss, num_examples, duration,
-                     valid_loss=None):
+    def on_epoch_end(self, epoch, loss, num_examples, duration, valid_loss=None):
         self.log("epoch_end", {"epoch": epoch,
                                "loss": dict(zip(self.loss_labels, loss)),
                                "examples": num_examples,
                                "duration": duration})
         if self.early_stopping is not None and valid_loss is not None:
-            self.early_stopping.add_checkpoint(valid_loss, self.model)
+            self.early_stopping.add_checkpoint(
+                self.merge_loss(valid_loss), copy.deepcopy(self.model))
 
     def on_validation_end(self, epoch, loss):
         self.log("validation_end", {"epoch": epoch,
@@ -263,8 +264,19 @@ class Trainer(object):
         - epochs: int
         - checkpoint: int, log a checkpoint and hooks every x batches
         - gpu: bool
+
+        Returns (best_model, valid_loss), test_loss
+        ========
+        - best_model: nn.Module, deep copy of the best model during training.
+            If no early stopping was provided, the best model will be the
+            current model after training.
+        - valid_loss: float or None, best validation loss aggregated according
+            to the function merge_loss. If not early stopping is provided, best
+            loss will be the last validation loss after training.
+        - test_loss: float or None, test loss aggregated as per merge_loss
         """
         start = time.time()
+        best_model, valid_loss, test_loss = None, None, None
         for epoch in range(1, epochs + 1):
             self.epoch = epoch
             start_epoch = time.time()
@@ -278,7 +290,6 @@ class Trainer(object):
                     self.average_loss(epoch_loss, epoch_examples))
                 epoch_time = time.time() - start_epoch
                 # valid
-                valid_loss = None  # might be used by on_epoch_end
                 if self.valid_name in self.datasets:
                     self.model.eval()
                     valid_loss = self.validate_model(**kwargs)
@@ -288,19 +299,23 @@ class Trainer(object):
                     epoch, epoch_loss, epoch_examples, epoch_time,
                     valid_loss=valid_loss)
             except EarlyStoppingException as e:
-                message, _ = e.args
+                message, data = e.args
+                best_model, valid_loss = data['model'], data['smallest']
                 self.log("info", message)
                 break
             except KeyboardInterrupt:
                 self.log("info", "Training interrupted")
                 break
-        self.log("info", "Trained for [%.3f sec]" % (time.time() - start))
+        self.log("info", "Trained for [{:.3f} sec]".format(time.time()-start))
         # test
         if self.test_name in self.datasets:
             self.model.eval()
             self.on_test_begin(epoch)
             test_loss = self.validate_model(test=True, **kwargs)
             self.on_test_end(test_loss)
+        best_model = best_model or self.model
+        best_model.cpu()
+        return (best_model, valid_loss), test_loss
 
 
 class LMTrainer(Trainer):
