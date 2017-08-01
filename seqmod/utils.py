@@ -56,10 +56,7 @@ def save_checkpoint(path, model, d, args,
     Save model together with dictionary and training input arguments.
     """
     vals = '-'.join(['{}{{{}}}'.format(val[0], val) for val in vals.split()])
-    fname = ''
-    if 'prefix' in args:
-        fname += '{prefix}'
-    fname += vals.format(**args)
+    fname = vals.format(**args)
     if ppl is not None:
         fname += '-{:.3f}'.format(ppl)
     if not os.path.isdir(path):
