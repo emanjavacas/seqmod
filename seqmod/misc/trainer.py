@@ -292,7 +292,7 @@ class Trainer(object):
                 # valid
                 if self.valid_name in self.datasets:
                     self.model.eval()
-                    valid_loss = self.validate_model(**kwargs)
+                    valid_loss = self.merge_loss(self.validate_model(**kwargs))
                     self.on_validation_end(epoch, valid_loss)
                     self.model.train()
                 self.on_epoch_end(
@@ -313,6 +313,7 @@ class Trainer(object):
             self.on_test_begin(epoch)
             test_loss = self.validate_model(test=True, **kwargs)
             self.on_test_end(test_loss)
+            test_loss = self.merge_loss(test_loss)
         best_model = best_model or self.model
         best_model.cpu()
         return (best_model, valid_loss), test_loss
