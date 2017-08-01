@@ -65,7 +65,7 @@ def save_checkpoint(path, model, d, args,
     if not os.path.isdir(path):
         os.mkdir(path)
     fname = os.path.join(path, fname)
-    save_model(fname, {'model': model, 'd': d, 'args': args})
+    save_model({'model': model, 'd': d, 'args': args}, fname)
 
 
 # Pytorch utils
