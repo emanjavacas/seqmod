@@ -18,9 +18,9 @@ def repackage_hidden(h):
 
 # Base Trainer class
 class Trainer(object):
-    def __init__(self, model, datasets, criterion, optimizer,
-                 test_name='test', valid_name='valid', loss_labels=('loss',),
-                 size_average=True, verbose=True):
+    def __init__(self, model, datasets, criterion, optimizer, scheduler=None,
+                 early_stopping=None, test_name='test', valid_name='valid',
+                 loss_labels=('loss',), size_average=True, verbose=True):
         """
         Parameter:
         ==========
@@ -36,6 +36,8 @@ class Trainer(object):
         self.datasets = datasets   # is a dict with at least a 'train' entry
         self.criterion = criterion
         self.optimizer = optimizer  # might be a dict
+        self.scheduler = scheduler
+        self.early_stopping = early_stopping
         self.loss_labels = loss_labels
         self.epoch = 0          # safe global epoch
         # config
@@ -91,11 +93,14 @@ class Trainer(object):
     def on_epoch_begin(self, epoch):
         self.log("epoch_begin", {"epoch": epoch})
 
-    def on_epoch_end(self, epoch, loss, num_examples, duration):
+    def on_epoch_end(self, epoch, loss, num_examples, duration,
+                     valid_loss=None):
         self.log("epoch_end", {"epoch": epoch,
                                "loss": dict(zip(self.loss_labels, loss)),
                                "examples": num_examples,
                                "duration": duration})
+        if self.early_stopping is not None and valid_loss is not None:
+            self.early_stopping.add_checkpoint(valid_loss, self.model)
 
     def on_validation_end(self, epoch, loss):
         self.log("validation_end", {"epoch": epoch,
@@ -121,7 +126,7 @@ class Trainer(object):
         else:
             self.optimizer.zero_grad()
 
-    def optimizer_step(self):
+    def optimizer_step(self, val_loss=None):
         """
         Runs an optimizing step.
         """
@@ -130,6 +135,14 @@ class Trainer(object):
                 opt.step()
         else:
             self.optimizer.step()
+        if self.scheduler is not None:
+            if val_loss is None:
+                self.log("info", "omitting scheduler, because of missing loss")
+                if isinstance(self.scheduler, dict):
+                    for sch in self.scheduler.values():
+                        sch.step(val_loss)
+                else:
+                    self.scheduler.step(val_loss)
 
     # loss
     def init_loss(self):
@@ -265,13 +278,15 @@ class Trainer(object):
                     self.average_loss(epoch_loss, epoch_examples))
                 epoch_time = time.time() - start_epoch
                 # valid
+                valid_loss = None  # might be used by on_epoch_end
                 if self.valid_name in self.datasets:
                     self.model.eval()
                     valid_loss = self.validate_model(**kwargs)
                     self.on_validation_end(epoch, valid_loss)
                     self.model.train()
                 self.on_epoch_end(
-                    epoch, epoch_loss, epoch_examples, epoch_time)
+                    epoch, epoch_loss, epoch_examples, epoch_time,
+                    valid_loss=valid_loss)
             except EarlyStoppingException as e:
                 message, _ = e.args
                 self.log("info", message)
