@@ -39,3 +39,21 @@ class TestEarlyStopping(unittest.TestCase):
             self.e_s.add_checkpoint(checkpoint)
         priority, _ = self.e_s.get_min()
         self.assertEqual(priority, min(run))
+
+    def test_reset(self):
+        run = [3, 2.9, 2.8, 2.9, 3.0, 3.1]
+        # run resetting (shouldn't throw any exceptions)
+        for checkpoint in run:
+            self.e_s.add_checkpoint(checkpoint)
+        # run without resetting (should error)
+        self.e_s = early_stopping.EarlyStopping(
+            self.maxsize, self.patience, reset_patience=False)
+        run_test = False
+        for checkpoint in run:
+            try:
+                self.e_s.add_checkpoint(checkpoint)
+            except early_stopping.EarlyStoppingException as e:
+                run_test = True
+                message, data = e.args
+                self.assertEqual(data['smallest'], min(run))
+        self.assertTrue(run_test)
