@@ -1,4 +1,5 @@
 
+import os
 import random; random.seed(1001)
 from collections import OrderedDict
 from itertools import groupby
@@ -47,6 +48,24 @@ def save_model(model, prefix, d=None, mode='torch'):
     if d is not None:
         with open(prefix + ".dict." + ext, 'wb') as f:
             save_fn(d, f)
+
+
+def save_checkpoint(path, model, d, args,
+                    ppl=None, vals='cell layers hid_dim emb_dim bptt'):
+    """
+    Save model together with dictionary and training input arguments.
+    """
+    vals = '-'.join(['{}{{{}}}'.format(val[0], val) for val in vals.split()])
+    fname = ''
+    if 'prefix' in args:
+        fname += '{prefix}'
+    fname += vals.format(**args)
+    if ppl is not None:
+        fname += '-{:f}'.format(ppl)
+    if not os.path.isdir(path):
+        os.mkdir(path)
+    fname = os.path.join(path, fname)
+    save_model(fname, {'model': model, 'd': d, 'args': args})
 
 
 # Pytorch utils
@@ -220,11 +239,11 @@ def log_grad(module, grad_input, grad_output):
 
     def grad_norm_str(var):
         if isinstance(var, tuple) and len(var) > 1:
-            return ", ".join("%6.4f" % g.data.norm() for g in var)
+            return ", ".join("{:6.4f}".format(g.data.norm()) for g in var)
         else:
             if isinstance(var, tuple):
-                return "%6.4f" % var[0].data.norm()
-            return "%6.4f" % var.data.norm()
+                return "{:6.4f}".format(var[0].data.norm())
+            return "{:6.4f}".format(var.data.norm())
 
     log = "{module}: grad input [{grad_input}], grad output [{grad_output}]"
     print(log.format(
