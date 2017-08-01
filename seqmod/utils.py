@@ -61,7 +61,7 @@ def save_checkpoint(path, model, d, args,
         fname += '{prefix}'
     fname += vals.format(**args)
     if ppl is not None:
-        fname += '-{:f}'.format(ppl)
+        fname += '-{:.3f}'.format(ppl)
     if not os.path.isdir(path):
         os.mkdir(path)
     fname = os.path.join(path, fname)
