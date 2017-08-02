@@ -294,11 +294,12 @@ class Trainer(object):
                     self.model.eval()
                     valid_loss = self.validate_model(**kwargs)
                     self.on_validation_end(epoch, valid_loss)
-                    valid_loss = self.merge_loss(valid_loss)  # merge after callback
                     self.model.train()
                 self.on_epoch_end(
                     epoch, epoch_loss, epoch_examples, epoch_time,
                     valid_loss=valid_loss)
+                if valid_loss is not None:  # merge after callbacks
+                    valid_loss = self.merge_loss(valid_loss)
             except EarlyStoppingException as e:
                 message, data = e.args
                 best_model, valid_loss = data['model'], data['smallest']
