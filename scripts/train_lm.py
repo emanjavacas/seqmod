@@ -152,7 +152,7 @@ if __name__ == '__main__':
         model.parameters(), args.optim, args.learning_rate, args.max_grad_norm,
         lr_decay=args.learning_rate_decay, start_decay_at=args.start_decay_at,
         decay_every=args.decay_every)
-    criterion = nn.CrossEntropyLoss()
+    criterion = nn.NLLLoss()
 
     # create trainer
     trainer = LMTrainer(model, {"train": train, "test": test, "valid": valid},
