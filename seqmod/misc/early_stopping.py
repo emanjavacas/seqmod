@@ -76,6 +76,7 @@ class EarlyStopping(pqueue):
     def __init__(self, maxsize, patience=None, reset_patience=True):
         self.patience, self.fails = patience or maxsize, 0
         self.reset_patience = reset_patience
+        self.stopped = False
 
         if maxsize < self.patience:
             raise ValueError("patience must be smaller than maxsize")
@@ -88,6 +89,7 @@ class EarlyStopping(pqueue):
         if checkpoint > smallest:
             self.fails += 1
             if self.fails == self.patience:
+                self.stopped = True
                 msg = ("Stop after {:d} checkpoints. ".format(self.patience))
                 msg += "Best score {:.3f}".format(smallest)
                 raise EarlyStoppingException(
