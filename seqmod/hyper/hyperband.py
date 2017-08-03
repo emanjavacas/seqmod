@@ -11,6 +11,17 @@ from time import time, ctime
 
 
 class Hyperband:
+    """
+    Parameters:
+    -----------
+
+    get_params: fn() => sampled param space
+    try_params: fn(n_iters, params) => {'loss': float, 'early_stop': bool}
+
+    max_iter: int, total maximum of iterations where an iteration is internally
+        defined by try_params.
+    eta: number, downsampling rate
+    """
     def __init__(self, get_params, try_params, max_iter=81, eta=3):
         self.get_params = get_params
         self.try_params = try_params
@@ -26,58 +37,41 @@ class Hyperband:
         self.best_loss = np.inf
         self.best_counter = -1
 
-    def run(self, skip_last=0, dry_run=False):
+    def run(self):
         for s in reversed(range(self.s_max + 1)):
             # initial number of configurations
             n = int(ceil(self.B / self.max_iter / (s + 1) * self.eta ** s))
             # initial number of iterations per config
             r = self.max_iter * self.eta ** (-s)
-
             # n random configurations
             T = [self.get_params() for i in range(n)]
 
-            for i in range((s + 1) - int(skip_last)):  # changed from s + 1
-
-                # Run each of the n configs for <iterations>
-                # and keep best (n_configs / eta) configurations
-
+            for i in range(s + 1):
+                # Run each config `n_iters` & keep best (n_configs/eta) configs
                 n_configs = n * self.eta ** (-i)
-                n_iterations = r * self.eta ** (i)
+                n_iters = r * self.eta ** (i)
 
                 print("\n*** {} configurations x {:.1f} iterations each"
-                      .format(n_configs, n_iterations))
+                      .format(n_configs, n_iters))
 
-                val_losses = []
-                early_stops = []
+                val_losses, early_stops = [], []
 
                 for t in T:
-
+                    # TODO: cache previously run config
                     self.counter += 1
                     print("\n{} | {} | lowest loss so far: {:.4f} (run {})\n"
                           .format(self.counter, ctime(),
                                   self.best_loss,
                                   self.best_counter))
-
+                    # record time
                     start_time = time()
-
-                    if dry_run:
-                        result = {'loss': random(),
-                                  'log_loss': random(),
-                                  'auc': random()}
-                    else:
-                        result = self.try_params(n_iterations, t)  # <---
-
-                    assert(type(result) == dict)
-                    assert('loss' in result)
-
-                    seconds = int(round(time() - start_time))
-                    print("\n{} seconds.".format(seconds))
-
+                    # run
+                    result = self.try_params(n_iters, t)
+                    # record loss
                     loss = result['loss']
                     val_losses.append(loss)
-
-                    early_stop = result.get('early_stop', False)
-                    early_stops.append(early_stop)
+                    # record early_stop
+                    early_stops.append(result.get('early_stop', False))
 
                     # keep track of the best result so far (for display only)
                     # could do it by checking results each time, but hey
@@ -85,17 +79,19 @@ class Hyperband:
                         self.best_loss = loss
                         self.best_counter = self.counter
 
+                    # register result
                     result['counter'] = self.counter
-                    result['seconds'] = seconds
+                    result['seconds'] = int(round(time() - start_time))
                     result['params'] = t
-                    result['iterations'] = n_iterations
+                    result['iterations'] = n_iters
 
                     self.results.append(result)
 
-                # select a number of best configurations for the next loop
-                # filter out early stops, if any
+                # select
                 indices = np.argsort(val_losses)
+                # filter out early stops
                 T = [T[i] for i in indices if not early_stops[i]]
+                # select a number of best configurations for the next loop
                 T = T[0:int(n_configs / self.eta)]
 
         return self.results
