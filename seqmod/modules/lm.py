@@ -475,9 +475,13 @@ class LM(nn.Module):
                 return h_0
         # non-trainable intial hidden state
         size = (self.num_layers, batch, self.hid_dim)
-        h_0 = Variable(inp.data.new(*size).zero_(), requires_grad=False)
+        h_0 = Variable(inp.data.new(*size).zero_(),
+                       requires_grad=False,
+                       volatile=not self.training)
         if self.cell.startswith('LSTM'):
-            c_0 = Variable(inp.data.new(*size).zero_(), requires_grad=False)
+            c_0 = Variable(inp.data.new(*size).zero_(),
+                           requires_grad=False,
+                           volatile=not self.training)
             return h_0, c_0
         else:
             return h_0
@@ -615,11 +619,9 @@ class LM(nn.Module):
             logging.warn("Generating in training modus!")
         if isinstance(inp, list):
             inp = torch.LongTensor(inp)
-        if isinstance(inp, torch.LongTensor):
-            inp = Variable(inp, volatile=True)
         if gpu:
             inp = inp.cuda()
-        outs, _, _ = self(inp, **kwargs)
+        outs, *_ = self(Variable(inp, volatile=True), **kwargs)
         log_probs = u.select_cols(outs[:-1], inp[1:])
         return log_probs.sum().data[0] / len(log_probs)
 
