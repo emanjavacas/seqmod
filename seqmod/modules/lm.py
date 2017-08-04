@@ -613,11 +613,13 @@ class LM(nn.Module):
         """
         if self.training:
             logging.warn("Generating in training modus!")
-        inp_vec = Variable(torch.LongTensor(inp), volatile=True)
-        inp_vec = inp_vec.unsqueeze(1)  # add batch dim
+        if isinstance(inp, list):
+            inp = torch.LongTensor(inp)
+        if isinstance(inp, torch.LongTensor):
+            inp = Variable(inp, volatile=True)
         if gpu:
-            inp_vec = inp_vec.cuda()
-        outs, _, _ = self(inp_vec, **kwargs)
+            inp = inp.cuda()
+        outs, _, _ = self(inp, **kwargs)
         log_probs = u.select_cols(outs[:-1], inp[1:])
         return log_probs.sum().data[0] / len(log_probs)
 
