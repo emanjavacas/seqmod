@@ -157,11 +157,15 @@ def select_cols(t, vec):
     Parameters:
     -----------
     - t: torch.Tensor (m x n)
-    - vec: list with indices of length m with the longest integer at most n-1.
+    - vec: list or torch.LongTensor with indices of length m
+        with the longest integer at most n-1.
     """
     nrows, ncols = t.size()
-    rows = torch.LongTensor(list(range(ncols))).repeat(nrows, 1)
-    vec = torch.LongTensor(vec).unsqueeze(1).repeat(1, ncols)
+    if isinstance(vec, list):
+        vec = torch.LongTensor(vec)
+    rows = torch.LongTensor(list(range(ncols)))
+    rows = rows.unsqueeze(1).repeat(nrows, 1)
+    vec  =  vec.unsqueeze(1).repeat(1, ncols)
     return t[rows == vec]
 
 
