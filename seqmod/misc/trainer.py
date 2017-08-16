@@ -366,9 +366,9 @@ class CyclicLMTrainer(LMTrainer):
     """
     def run_batch(self, batch_data, dataset='train', subset=None):
         source, targets, head = batch_data
-        if subset != head:
+        if subset is not None and subset != head:
             # if subset is given, skip all other subsets
-            return          # skip batch
+            return
         hidden = self.batch_state.get('hidden', {}).get(head, None)
         output, hidden, _ = self.model(source, hidden=hidden, head=head)
         if 'hidden' not in self.batch_state:

@@ -557,12 +557,14 @@ class BlockDataset(Dataset):
         """
         n_element = len(self) * self.bptt * self.batch_size  # min num elements
         datasets, splits = [], get_splits(n_element, test, dev=dev)
+        table = self.table if hasattr(self, 'table') else None
+        table_idx = self.table_idx if hasattr(self, 'table_idx') else None
         for idx, (start, stop) in enumerate(zip(splits, splits[1:])):
             evaluation = self.evaluation if idx == 0 else True
             datasets.append(type(self)(
                 self.split_data(start, stop), self.d, self.batch_size,
                 self.bptt, fitted=True, gpu=self.gpu, evaluation=evaluation,
-                table=self.table, table_idx=self.table_idx))
+                table=table, table_idx=table_idx))
         return tuple(datasets)
 
     @classmethod
@@ -589,7 +591,7 @@ class BlockDataset(Dataset):
 
 class CyclicBlockDataset(BlockDataset):
     def __init__(self, examples, d, batch_size, bptt,
-                 fitted=False, gpu=False, evaluation=False):
+                 fitted=False, gpu=False, evaluation=False, **kwargs):
         self.data = {}
         for name, data in examples.items():
             if not fitted:      # subdata is already an integer vector
