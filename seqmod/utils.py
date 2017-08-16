@@ -50,8 +50,8 @@ def save_model(model, prefix, d=None, mode='torch'):
             save_fn(d, f)
 
 
-def save_checkpoint(path, model, d, args,
-                    ppl=None, vals='cell layers hid_dim emb_dim bptt'):
+def save_checkpoint(path, model, d, args, ppl=None,
+                    vals='cell layers hid_dim emb_dim bptt'):
     """
     Save model together with dictionary and training input arguments.
     """
@@ -279,9 +279,8 @@ def format_hyp(score, hyp, hyp_num, d, level='word'):
         sent=sep.join([d.vocab[c] for c in hyp]))
 
 
-def make_lm_check_hook(d, seed_text, max_seq_len=25, gpu=False,
-                       method='sample', temperature=1, width=5,
-                       early_stopping=None, validate=True):
+def make_lm_hook(d, seed_text, max_seq_len=25, gpu=False, method='sample',
+                 temperature=1, width=5, early_stopping=None, validate=True):
     """
     Make a generator hook for a normal language model
     """
