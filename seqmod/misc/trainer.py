@@ -375,11 +375,20 @@ class CyclicLMTrainer(LMTrainer):
             self.batch_state['hidden'] = {}
         # dettach hidden from graph
         self.batch_state['hidden'][head] = repackage_hidden(hidden)
+        loss = self.criterion(output, targets.view(-1))
+        # optimize
+        if dataset == 'train':
+            loss.backward(), self.optimizer_step()
+        return (loss.data[0], )
 
     def on_batch_end(self, batch, loss):
         if self.reset_hidden:
             for v in self.batch_state['hidden'].values():
-                v.zero_()
+                if isinstance(v, tuple):  # lstm
+                    for h in v:
+                        h.data.zero_()
+                else:
+                    v.data.zero_()
 
 
 class CLMTrainer(LMTrainer):
