@@ -371,7 +371,11 @@ class LM(nn.Module):
         self.emb_dim = emb_dim
         self.hid_dim = hid_dim
         self.tie_weights = tie_weights
+        self.train_init = train_init
         self.add_attn = att_dim and att_dim > 0
+        self.deepout_layers = deepout_layers
+        self.deepout_act = deepout_act
+        self.maxouts = maxouts
         self.add_deepout = deepout_layers and deepout_layers > 0
         if tie_weights and not self.emb_dim == self.hid_dim:
             logging.warn("When tying weights, output layer and embedding " +
@@ -399,7 +403,7 @@ class LM(nn.Module):
                 rnn_input_size += c['emb_dim']
             self.conds = nn.ModuleList(conds)
         # rnn
-        if train_init:
+        if self.train_init:
             self.h_0 = nn.Parameter(torch.zeros(hid_dim * num_layers))
             if cell.startswith('LSTM'):
                 self.c_0 = nn.Parameter(torch.zeros(hid_dim * num_layers))
@@ -565,7 +569,8 @@ class LM(nn.Module):
             # expand conds to batch
             if conds is None:
                 raise ValueError("conds is required for generating with a CLM")
-            conds = [torch.LongTensor([c]).repeat(1, batch_size) for c in conds]
+            conds = [torch.LongTensor([c]).repeat(1, batch_size)
+                     for c in conds]
             conds = [Variable(c, volatile=True) for c in conds]
             if gpu:
                 conds = [c.cuda() for c in conds]
@@ -649,6 +654,9 @@ class MultiheadLM(LM):
                 self.attn[head] = attn_module
 
     def forward(self, inp, hidden=None, head=None):
+        inp = word_dropout(
+            inp, self.target_code, p=self.word_dropout,
+            reserved_codes=self.reserved_codes, training=self.training)
         emb = self.embeddings(inp)
         if self.has_dropout:
             emb = F.dropout(emb, p=self.dropout, training=self.training)
@@ -662,31 +670,32 @@ class MultiheadLM(LM):
         outs = outs.view(seq_len * batch, hid_dim)
         if self.add_deepout:
             outs = self.deepout(outs)
-        outs = self.project[head](outs)
+        outs = F.log_softmax(self.project[head](outs))
         return outs, hidden, weights
 
     @classmethod
-    def from_pretrained_model(cls, that_model, heads):
+    def from_pretrained_model(cls, that, heads):
         """
         Create a multihead model from a pretrained LM initializing all weights
         to the LM states and all heads to the same output projection layer
         weights of the parent.
         """
-        assert isinstance(that_model, LM)
-        this_model = cls(
-            that_model.vocab, that_model.emb_dim, that_model.hid_dim,
-            num_layers=that_model.num_layers, cell=that_model.cell,
-            bias=that_model.bias, dropout=that_model.dropout, heads=heads,
-            att_dim=that_model.att_dim,
-            deepout_layers=that_model.deepout_layers,
-            deepout_act=that_model.deepout_act)
-        this_state_dict = this_model.state_dict()
-        for p, w in that_model.state_dict().items():
+        assert isinstance(that, LM) and that.conds is None
+        this = cls(
+            that.vocab, that.emb_dim, that.hid_dim, heads=heads,
+            num_layers=that.num_layers, cell=that.cell, bias=that.bias,
+            dropout=that.dropout, word_dropout=that.word_dropout,
+            target_code=that.target_code, reserved_codes=that.reserved_codes,
+            att_dim=that.att_dim, train_init=that.train_init,
+            maxouts=that.maxouts, deepout_layers=that.deepout_layers,
+            deepout_act=that.deepout_act)
+        this_state_dict = this.state_dict()
+        for p, w in that.state_dict().items():
             if p in this_state_dict:
                 this_state_dict[p] = w
             else:               # got project or attn layer
                 *_, weight = p.split('.')
-                for head in this_model.heads:
+                for head in this.heads:
                     this_state_dict[head + "." + weight] = w
-        this_model.load_state_dict(this_state_dict)
-        return this_model
+        this.load_state_dict(this_state_dict)
+        return this
