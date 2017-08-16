@@ -96,7 +96,7 @@ if __name__ == '__main__':
     parser.add_argument('--checkpoint', default=200, type=int)
     parser.add_argument('--hooks_per_epoch', default=5, type=int)
     parser.add_argument('--log_checkpoints', action='store_true')
-    parser.add_argument('--visdom', type=bool, default=True)
+    parser.add_argument('--visdom', action='store_true')
     parser.add_argument('--visdom_host', default='localhost')
     parser.add_argument('--save', action='store_true')
     parser.add_argument('--prefix', default='model', type=str)
@@ -161,7 +161,7 @@ if __name__ == '__main__':
     # hooks
     early_stopping = None
     if args.early_stopping > 0:
-        early_stopping = EarlyStopping(args.early_stopping)
+        early_stopping = EarlyStopping(10, patience=args.early_stopping)
     model_check_hook = u.make_lm_check_hook(
         d, method=args.decoding_method, temperature=args.temperature,
         max_seq_len=args.max_seq_len, seed_text=args.seed, gpu=args.gpu,
