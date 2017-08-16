@@ -100,8 +100,8 @@ class Trainer(object):
                                "examples": num_examples,
                                "duration": duration})
         if self.early_stopping is not None and valid_loss is not None:
-            self.early_stopping.add_checkpoint(
-                self.merge_loss(valid_loss), copy.deepcopy(self.model))
+            self.early_stopping.add_checkpoint(self.merge_loss(valid_loss),
+                                               copy.deepcopy(self.model))
 
     def on_validation_end(self, epoch, loss):
         self.log("validation_end", {"epoch": epoch,
