@@ -112,23 +112,24 @@ if __name__ == '__main__':
         del data
     else:
         print("Processing datasets...")
-        proc = text_processor(
-            lower=args.lower, num=args.num, level=args.level)
+        proc = text_processor(lower=args.lower, num=args.num, level=args.level)
         train_data = load_lines(args.path + 'train.txt', processor=proc)
         valid_data = load_lines(args.path + 'valid.txt', processor=proc)
         test_data = load_lines(args.path + 'test.txt', processor=proc)
         d = Dict(
-            max_size=args.max_size, min_freq=args.min_freq, eos_token=u.EOS)
-        d.fit(train_data, valid_data)
+            max_size=args.max_size, min_freq=args.min_freq, eos_token=u.EOS
+        ).fit(train_data, valid_data)
         train = BlockDataset(
             train_data, d, args.batch_size, args.bptt, gpu=args.gpu)
+        del train_data
         valid = BlockDataset(
             valid_data, d, args.batch_size, args.bptt, gpu=args.gpu,
             evaluation=True)
+        del valid_data
         test = BlockDataset(
             test_data, d, args.batch_size, args.bptt, gpu=args.gpu,
             evaluation=True)
-        del train_data, valid_data, test_data
+        del test_data
 
     print(' * vocabulary size. %d' % len(d))
     print(' * number of train batches. %d' % len(train))
