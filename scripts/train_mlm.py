@@ -1,6 +1,7 @@
 
 import os
 import warnings
+from collections import defaultdict
 
 import random; random.seed(1001)
 
@@ -13,13 +14,13 @@ except:
 
 import torch.nn as nn
 
-from seqmod.modules.lm import LM
+from seqmod.modules.lm import MultiheadLM
 from seqmod import utils as u
 
-from seqmod.misc.trainer import LMTrainer
+from seqmod.misc.trainer import CyclicLMTrainer
 from seqmod.misc.loggers import StdLogger, VisdomLogger
 from seqmod.misc.optimizer import Optimizer
-from seqmod.misc.dataset import Dict, BlockDataset
+from seqmod.misc.dataset import Dict, CyclicBlockDataset
 from seqmod.misc.preprocess import text_processor
 from seqmod.misc.early_stopping import EarlyStopping
 
@@ -107,7 +108,7 @@ if __name__ == '__main__':
         print("Loading preprocessed datasets...")
         assert args.dict_path, "Processed data requires DICT_PATH"
         data, d = load_from_file(args.path), u.load_model(args.dict_path)
-        train, test, valid = BlockDataset(
+        train, test, valid = CyclicBlockDataset(
             data, d, args.batch_size, args.bptt, gpu=args.gpu, fitted=True
         ).splits(test=args.test_split, dev=args.dev_split)
         del data
@@ -116,46 +117,30 @@ if __name__ == '__main__':
         proc = text_processor(lower=args.lower, num=args.num, level=args.level)
         d = Dict(max_size=args.max_size, min_freq=args.min_freq,
                  eos_token=u.EOS)
-        train, valid, test = None, None, None
-        # already split
-        if os.path.isfile(os.path.join(args.path, 'train.txt')):
-            if not os.path.isfile(os.path.join(args.path, 'valid.txt')):
-                raise ValueError("train.txt requires test.txt")
-            train_data = load_lines(args.path + 'train.txt', processor=proc)
-            d.fit(train_data)
-            train = BlockDataset(
-                train_data, d, args.batch_size, args.bptt, gpu=args.gpu)
-            del train_data
-            test = BlockDataset(
-                load_lines(args.path + 'test.txt', processor=proc),
-                d, args.batch_size, args.bptt, gpu=args.gpu,
-                evaluation=True)
-            if os.path.isfile(os.path.join(args.path, 'valid.txt')):
-                valid = BlockDataset(
-                    load_lines(args.path + 'valid.txt', processor=proc),
-                    d, args.batch_size, args.bptt, gpu=args.gpu,
-                    evaluation=True)
-            else:
-                train, valid = train.splits(dev=None, test=args.dev_split)
-        # do split, assume input is single file or dir with txt files
-        else:
-            data = [l for f in os.listdir(args.path) for l in load_lines(f)]
-            d.fit(data)
-            train, valid, test = BlockDataset(
-                data, d, args.batch_size, args.bptt, gpu=args.gpu
-            ).splits(test=args.test_split, dev=args.dev_split)
-            del data
+        data = defaultdict(list)
+        for f in os.listdir(args.path):
+            label = os.path.basename(f).split('_')[0]
+            for l in load_lines(os.path.join(args.path, f), processor=proc):
+                data[label].append(l)
+            d.partial_fit(data[label])
+        d.fit()
+        train, valid, test = CyclicBlockDataset(
+            data, d, args.batch_size, args.bptt, gpu=args.gpu
+        ).splits(test=args.test_split, dev=args.dev_split)
 
     print(' * vocabulary size. %d' % len(d))
     print(' * number of train batches. %d' % len(train))
 
     print('Building model...')
-    model = LM(len(d), args.emb_dim, args.hid_dim,
-               num_layers=args.layers, cell=args.cell, dropout=args.dropout,
-               att_dim=args.att_dim, tie_weights=args.tie_weights,
-               deepout_layers=args.deepout_layers, train_init=args.train_init,
-               deepout_act=args.deepout_act, maxouts=args.maxouts,
-               word_dropout=args.word_dropout, target_code=d.get_unk())
+    model = MultiheadLM(len(d), args.emb_dim, args.hid_dim,
+                        heads=tuple(data.keys()),
+                        num_layers=args.layers, cell=args.cell,
+                        dropout=args.dropout, att_dim=args.att_dim,
+                        deepout_layers=args.deepout_layers,
+                        train_init=args.train_init,
+                        deepout_act=args.deepout_act, maxouts=args.maxouts,
+                        word_dropout=args.word_dropout,
+                        target_code=d.get_unk())
 
     model.apply(u.make_initializer())
     if args.gpu:
@@ -171,8 +156,9 @@ if __name__ == '__main__':
     criterion = nn.NLLLoss()
 
     # create trainer
-    trainer = LMTrainer(model, {"train": train, "test": test, "valid": valid},
-                        criterion, optim)
+    trainer = CyclicLMTrainer(
+        model, {"train": train, "test": test, "valid": valid},
+        criterion, optim)
 
     # hooks
     early_stopping = None
