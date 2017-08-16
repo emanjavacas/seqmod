@@ -293,7 +293,7 @@ def make_lm_check_hook(d, seed_text, max_seq_len=25, gpu=False,
             trainer.log("info", "Valid loss: %g" % loss)
             trainer.log("info", "Registering early stopping loss...")
             if early_stopping is not None:
-                early_stopping.add_checkpoint(loss)
+                early_stopping.add_checkpoint(trainer.merge_loss(loss))
         trainer.log("info", "Generating text...")
         scores, hyps = trainer.model.generate(
             d, seed_text=seed_text, max_seq_len=max_seq_len, gpu=gpu,
