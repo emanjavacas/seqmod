@@ -29,13 +29,17 @@ class pqueue(object):
         if self.heapmax:
             p, x = max(self.queue)
             return -p, x
-        return min(self.queue)
+        else:
+            p, x = min(self.queue)
+            return p, x
 
     def get_max(self):
         if self.heapmax:
             p, x = min(self.queue)
             return -p, x
-        return max(self.queue)
+        else:
+            p, x = max(self.queue)
+            return p, x
 
     def is_full(self):
         return len(self) == self.maxsize
