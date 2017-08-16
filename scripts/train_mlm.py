@@ -67,9 +67,11 @@ if __name__ == '__main__':
     parser.add_argument('--maxouts', default=2, type=int)
     parser.add_argument('--train_init', action='store_true')
     # dataset
-    parser.add_argument('--path', required=True)
-    parser.add_argument('--processed', action='store_true')
+    parser.add_argument('--path')
+    parser.add_argument('--load_data', action='store_true')
+    parser.add_argument('--save_data', action='store_true')
     parser.add_argument('--dict_path', type=str)
+    parser.add_argument('--data_path', type=str)
     parser.add_argument('--max_size', default=1000000, type=int)
     parser.add_argument('--min_freq', default=1, type=int)
     parser.add_argument('--lower', action='store_true')
@@ -104,16 +106,13 @@ if __name__ == '__main__':
     parser.add_argument('--save_path', default='models', type=str)
     args = parser.parse_args()
 
-    if args.processed:
-        print("Loading preprocessed datasets...")
-        assert args.dict_path, "Processed data requires DICT_PATH"
-        data, d = load_from_file(args.path), u.load_model(args.dict_path)
-        train, test, valid = CyclicBlockDataset(
-            data, d, args.batch_size, args.bptt, gpu=args.gpu, fitted=True
-        ).splits(test=args.test_split, dev=args.dev_split)
-        del data
+    if args.load_data:
+        print("Loading dataset...")
+        dataset = u.load_model(args.data_path)
+        d = dataset.d
+        dataset.set_gpu(args.gpu), dataset.set_batch_size(args.batch_size)
     else:
-        print("Processing datasets...")
+        print("Processing dataset...")
         proc = text_processor(lower=args.lower, num=args.num, level=args.level)
         d = Dict(max_size=args.max_size, min_freq=args.min_freq,
                  eos_token=u.EOS)
@@ -124,16 +123,20 @@ if __name__ == '__main__':
                 data[label].append(l)
             d.partial_fit(data[label])
         d.fit()
-        train, valid, test = CyclicBlockDataset(
+        dataset = CyclicBlockDataset(
             data, d, args.batch_size, args.bptt, gpu=args.gpu
-        ).splits(test=args.test_split, dev=args.dev_split)
+        )
+        if args.save_data:
+            u.save_model(dataset, args.data_path)
+    train, valid, test = dataset.splits(
+        test=args.test_split, dev=args.dev_split)
+    del dataset
 
     print(' * vocabulary size. %d' % len(d))
     print(' * number of train batches. %d' % len(train))
 
     print('Building model...')
-    model = MultiheadLM(len(d), args.emb_dim, args.hid_dim,
-                        heads=tuple(data.keys()),
+    model = MultiheadLM(len(d), args.emb_dim, args.hid_dim, heads=train.names,
                         num_layers=args.layers, cell=args.cell,
                         dropout=args.dropout, att_dim=args.att_dim,
                         deepout_layers=args.deepout_layers,
@@ -158,13 +161,13 @@ if __name__ == '__main__':
     # create trainer
     trainer = CyclicLMTrainer(
         model, {"train": train, "test": test, "valid": valid},
-        criterion, optim)
+        criterion, optim, reset_hidden=True)
 
     # hooks
     early_stopping = None
     if args.early_stopping > 0:
         early_stopping = EarlyStopping(10, patience=args.early_stopping)
-    model_hook = u.make_lm_hook(
+    model_hook = u.make_mlm_hook(
         d, method=args.decoding_method, temperature=args.temperature,
         max_seq_len=args.max_seq_len, seed_text=args.seed, gpu=args.gpu,
         early_stopping=early_stopping)
