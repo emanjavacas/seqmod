@@ -5,7 +5,6 @@ Copyright (c) 2017, Zygmunt Zając
 
 import numpy as np
 
-from random import random
 from math import log, ceil
 from time import time, ctime
 
