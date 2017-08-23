@@ -13,32 +13,14 @@ from seqmod.misc.loggers import StdLogger
 import seqmod.utils as u
 
 
-def compute_length(l, length_bins):
-    length = len(l)
-    output = None
-    for length_bin in length_bins[::-1]:
-        if length > length_bin:
-            output = length_bin
-            break
-    else:
-        output = -1
-    return output
-
-
-def readpars(inputfile):
+def readlines(inputfile):
     with open(inputfile, 'r', newline='\n') as f:
         for line in f:
-            label, par = line.split('\t')
-            yield label, par.split('\\n')
+            *labels, sent = line.split('\t')
+            yield labels, sent
 
 
-def load_data(path, lang_d, conds_d, length_bins=(50, 100, 150, 300)):
-    for label, lines in readpars(path):
-        for line in lines:
-            yield line, [label, compute_length(line, length_bins)]
-
-
-def chars_conds(lines, conds, lang_d, conds_d, table=None):
+def linearize_data(lines, conds, lang_d, conds_d, table=None):
     for line, line_conds in zip(lines, conds):
         line_conds = tuple(d.index(c) for d, c in zip(conds_d, line_conds))
         for char in next(lang_d.transform([line])):
@@ -51,9 +33,9 @@ def chars_conds(lines, conds, lang_d, conds_d, table=None):
 
 
 def examples_from_lines(lines, conds, lang_d, conds_d, table=None):
-    gen = chars_conds(lines, conds, lang_d, conds_d, table=table)
+    generator = linearize_data(lines, conds, lang_d, conds_d, table=table)
     dims = 2 if table is not None else len(conds_d) + 1
-    return torch.LongTensor(list(gen)).view(-1, dims).t().contiguous()
+    return torch.LongTensor(list(generator)).view(-1, dims).t().contiguous()
 
 
 if __name__ == '__main__':
@@ -120,26 +102,26 @@ if __name__ == '__main__':
         lang_d = Dict(
             max_size=args.max_size, min_freq=args.min_freq, eos_token=u.EOS)
         conds_d = [Dict(sequential=False, force_unk=False) for _ in range(2)]
-        train_lines, train_conds = zip(*load_data(
-            os.path.join(args.path, 'train.csv'), lang_d, conds_d))
+        linesiter = readlines(os.path.join(args.path, 'train.csv'))
+        train_labels, train_lines = zip(*linesiter)
         print("Fitting language Dict")
         lang_d.fit(train_lines)
         print("Fitting condition Dicts")
-        for d, cond in zip(conds_d, zip(*train_conds)):
+        for d, cond in zip(conds_d, zip(*train_labels)):
             d.fit([cond])
 
         print("Processing datasets")
         print("Processing train")
         table = CompressionTable(len(conds_d))
         train = examples_from_lines(
-            train_lines, train_conds, lang_d, conds_d, table=table)
+            train_lines, train_labels, lang_d, conds_d, table=table)
         del train_lines, train_conds
         print("Processing test")
-        test_lines, test_conds = zip(*load_data(
-            os.path.join(args.path, 'test.csv'), lang_d, conds_d))
+        linesiter = readlines(os.path.join(args.path, 'test.csv'))
+        test_labels, test_lines = zip(*linesiter)
         test = examples_from_lines(
-            test_lines, test_conds, lang_d, conds_d, table=table)
-        del test_lines, test_conds
+            test_lines, test_labels, lang_d, conds_d, table=table)
+        del test_lines, test_labels
         d = tuple([lang_d] + conds_d)
 
         if args.save_data:
@@ -207,5 +189,5 @@ if __name__ == '__main__':
         args.epochs, args.checkpoint, gpu=args.gpu)
 
     if args.save:
-        u.save_checkpoint(
-            args.model_path, best_model, d, vars(args), ppl=test_ppl)
+        u.save_checkpoint(args.model_path, best_model, d, vars(args),
+                          ppl=test_ppl)
