@@ -85,7 +85,6 @@ class StackedGRU(_StackedRNN):
 
 class StackedNormalizedGRU(_StackedRNN):
     def __init__(self, *args, **kwargs):
-
         super(StackedNormalizedGRU, self).__init__(
             NormalizedGRUCell, *args, **kwargs)
 
@@ -102,7 +101,6 @@ class StackedNormalizedGRU(_StackedRNN):
         return inp, torch.stack(h_1)
 
 
-# Layer Normalization
 class NormalizedGRUCell(nn.GRUCell):
     """
     Layer-normalized GRUCell
@@ -195,8 +193,7 @@ class NormalizedGRU(StackedNormalizedGRU):
         if 'batch_first' in kwargs or 'bidirectional' in kwargs:
             raise NotImplementedError
         super(NormalizedGRU, self).__init__(
-            num_layers, input_size, hid_dim,
-            bias=bias, dropout=dropout)
+            num_layers, input_size, hid_dim, bias=bias, dropout=dropout)
 
     def forward(self, xs, h_0):
         """
@@ -250,7 +247,7 @@ class MaxOut(nn.Module):
 def variable_length_dropout_mask(X, dropout_rate, reserved_codes=()):
     """
     Computes a binary mask across batch examples based on a
-    bernoulli distribution with mean equal to dropout
+    bernoulli distribution with mean equal to dropout.
     """
     probs = X.new(*X.size()).float().zero_() + dropout_rate
     # zeroth reserved_codes
@@ -262,7 +259,8 @@ def word_dropout(
         inp, target_code, p=0.0, reserved_codes=(), training=True):
     """
     Applies word dropout to an input Variable. Dropout isn't constant
-    across batch examples.
+    across batch examples. This is only to be used to drop input symbols
+    (i.e. before the embedding layer)
 
     Parameters:
     -----------

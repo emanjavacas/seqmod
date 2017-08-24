@@ -393,6 +393,7 @@ class LM(nn.Module):
         self.word_dropout = word_dropout
         self.target_code = target_code
         self.reserved_codes = reserved_codes
+
         # embeddings
         self.embeddings = nn.Embedding(vocab, self.emb_dim)
         rnn_input_size = self.emb_dim
@@ -402,19 +403,21 @@ class LM(nn.Module):
                 conds.append(nn.Embedding(c['varnum'], c['emb_dim']))
                 rnn_input_size += c['emb_dim']
             self.conds = nn.ModuleList(conds)
+
         # rnn
         if self.train_init:
             self.h_0 = nn.Parameter(torch.zeros(hid_dim * num_layers))
             if cell.startswith('LSTM'):
                 self.c_0 = nn.Parameter(torch.zeros(hid_dim * num_layers))
-        if cell.startswith('Normalized'):  # normalized layers are custom
-            cell = getattr(custom, cell)
-        else:
+        if hasattr(nn, cell):
             cell = getattr(nn, cell)
+        else:                   # assume custom cell
+            cell = getattr(custom, cell)
         self.rnn = cell(
             rnn_input_size, self.hid_dim,
             num_layers=num_layers, bias=bias, dropout=dropout)
-        # attention
+
+        # (optional) attention
         if self.add_attn:
             if self.conds is not None:
                 raise ValueError("Attention is not supported with conditions")
@@ -425,7 +428,8 @@ class LM(nn.Module):
             self.att_dim = att_dim
             self.attn = AttentionalProjection(
                 self.att_dim, self.hid_dim, self.emb_dim)
-        # deepout
+
+        # (optional) deepout
         if self.add_deepout:
             self.deepout = DeepOut(
                 in_dim=self.hid_dim,
@@ -433,6 +437,7 @@ class LM(nn.Module):
                 activation=deepout_act,
                 maxouts=maxouts,
                 dropout=self.dropout)
+
         # output projection
         if self.tie_weights:
             if self.emb_dim == self.hid_dim:
