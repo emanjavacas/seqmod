@@ -8,6 +8,11 @@ import torch
 import torch.nn.init as init
 from torch.autograd import Variable
 
+from seqmod.modules.custom import (
+    StackedLSTM, StackedGRU,
+    StackedNormalizedGRU, NormalizedGRUCell, NormalizedGRU,
+    RHNCoupled, RHN)
+
 
 BOS = '<bos>'
 EOS = '<eos>'
@@ -175,20 +180,13 @@ def default_weight_init(m, init_range=0.05):
         p.data.uniform_(-init_range, init_range)
 
 
-def rnn_param_type(param):
-    """
-    Distinguish between bias and state weight params inside an RNN.
-    Criterion: biases are vectors, weights are matrices.
-    """
-    if len(param.size()) == 2:
-        return "weight"
-    elif len(param.size()) == 1:
-        return "bias"
-    raise ValueError("Unkown param shape of size [%d]" % param.size())
+def is_bias(param_name):
+    return 'bias' in param_name
 
 
 def make_initializer(
         linear={'type': 'uniform', 'args': {'a': -0.05, 'b': 0.05}},
+        linear_bias={'type': 'constant', 'args': {'val': 0.}},
         rnn={'type': 'xavier_uniform', 'args': {'gain': 1.}},
         rnn_bias={'type': 'constant', 'args': {'val': 0.}},
         emb={'type': 'uniform', 'args': {'a': -0.05, 'b': 0.05}},
@@ -197,27 +195,26 @@ def make_initializer(
         Creates an initializer function customizable on a layer basis.
         """
         rnns = (torch.nn.LSTM, torch.nn.GRU,
-                torch.nn.LSTMCell, torch.nn.GRUCell)
+                torch.nn.LSTMCell, torch.nn.GRUCell,
+                StackedGRU, StackedLSTM, NormalizedGRU,
+                NormalizedGRUCell, StackedNormalizedGRU)
 
         def initializer(m):
             if isinstance(m, (rnns)):  # RNNs
-                for p_type, ps in groupby(m.parameters(), rnn_param_type):
-                    if p_type == 'weight':
-                        for p in ps:
-                            getattr(init, rnn['type'])(p, **rnn['args'])
-                    else:       # bias
-                        for p in ps:
-                            getattr(init, rnn_bias['type'])(
-                                p, **rnn_bias['args'])
+                for p_name, p in m.named_parameters():
+                    if is_bias(p_name):
+                        getattr(init, rnn_bias['type'])(p, **rnn_bias['args'])
+                    else:       # assume weight
+                        getattr(init, rnn['type'])(p, **rnn['args'])
             elif isinstance(m, torch.nn.Linear):  # linear
-                for param in m.parameters():
-                    getattr(init, linear['type'])(param, **linear['args'])
+                for p_name, p in m.named_parameters():
+                    if is_bias(p_name):
+                        getattr(init, linear_bias['type'])(p, **linear_bias['args'])
+                    else:       # assume weight
+                        getattr(init, linear['type'])(p, **linear['args'])
             elif isinstance(m, torch.nn.Embedding):  # embedding
                 for param in m.parameters():
                     getattr(init, emb['type'])(param, **emb['args'])
-            else:               # default initializer
-                for param in m.parameters():
-                    getattr(init, 'uniform')(param, a=-0.05, b=0.05)
         return initializer
 
 
