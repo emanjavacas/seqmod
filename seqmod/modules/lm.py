@@ -662,7 +662,7 @@ class MultiheadLM(LM):
                 self.add_module(head, attn_module)
                 self.attn[head] = attn_module
 
-    def forward(self, inp, hidden=None, head=None):
+    def forward(self, inp, hidden=None, head=None, **kwargs):
         inp = word_dropout(
             inp, self.target_code, p=self.word_dropout,
             reserved_codes=self.reserved_codes, training=self.training)
