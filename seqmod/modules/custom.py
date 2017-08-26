@@ -251,9 +251,9 @@ class RHN(nn.Module):
         self.hidden_dropout = hidden_dropout
         self.tied_noise = tied_noise
         super(RHN, self).__init__()
-        self.add_module('H', nn.Linear(in_dim, hid_dim))
-        self.add_module('T', nn.Linear(in_dim, hid_dim))
-        self.add_module('C', nn.Linear(in_dim, hid_dim))
+        self.add_module('input_H', nn.Linear(in_dim, hid_dim))
+        self.add_module('input_T', nn.Linear(in_dim, hid_dim))
+        self.add_module('input_C', nn.Linear(in_dim, hid_dim))
         self.rnn_h, self.rnn_t, self.rnn_c = [], [], []
         for layer in range(self.depth):
             bias = False if layer == 0 else True
@@ -309,9 +309,9 @@ class RHN(nn.Module):
         H = (h_mask.expand_as(inp) * inp).view(seq_len * batch_size, -1)
         T = (t_mask.expand_as(inp) * inp).view(seq_len * batch_size, -1)
         C = (c_mask.expand_as(inp) * inp).view(seq_len * batch_size, -1)
-        H = self.H(H).view(seq_len, batch_size, -1)
-        T = self.T(T).view(seq_len, batch_size, -1)
-        C = self.C(C).view(seq_len, batch_size, -1)
+        H = self.input_H(H).view(seq_len, batch_size, -1)
+        T = self.input_T(T).view(seq_len, batch_size, -1)
+        C = self.input_C(C).view(seq_len, batch_size, -1)
 
         mask_size = (batch_size, self.hid_dim)
         s_h_mask = make_mask(inp, self.hidden_dropout, mask_size)
@@ -355,8 +355,8 @@ class RHNCoupled(nn.Module):
         self.hidden_dropout = hidden_dropout
         self.tied_noise = tied_noise
         super(RHNCoupled, self).__init__()
-        self.add_module('H', nn.Linear(in_dim, hid_dim))
-        self.add_module('T', nn.Linear(in_dim, hid_dim))
+        self.add_module('input_H', nn.Linear(in_dim, hid_dim))
+        self.add_module('input_T', nn.Linear(in_dim, hid_dim))
         self.rnn_h, self.rnn_t = [], []
         for layer in range(self.depth):
             bias = False if layer == 0 else True
@@ -402,8 +402,8 @@ class RHNCoupled(nn.Module):
             t_mask = make_mask(inp, self.input_dropout, (mask_size))
         H = (h_mask.expand_as(inp) * inp).view(seq_len * batch_size, -1)
         T = (t_mask.expand_as(inp) * inp).view(seq_len * batch_size, -1)
-        H = self.H(H).view(seq_len, batch_size, -1)
-        T = self.T(T).view(seq_len, batch_size, -1)
+        H = self.input_H(H).view(seq_len, batch_size, -1)
+        T = self.input_T(T).view(seq_len, batch_size, -1)
 
         mask_size = (batch_size, self.hid_dim)
         s_h_mask = make_mask(inp, self.hidden_dropout, mask_size)
