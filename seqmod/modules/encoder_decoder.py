@@ -346,6 +346,6 @@ class ForkableMultiTarget(EncoderDecoder):
         model = copy.deepcopy(self)
         model.freeze_submodule('src_embeddings')
         model.freeze_submodule('encoder')
-        model.decoder.apply(u.make_initializer(**init_opts))
-        model.project.apply(u.make_initializer(**init_opts))
+        u.initialize_model(model.decoder, **init_opts)
+        u.initialize_model(model.encoder, **init_opts)
         return model

@@ -145,7 +145,8 @@ if __name__ == '__main__':
                         word_dropout=args.word_dropout,
                         target_code=d.get_unk())
 
-    model.apply(u.make_initializer())
+    u.initialize_model(model)
+
     if args.gpu:
         model.cuda()
 

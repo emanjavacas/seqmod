@@ -157,7 +157,8 @@ if __name__ == '__main__':
                deepout_act=args.deepout_act, maxouts=args.maxouts,
                word_dropout=args.word_dropout, target_code=d.get_unk())
 
-    model.apply(u.make_initializer())
+    u.initialize_model(model)
+
     if args.gpu:
         model.cuda()
 

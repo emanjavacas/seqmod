@@ -150,7 +150,7 @@ if __name__ == '__main__':
         dropout=args.dropout, add_z=args.add_z, word_dropout=args.word_dropout,
         tie_weights=args.tie_weights, project_init=args.project_init)
     print(model)
-    model.apply(u.make_initializer())
+    u.initialize_model(model)
     # model.encoder.register_backward_hook(u.log_grad)
 
     if args.load_embeddings:

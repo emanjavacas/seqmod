@@ -159,8 +159,8 @@ if __name__ == '__main__':
     # model.encoder.register_backward_hook(u.log_grad)
     # model.decoder.register_backward_hook(u.log_grad)
 
-    model.apply(u.make_initializer(
-        rnn={'type': 'orthogonal', 'args': {'gain': 1.0}}))
+    u.initialize_model(
+        model, rnn={'type': 'orthogonal', 'args': {'gain': 1.0}})
 
     optimizer = Optimizer(
         model.parameters(), args.optim, args.learning_rate, args.max_grad_norm,

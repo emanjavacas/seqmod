@@ -157,7 +157,7 @@ if __name__ == '__main__':
                    deepout_act=args.deepout_act,
                    word_dropout=args.word_dropout,
                    target_code=lang_d.get_unk(), conds=conds)
-        model.apply(u.make_initializer())
+        u.initialize_model(model)
 
     print(model)
     print(' * n parameters. %d' % model.n_params())

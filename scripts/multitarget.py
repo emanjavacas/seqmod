@@ -107,8 +107,8 @@ if __name__ == '__main__':
         lr_decay=args.learning_rate_decay, start_decay_at=args.start_decay_at)
     criterion = make_criterion(len(src_dict), src_dict.get_pad())
 
-    model.apply(u.make_initializer(
-        rnn={'type': 'orthogonal', 'args': {'gain': 1.0}}))
+    u.initialize_model(
+        model, rnn={'type': 'orthogonal', 'args': {'gain': 1.0}})
 
     if args.gpu:
         model.cuda(), criterion.cuda()
