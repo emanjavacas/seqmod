@@ -215,6 +215,14 @@ class NormalizedGRU(StackedNormalizedGRU):
         return torch.stack(outputs), h_t
 
 
+def _custom_rhn_init(module):
+    for m_name, m in module.named_modules():
+        if 'T' in m_name:      # initialize transform gates bias to -3
+            if hasattr(m, 'bias') and m.bias is not None:
+                print(m_name)
+                nn.init.constant(m.bias, -3)
+
+
 class RHN(nn.Module):
     """
     Implementation of the full RHN in which the recurrence is computed as:
@@ -258,6 +266,9 @@ class RHN(nn.Module):
             self.rnn_h.append(rnn_h)
             self.rnn_t.append(rnn_t)
             self.rnn_c.append(rnn_c)
+
+    def custom_init(self):
+        _custom_rhn_init(self)
 
     def _step(self, H_t, T_t, C_t, h0, h_mask, t_mask, c_mask):
         s_lm1 = h0
@@ -354,6 +365,9 @@ class RHNCoupled(nn.Module):
             self.add_module('rnn_H_{}'.format(layer + 1), rnn_h)
             self.add_module('rnn_T_{}'.format(layer + 1), rnn_t)
             self.rnn_h.append(rnn_h), self.rnn_t.append(rnn_t)
+
+    def custom_init(self):
+        _custom_rhn_init(self)
 
     def _step(self, H_t, T_t, h0, h_mask, t_mask):
         s_lm1 = h0
