@@ -175,11 +175,6 @@ def select_cols(t, vec):
 
 
 # Initializers
-def default_weight_init(m, init_range=0.05):
-    for p in m.parameters():
-        p.data.uniform_(-init_range, init_range)
-
-
 def is_bias(param_name):
     return 'bias' in param_name
 
@@ -191,31 +186,51 @@ def make_initializer(
         rnn_bias={'type': 'constant', 'args': {'val': 0.}},
         emb={'type': 'uniform', 'args': {'a': -0.05, 'b': 0.05}},
         default={'type': 'uniform', 'args': {'a': -0.05, 'b': 0.05}}):
-        """
-        Creates an initializer function customizable on a layer basis.
-        """
-        rnns = (torch.nn.LSTM, torch.nn.GRU,
-                torch.nn.LSTMCell, torch.nn.GRUCell,
-                StackedGRU, StackedLSTM, NormalizedGRU,
-                NormalizedGRUCell, StackedNormalizedGRU)
 
-        def initializer(m):
-            if isinstance(m, (rnns)):  # RNNs
-                for p_name, p in m.named_parameters():
-                    if is_bias(p_name):
-                        getattr(init, rnn_bias['type'])(p, **rnn_bias['args'])
-                    else:       # assume weight
-                        getattr(init, rnn['type'])(p, **rnn['args'])
-            elif isinstance(m, torch.nn.Linear):  # linear
-                for p_name, p in m.named_parameters():
-                    if is_bias(p_name):
-                        getattr(init, linear_bias['type'])(p, **linear_bias['args'])
-                    else:       # assume weight
-                        getattr(init, linear['type'])(p, **linear['args'])
-            elif isinstance(m, torch.nn.Embedding):  # embedding
-                for param in m.parameters():
-                    getattr(init, emb['type'])(param, **emb['args'])
-        return initializer
+    rnns = (torch.nn.LSTM, torch.nn.GRU,
+            torch.nn.LSTMCell, torch.nn.GRUCell,
+            StackedGRU, StackedLSTM, NormalizedGRU,
+            NormalizedGRUCell, StackedNormalizedGRU)
+
+    def initializer(m):
+        if isinstance(m, (rnns)):  # RNNs
+            for p_name, p in m.named_parameters():
+                if is_bias(p_name):
+                    getattr(init, rnn_bias['type'])(p, **rnn_bias['args'])
+                else:           # assume weight
+                    getattr(init, rnn['type'])(p, **rnn['args'])
+        elif isinstance(m, torch.nn.Linear):  # linear
+            for p_name, p in m.named_parameters():
+                if is_bias(p_name):
+                    getattr(init, linear_bias['type'])(p, **linear_bias['args'])
+                else:           # assume weight
+                    getattr(init, linear['type'])(p, **linear['args'])
+        elif isinstance(m, torch.nn.Embedding):  # embedding
+            for param in m.parameters():
+                getattr(init, emb['type'])(param, **emb['args'])
+        # TODO: conv layers
+
+    return initializer
+
+
+def initialize_model(model, overwrite_custom=True, **init_ops):
+    """
+    Applies initializer function, eventually calling any module
+    specific custom initializers.
+
+    Parameters:
+    -----------
+    model: nn.Module to be initialize
+    overwrite_custom: bool, whether to use submodule's custom_init
+        to overwrite  user input initializer values.
+    init_ops: any opts passed to make_initializer
+    """
+    model.apply(make_initializer(**init_ops))
+
+    if overwrite_custom:
+        for m in model.modules():  # overwrite custom
+            if hasattr(m, 'custom_init'):
+                m.custom_init()
 
 
 def has_trainable_parameters(module):
