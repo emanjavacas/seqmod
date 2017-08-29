@@ -212,11 +212,10 @@ def _custom_rhn_init(module):
     for m_name, m in module.named_modules():
         if 'T' in m_name:      # initialize transform gates bias to -3
             if hasattr(m, 'bias') and m.bias is not None:
-                print(m_name)
                 nn.init.constant(m.bias, -3)
 
 
-class RHN(nn.Module):
+class _RHN(nn.Module):
     """
     Implementation of the full RHN in which the recurrence is computed as:
         s_l^t = (h_l^t * t_l^t) + (s_{l-1}^t * c_l^t)
@@ -243,7 +242,7 @@ class RHN(nn.Module):
         self.input_dropout = input_dropout
         self.hidden_dropout = hidden_dropout
         self.tied_noise = tied_noise
-        super(RHN, self).__init__()
+        super(_RHN, self).__init__()
         self.add_module('input_H', nn.Linear(in_dim, hid_dim))
         self.add_module('input_T', nn.Linear(in_dim, hid_dim))
         self.add_module('input_C', nn.Linear(in_dim, hid_dim))
@@ -323,7 +322,7 @@ class RHN(nn.Module):
         return torch.stack(outs), outs[-1]
 
 
-class RHNCoupled(nn.Module):
+class _RHNCoupled(nn.Module):
     """
     Simple variant of the RHN from https://arxiv.org/abs/1607.03474, in which
     the carry gate is omitted and the highway transformation is defined as:
@@ -336,7 +335,7 @@ class RHNCoupled(nn.Module):
     same dropout mask is applied to all linear transformations (see argument)
     `input_dropout`.
 
-    Parameters: (See RHN)
+    Parameters: (See _RHN)
     """
     def __init__(self, in_dim, hid_dim, num_layers=1, tied_noise=True,
                  input_dropout=0.75, hidden_dropout=0.25, **kwargs):
@@ -346,7 +345,7 @@ class RHNCoupled(nn.Module):
         self.input_dropout = input_dropout
         self.hidden_dropout = hidden_dropout
         self.tied_noise = tied_noise
-        super(RHNCoupled, self).__init__()
+        super(_RHNCoupled, self).__init__()
         self.add_module('input_H', nn.Linear(in_dim, hid_dim))
         self.add_module('input_T', nn.Linear(in_dim, hid_dim))
         self.rnn_h, self.rnn_t = [], []
@@ -411,6 +410,42 @@ class RHNCoupled(nn.Module):
             hidden = out
 
         return torch.stack(outs), outs[-1]
+
+
+class RHN(_RHN):
+    """
+    Wrapper class for a stacked RHN. Note that although not necessary,
+    the RHN is limited to a single stacked layer (reinterpreting parameter
+    `num_layers` horizontally as RHN depth).
+    """
+    def forward(self, inp, hidden):
+        """
+        Parameters:
+        -----------
+
+        inp: FloatTensor (seq_len x batch_size x in_dim)
+        hidden: FloatTensor (num_layers x batch_size x hidden_size)
+        """
+        out, hidden = super(RHN, self).forward(inp, hidden.squeeze(0))
+        return out, hidden.unsqueeze(0)
+
+
+class RHNCoupled(_RHNCoupled):
+    """
+    Wrapper class or a stacked RHNCoupled. Note that although not necessary,
+    the RHN is limited to a single stacked layer (reinterpreting parameter
+    `num_layers` horizontally as RHN depth).
+    """
+    def forward(self, inp, hidden):
+        """
+        Parameters:
+        -----------
+
+        inp: FloatTensor (seq_len x batch_size x in_dim)
+        hidden: FloatTensor (num_layers x batch_size x hidden_size)
+        """
+        out, hidden = super(RHNCoupled, self).forward(inp, hidden.squeeze(0))
+        return out, hidden.unsqueeze(0)
 
 
 class MaxOut(nn.Module):
