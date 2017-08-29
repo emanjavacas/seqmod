@@ -58,7 +58,7 @@ if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
     # model
-    parser.add_argument('--layers', default=2, type=int)
+    parser.add_argument('--num_layers', default=2, type=int)
     parser.add_argument('--cell', default='LSTM')
     parser.add_argument('--emb_dim', default=200, type=int)
     parser.add_argument('--hid_dim', default=200, type=int)
