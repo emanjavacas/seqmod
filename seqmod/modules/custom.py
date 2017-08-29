@@ -120,6 +120,7 @@ class NormalizedGRUCell(nn.GRUCell):
         # match GRUCell params for gates (reset, update) and input
         self.gamma_ih = nn.Parameter(torch.ones(3 * self.hidden_size))
         self.gamma_hh = nn.Parameter(torch.ones(3 * self.hidden_size))
+        self.gamma_ih.custom, self.gamma_hh.custom = True, True
         self.eps = 0
 
     def _layer_norm_x(self, x, g, bias=None):

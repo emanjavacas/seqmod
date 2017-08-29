@@ -195,19 +195,25 @@ def make_initializer(
     def initializer(m):
         if isinstance(m, (rnns)):  # RNNs
             for p_name, p in m.named_parameters():
+                if hasattr(p, 'custom'):
+                    continue
                 if is_bias(p_name):
                     getattr(init, rnn_bias['type'])(p, **rnn_bias['args'])
                 else:           # assume weight
                     getattr(init, rnn['type'])(p, **rnn['args'])
         elif isinstance(m, torch.nn.Linear):  # linear
             for p_name, p in m.named_parameters():
+                if hasattr(p, 'custom'):
+                    continue
                 if is_bias(p_name):
                     getattr(init, linear_bias['type'])(p, **linear_bias['args'])
                 else:           # assume weight
                     getattr(init, linear['type'])(p, **linear['args'])
         elif isinstance(m, torch.nn.Embedding):  # embedding
-            for param in m.parameters():
-                getattr(init, emb['type'])(param, **emb['args'])
+            for p in m.parameters():
+                if hasattr(p, 'custom'):
+                    continue
+                getattr(init, emb['type'])(p, **emb['args'])
         # TODO: conv layers
 
     return initializer
