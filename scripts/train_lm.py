@@ -157,7 +157,7 @@ if __name__ == '__main__':
 
     print('Building model...')
     model = LM(len(d), args.emb_dim, args.hid_dim,
-               num_layers=args.layers, cell=args.cell, dropout=args.dropout,
+               num_layers=args.num_layers, cell=args.cell, dropout=args.dropout,
                att_dim=args.att_dim, tie_weights=args.tie_weights,
                deepout_layers=args.deepout_layers, train_init=args.train_init,
                deepout_act=args.deepout_act, maxouts=args.maxouts,
