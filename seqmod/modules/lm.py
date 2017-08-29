@@ -524,7 +524,8 @@ class LM(nn.Module):
             emb = torch.cat([emb, conds], 2)
         if self.has_dropout:
             emb = F.dropout(emb, p=self.dropout, training=self.training)
-        outs, hidden = self.rnn(emb, hidden or self.init_hidden_for(emb))
+        hidden = hidden if hidden is not None else self.init_hidden_for(emb)
+        outs, hidden = self.rnn(emb, hidden)
         if self.has_dropout:
             outs = F.dropout(outs, p=self.dropout, training=self.training)
         weights = None
@@ -668,7 +669,8 @@ class MultiheadLM(LM):
         emb = self.embeddings(inp)
         if self.has_dropout:
             emb = F.dropout(emb, p=self.dropout, training=self.training)
-        outs, hidden = self.rnn(emb, hidden or self.init_hidden_for(emb))
+        hidden = hidden if hidden is not None else self.init_hidden_for(emb)
+        outs, hidden = self.rnn(emb, hidden)
         if self.has_dropout:
             outs = F.dropout(outs, p=self.dropout, training=self.training)
         weights = None

@@ -52,7 +52,8 @@ class Encoder(nn.Module):
         h_t: (num_layers x batch x hidden_size * num_directions)
         c_t: (num_layers x batch x hidden_size * num_directions)
         """
-        outs, hidden = self.rnn(inp, hidden or self.init_hidden_for(inp))
+        hidden = hidden if hidden is not None else self.init_hidden_for(inp)
+        outs, hidden = self.rnn(inp, hidden)
         if self.bidi:
             # BiRNN encoder outputs (num_layers * 2 x batch x hid_dim)
             # but decoder expects   (num_layers x batch x hid_dim * 2)
