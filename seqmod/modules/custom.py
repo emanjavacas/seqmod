@@ -147,23 +147,19 @@ class NormalizedGRUCell(nn.GRUCell):
         # 1. GATES
         # 1.1. input to hidden gates
         weight_ih_rz = self.weight_ih.narrow(  # update & reset gate params
-            0, 0, 2 * self.hidden_size
-        ).transpose(0, 1)
+            0, 0, 2 * self.hidden_size).transpose(0, 1)
         ih_rz = self._layer_norm_x(
             torch.mm(x, weight_ih_rz),
             self.gamma_ih.narrow(0, 0, 2 * self.hidden_size),
-            None if not self.bias
-            else self.bias_ih.narrow(0, 0, 2 * self.hidden_size))
+            None if not self.bias else self.bias_ih.narrow(0, 0, 2 * self.hidden_size))
 
         # 1.2 hidden to hidden gates
         weight_hh_rz = self.weight_hh.narrow(
-            0, 0, 2 * self.hidden_size
-        ).transpose(0, 1)
+            0, 0, 2 * self.hidden_size).transpose(0, 1)
         hh_rz = self._layer_norm_h(
             torch.mm(h, weight_hh_rz),
             self.gamma_hh.narrow(0, 0, 2 * self.hidden_size),
-            None if not self.bias
-            else self.bias_hh.narrow(0, 0, 2 * self.hidden_size))
+            None if not self.bias else self.bias_hh.narrow(0, 0, 2 * self.hidden_size))
 
         rz = torch.sigmoid(ih_rz + hh_rz)
         r = rz.narrow(1, 0, self.hidden_size)
@@ -172,23 +168,19 @@ class NormalizedGRUCell(nn.GRUCell):
         # 1. PROJECTIONS
         # 1.1. input to hidden projection
         weight_ih_n = self.weight_ih.narrow(
-            0, 2 * self.hidden_size, self.hidden_size
-        ).transpose(0, 1)
+            0, 2 * self.hidden_size, self.hidden_size).transpose(0, 1)
         ih_n = self._layer_norm_x(
             torch.mm(x, weight_ih_n),
             self.gamma_ih.narrow(0, 2 * self.hidden_size, self.hidden_size),
-            None if not self.bias
-            else self.bias_ih.narrow(0, 2*self.hidden_size, self.hidden_size))
+            None if not self.bias else self.bias_ih.narrow(0, 2*self.hidden_size, self.hidden_size))
 
         # 1.2. hidden to hidden projection
         weight_hh_n = self.weight_hh.narrow(
-            0, 2 * self.hidden_size, self.hidden_size
-        ).transpose(0, 1)
+            0, 2 * self.hidden_size, self.hidden_size).transpose(0, 1)
         hh_n = self._layer_norm_h(
             torch.mm(h, weight_hh_n),
             self.gamma_hh.narrow(0, 2 * self.hidden_size, self.hidden_size),
-            None if not self.bias
-            else self.bias_hh.narrow(0, 2*self.hidden_size, self.hidden_size))
+            None if not self.bias else self.bias_hh.narrow(0, 2*self.hidden_size, self.hidden_size))
 
         # h' = (1 - z) * n + (z * h)
         n = torch.tanh(ih_n + r * hh_n)
