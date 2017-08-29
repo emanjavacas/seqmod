@@ -522,7 +522,7 @@ class LM(nn.Module):
                 [c_emb(inp_c) for c_emb, inp_c in zip(self.conds, conds)],
                 2)
             emb = torch.cat([emb, conds], 2)
-        if self.has_dropout:
+        if self.has_dropout and not self.cell.startswith('RHN'):
             emb = F.dropout(emb, p=self.dropout, training=self.training)
         hidden = hidden if hidden is not None else self.init_hidden_for(emb)
         outs, hidden = self.rnn(emb, hidden)
