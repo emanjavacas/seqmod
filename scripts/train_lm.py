@@ -133,7 +133,7 @@ if __name__ == '__main__':
                 train_data, d, args.batch_size, args.bptt, gpu=args.gpu)
             del train_data
             test = BlockDataset(
-                load_lines(os.path(args.path, 'test.txt'), processor=proc),
+                load_lines(os.path.join(args.path, 'test.txt'), processor=proc),
                 d, args.batch_size, args.bptt, gpu=args.gpu, evaluation=True)
             if os.path.isfile(os.path.join(args.path, 'valid.txt')):
                 valid = BlockDataset(
