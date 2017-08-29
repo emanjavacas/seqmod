@@ -27,13 +27,18 @@ from seqmod.misc.early_stopping import EarlyStopping
 # Load data
 def load_lines(path, processor=text_processor()):
     lines = []
-    with open(path) as f:
-        for line in f:
-            line = line.strip()
-            if processor is not None:
-                line = processor(line)
-            if line:
-                lines.append(line)
+    if os.path.isfile(path):
+        input_files = [path]
+    else:
+        input_files = [os.path.join(path, f) for f in os.listdir(path)]
+    for path in input_files:
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if processor is not None:
+                    line = processor(line)
+                if line:
+                    lines.append(line)
     return lines
 
 
@@ -121,25 +126,26 @@ if __name__ == '__main__':
         if os.path.isfile(os.path.join(args.path, 'train.txt')):
             if not os.path.isfile(os.path.join(args.path, 'valid.txt')):
                 raise ValueError("train.txt requires test.txt")
-            train_data = load_lines(args.path + 'train.txt', processor=proc)
+            train_data = load_lines(
+                os.path.join(args.path, 'train.txt'), processor=proc)
             d.fit(train_data)
             train = BlockDataset(
                 train_data, d, args.batch_size, args.bptt, gpu=args.gpu)
             del train_data
             test = BlockDataset(
-                load_lines(args.path + 'test.txt', processor=proc),
-                d, args.batch_size, args.bptt, gpu=args.gpu,
-                evaluation=True)
+                load_lines(os.path(args.path, 'test.txt'), processor=proc),
+                d, args.batch_size, args.bptt, gpu=args.gpu, evaluation=True)
             if os.path.isfile(os.path.join(args.path, 'valid.txt')):
                 valid = BlockDataset(
-                    load_lines(args.path + 'valid.txt', processor=proc),
+                    load_lines(
+                        os.path.join(args.path, 'valid.txt'), processor=proc),
                     d, args.batch_size, args.bptt, gpu=args.gpu,
                     evaluation=True)
             else:
                 train, valid = train.splits(dev=None, test=args.dev_split)
         # do split, assume input is single file or dir with txt files
         else:
-            data = [l for f in os.listdir(args.path) for l in load_lines(f)]
+            data = load_lines(args.path, processor=proc)
             d.fit(data)
             train, valid, test = BlockDataset(
                 data, d, args.batch_size, args.bptt, gpu=args.gpu
