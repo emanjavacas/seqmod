@@ -381,8 +381,9 @@ class LM(nn.Module):
             logging.warn("When tying weights, output layer and embedding " +
                          "layer should have equal size. A projection layer " +
                          "will be insterted to accomodate for this")
-        self.num_layers = num_layers
         self.cell = cell
+        if cell.startswith('RHN'):
+            self.num_layers = 1
         self.bias = bias
         self.has_dropout = bool(dropout)
         self.dropout = dropout
@@ -406,9 +407,9 @@ class LM(nn.Module):
 
         # rnn
         if self.train_init:
-            self.h_0 = nn.Parameter(torch.zeros(hid_dim * num_layers))
+            self.h_0 = nn.Parameter(torch.zeros(hid_dim * self.num_layers))
             if cell.startswith('LSTM'):
-                self.c_0 = nn.Parameter(torch.zeros(hid_dim * num_layers))
+                self.c_0 = nn.Parameter(torch.zeros(hid_dim * self.num_layers))
         if hasattr(nn, cell):
             cell = getattr(nn, cell)
         else:                   # assume custom cell
@@ -485,12 +486,10 @@ class LM(nn.Module):
         # non-trainable intial hidden state
         size = (self.num_layers, batch, self.hid_dim)
         h_0 = Variable(inp.data.new(*size).zero_(),
-                       requires_grad=False,
-                       volatile=not self.training)
+                       requires_grad=False, volatile=not self.training)
         if self.cell.startswith('LSTM'):
             c_0 = Variable(inp.data.new(*size).zero_(),
-                           requires_grad=False,
-                           volatile=not self.training)
+                           requires_grad=False, volatile=not self.training)
             return h_0, c_0
         else:
             return h_0
