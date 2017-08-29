@@ -7,7 +7,7 @@ from torch.autograd import Variable
 
 def make_mask(inp, p, size):
     keep_p = 1 - p
-    mask = inp.data.new(size)
+    mask = inp.data.new(*size)
     mask.bernoulli_(keep_p).div_(keep_p)
     return Variable(mask)
 
@@ -271,9 +271,8 @@ class RHN(nn.Module):
         _custom_rhn_init(self)
 
     def _step(self, H_t, T_t, C_t, h0, h_mask, t_mask, c_mask):
-        s_lm1 = h0
-        rnns = [self.rnn_h, self.rnn_t, self.rnn_c]
-        for l, (rnn_h, rnn_t, rnn_c) in enumerate(zip(rnns)):
+        s_lm1, rnns = h0, [self.rnn_h, self.rnn_t, self.rnn_c]
+        for l, (rnn_h, rnn_t, rnn_c) in enumerate(zip(*rnns)):
             s_lm1_H = h_mask.expand_as(s_lm1) * s_lm1
             s_lm1_T = t_mask.expand_as(s_lm1) * s_lm1
             s_lm1_C = c_mask.expand_as(s_lm1) * s_lm1
@@ -290,7 +289,7 @@ class RHN(nn.Module):
 
         return s_l
 
-    def forward(self, inp, hidden=None):
+    def forward(self, inp, hidden):
         """
         Parameters:
         -----------
