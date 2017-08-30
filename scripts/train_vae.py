@@ -81,7 +81,7 @@ if __name__ == '__main__':
     parser.add_argument('--suffix', default=None)
     # training
     parser.add_argument('--optim', default='RMSprop')
-    parser.add_argument('--learning_rate', default=0.01, type=float)
+    parser.add_argument('--lr', default=0.01, type=float)
     parser.add_argument('--max_norm', default=5., type=float)
     parser.add_argument('--weight_decay', default=0, type=float)
     parser.add_argument('--lr_decay', default=0.85, type=float)
@@ -170,7 +170,7 @@ if __name__ == '__main__':
         trainer.log("info", "Resetting lr [%g -> %g]" % (old_lr, new_lr))
 
     optimizer = Optimizer(
-        model.parameters(), args.optim, lr=args.learning_rate,
+        model.parameters(), args.optim, lr=args.lr,
         max_norm=args.max_norm, weight_decay=args.weight_decay,
         # SGD-only
         start_decay_at=args.start_decay_at, lr_decay=args.lr_decay,

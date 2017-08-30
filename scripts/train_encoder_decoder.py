@@ -108,13 +108,13 @@ if __name__ == '__main__':
     parser.add_argument('--hooks_per_epoch', default=2, type=int)
     parser.add_argument('--optim', default='Adam', type=str)
     parser.add_argument('--plot', action='store_true')
-    parser.add_argument('--learning_rate', default=0.01, type=float)
+    parser.add_argument('--lr', default=0.01, type=float)
     parser.add_argument('--dropout', default=0.0, type=float)
     parser.add_argument('--word_dropout', default=0.0, type=float)
     parser.add_argument('--patience', default=3, type=int)
-    parser.add_argument('--learning_rate_decay', default=0.5, type=float)
+    parser.add_argument('--lr_decay', default=0.5, type=float)
     parser.add_argument('--start_decay_at', default=8, type=int)
-    parser.add_argument('--max_grad_norm', default=5., type=float)
+    parser.add_argument('--max_norm', default=5., type=float)
     parser.add_argument('--gpu', action='store_true')
     parser.add_argument('--beam', action='store_true')
     args = parser.parse_args()
@@ -163,8 +163,8 @@ if __name__ == '__main__':
         model, rnn={'type': 'orthogonal', 'args': {'gain': 1.0}})
 
     optimizer = Optimizer(
-        model.parameters(), args.optim, args.learning_rate, args.max_grad_norm,
-        lr_decay=args.learning_rate_decay, start_decay_at=args.start_decay_at)
+        model.parameters(), args.optim, lr=args.lr, max_norm=args.max_norm,
+        lr_decay=args.lr_decay, start_decay_at=args.start_decay_at)
 
     criterion = make_criterion(len(src_dict), src_dict.get_pad())
 

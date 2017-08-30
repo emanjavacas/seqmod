@@ -88,11 +88,11 @@ if __name__ == '__main__':
     parser.add_argument('--gpu', action='store_true')
     # - optimizer
     parser.add_argument('--optim', default='Adam', type=str)
-    parser.add_argument('--learning_rate', default=0.01, type=float)
-    parser.add_argument('--learning_rate_decay', default=0.5, type=float)
+    parser.add_argument('--lr', default=0.01, type=float)
+    parser.add_argument('--lr_decay', default=0.5, type=float)
     parser.add_argument('--start_decay_at', default=5, type=int)
     parser.add_argument('--decay_every', default=1, type=int)
-    parser.add_argument('--max_grad_norm', default=5., type=float)
+    parser.add_argument('--max_norm', default=5., type=float)
     parser.add_argument('--early_stopping', default=-1, type=int)
     # - check
     parser.add_argument('--seed', default=None)
@@ -172,9 +172,9 @@ if __name__ == '__main__':
     print('* number of parameters: %d' % model.n_params())
 
     optim = Optimizer(
-        model.parameters(), args.optim, args.learning_rate, args.max_grad_norm,
-        lr_decay=args.learning_rate_decay, start_decay_at=args.start_decay_at,
-        decay_every=args.decay_every)
+        model.parameters(), args.optim, lr=args.lr, max_norm=args.max_norm,
+        lr_decay=args.learning_rate_decay,
+        start_decay_at=args.start_decay_at, decay_every=args.decay_every)
     criterion = nn.NLLLoss()
 
     # create trainer

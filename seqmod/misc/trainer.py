@@ -113,14 +113,9 @@ class Trainer(object):
     def on_test_end(self, loss):
         self.log("test_end", {"loss": dict(zip(self.loss_labels, loss))})
 
-    def format_loss(self, loss):
-        return loss
-
     # optimizer
     def zero_grad(self):
-        """
-        Reset accumulated gradients for the optimizer
-        """
+        "Reset accumulated gradients for the optimizer"
         if isinstance(self.optimizer, dict):
             for opt in self.optimizer.values():
                 opt.zero_grad()
@@ -128,9 +123,7 @@ class Trainer(object):
             self.optimizer.zero_grad()
 
     def optimizer_step(self, val_loss=None):
-        """
-        Runs an optimizing step.
-        """
+        "Runs an optimizing step"
         if isinstance(self.optimizer, dict):
             for opt in self.optimizer.values():
                 opt.step()
@@ -147,15 +140,15 @@ class Trainer(object):
 
     # loss
     def init_loss(self):
-        """
-        Function defining the shape of the loss before training.
-        """
+        "Function defining the shape of the loss before training"
         return tuple([0] * len(self.loss_labels))
 
+    def format_loss(self, loss):
+        "Eventually transform loss into something meaningful (e.g. ppl)"
+        return loss
+
     def reweight_loss(self, loss, num_examples):
-        """
-        Reweight the loss to account for all instances in batch (deaveraging).
-        """
+        "Reweight the loss to account for all instances in batch (deaveraging)"
         weight = (num_examples if self.size_average else 1)
         return tuple([l * weight for l in loss])
 
@@ -167,15 +160,11 @@ class Trainer(object):
         return tuple([acc + new for (acc, new) in zip(acc_loss, loss)])
 
     def average_loss(self, epoch_loss, num_epoch_examples):
-        """
-        Computes average loss per instance after epoch.
-        """
+        "Computes average loss per instance after epoch"
         return tuple([l / num_epoch_examples for l in epoch_loss])
 
     def merge_loss(self, loss):
-        """
-        Combine in case of complex loss.
-        """
+        "Combine in case of complex loss"
         return sum(loss)
 
     # training code
