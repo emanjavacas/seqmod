@@ -101,13 +101,13 @@ class Trainer(object):
                                "loss": dict(zip(self.loss_labels, loss)),
                                "examples": examples,
                                "duration": duration})
-        if self.early_stopping is not None and valid_loss is not None:
-            self.early_stopping.add_checkpoint(self.merge_loss(valid_loss),
-                                               copy.deepcopy(self.model))
 
     def on_validation_end(self, epoch, loss):
         self.log("validation_end", {"epoch": epoch,
                                     "loss": dict(zip(self.loss_labels, loss))})
+        if self.early_stopping is not None:
+            self.early_stopping.add_checkpoint(
+                self.merge_loss(loss), copy.deepcopy(self.model))
 
     def on_test_begin(self, epoch):
         self.log("test_begin", {"epoch": epoch})
@@ -290,16 +290,14 @@ class Trainer(object):
             run_loss = self.format_loss(
                 self.average_loss(run_loss, run_examples))
             run_time = time.time() - start
+            self.on_epoch_end(self.batch_run, run_loss, run_examples, run_time)
             # valid
             if self.valid_name in self.datasets:
                 self.model.eval()
                 valid_loss = self.validate_model(**kwargs)
                 self.on_validation_end(self.batch_run, valid_loss)
                 self.model.train()
-            self.on_epoch_end(
-                self.batch_run, run_loss, run_examples, run_time,
-                valid_loss=valid_loss)
-            if valid_loss is not None:  # merge after callbacks
+            if valid_loss is not None:  # merge after callback
                 valid_loss = self.merge_loss(valid_loss)
         except EarlyStoppingException as e:
             message, data = e.args
@@ -332,32 +330,29 @@ class Trainer(object):
         """
         best_model, valid_loss, test_loss = None, None, None
         start = time.time()
-        for epoch in range(1, epochs + 1):
-            self.epoch = epoch
-            start_epoch = time.time()
+        for e in range(1, epochs + 1):
+            self.epoch, start_epoch = e, time.time()
             self.model.train()
-            self.on_epoch_begin(epoch)
             try:
                 # train
+                self.on_epoch_begin(e)
                 batch_order = self._get_batch_order(shuffle)
                 epoch_loss, epoch_examples = self._train(
-                    epoch, checkpoint, batch_order, **kwargs)
+                    e, checkpoint, batch_order, **kwargs)
                 epoch_loss = self.format_loss(
                     self.average_loss(epoch_loss, epoch_examples))
                 epoch_time = time.time() - start_epoch
+                self.on_epoch_end(e, epoch_loss, epoch_examples, epoch_time)
                 # valid
                 if self.valid_name in self.datasets:
                     self.model.eval()
                     valid_loss = self.validate_model(**kwargs)
-                    self.on_validation_end(epoch, valid_loss)
+                    self.on_validation_end(e, valid_loss)
                     self.model.train()
-                self.on_epoch_end(
-                    epoch, epoch_loss, epoch_examples, epoch_time,
-                    valid_loss=valid_loss)
-                if valid_loss is not None:  # merge after callbacks
+                if valid_loss is not None:  # merge after callback
                     valid_loss = self.merge_loss(valid_loss)
-            except EarlyStoppingException as e:
-                message, data = e.args
+            except EarlyStoppingException as ex:
+                message, data = ex.args
                 best_model, valid_loss = data['model'], data['smallest']
                 self.log("info", message)
                 break
