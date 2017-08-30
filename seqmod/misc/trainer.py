@@ -262,15 +262,34 @@ class Trainer(object):
         return run_loss, run_examples
 
     def train_batches(self, num_batches, checkpoint, shuffle=False, gpu=False,
-                      **kwargs):
+                      run_test=False, **kwargs):
         """
+        Run training on a given number of batches. `num_batches` might be
+        larger than the actual total number of batches in the dataset, in
+        which case the trainer will loop over the dataset in cycles.
+        A second call to this method will resume training where it was left
+        in the previous call (unless the training was interrupted or stopped
+        via early stopping).
+        Shuffling will be done on a dataset basis (i.e. if the first call to
+        `train_batches` didn't consume the full dataset, the second call will
+        resume using the remaining batches from the previously shuffled run),
+        so as to ensure statistical consistency.
+
+        By default, no testing is done at the end, this can be changed through
+        the flag run_test.
+
+        `on_epoch_begin` and `on_epoch_end` are reused in this case, but epoch
+        will refer to the current partial run (which will only coincide with
+        an actual epoch if `num_batches` equals dataset length).
+
         Parameters:
         ===========
         - num_batches: int
         - checkpoint: int, log a checkpoint and hooks every x batches
         - gpu: bool
+        - run_test: bool, whether to run testing after the number of batches
 
-        Returns best_model, valid_loss
+        Returns (best_model, valid_loss), test_loss
         ========
         - best_model: nn.Module, deep copy of the best model during training.
             If no early stopping was provided, the best model will be the
@@ -278,11 +297,13 @@ class Trainer(object):
         - valid_loss: float or None, best validation loss aggregated according
             to the function merge_loss. If not early stopping is provided, best
             loss will be the last validation loss after training.
+        - test_loss: float or None, test loss aggregated as per merge_loss
         """
         start = time.time()
-        best_model, valid_loss = None, None
+        best_model, valid_loss, test_loss = None, None, None
         try:
             # train
+            self.on_epoch_begin(self.batch_run)
             batch_order = self._get_batch_order(shuffle, num_batches)
             run_loss, run_examples = self._train(
                 self.batch_run, checkpoint, batch_order, **kwargs)
@@ -306,9 +327,15 @@ class Trainer(object):
         except KeyboardInterrupt:
             self.log("info", "Training interrupted")
         self.log("info", "Trained for [{:.3f} sec]".format(time.time()-start))
-        best_model = best_model or self.model
-        best_model.cpu()
-        return best_model, valid_loss
+        # test
+        if run_test and self.test_name in self.datasets:
+            self.model.eval()
+            self.on_test_begin(self.batch_run)
+            test_loss = self.validate_model(test=True, **kwargs)
+            self.on_test_end(test_loss)
+            test_loss = self.merge_loss(test_loss)  # merge after callback
+        best_model = best_model or copy.deepcopy(self.model)
+        return (best_model.cpu(), valid_loss), test_loss
 
     def train(self, epochs, checkpoint, shuffle=False, gpu=False, **kwargs):
         """
@@ -363,13 +390,12 @@ class Trainer(object):
         # test
         if self.test_name in self.datasets:
             self.model.eval()
-            self.on_test_begin(epoch)
+            self.on_test_begin(e)
             test_loss = self.validate_model(test=True, **kwargs)
             self.on_test_end(test_loss)
             test_loss = self.merge_loss(test_loss)  # merge after callback
-        best_model = best_model or self.model
-        best_model.cpu()
-        return (best_model, valid_loss), test_loss
+        best_model = best_model or copy.deepcopy(self.model)
+        return (best_model.cpu(), valid_loss), test_loss
 
 
 class LMTrainer(Trainer):
