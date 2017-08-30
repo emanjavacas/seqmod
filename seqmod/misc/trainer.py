@@ -284,7 +284,6 @@ class Trainer(object):
         try:
             # train
             batch_order = self._get_batch_order(shuffle, num_batches)
-            print(batch_order)
             run_loss, run_examples = self._train(
                 self.batch_run, checkpoint, batch_order, **kwargs)
             self.batch_run += 1  # increase number of runs
