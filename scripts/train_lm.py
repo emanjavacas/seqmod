@@ -173,8 +173,8 @@ if __name__ == '__main__':
 
     optim = Optimizer(
         model.parameters(), args.optim, lr=args.lr, max_norm=args.max_norm,
-        lr_decay=args.learning_rate_decay,
-        start_decay_at=args.start_decay_at, decay_every=args.decay_every)
+        lr_decay=args.lr_decay, start_decay_at=args.start_decay_at,
+        decay_every=args.decay_every)
     criterion = nn.NLLLoss()
 
     # create trainer
