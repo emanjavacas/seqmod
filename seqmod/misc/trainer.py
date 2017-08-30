@@ -48,6 +48,8 @@ class Trainer(object):
         self.loggers = []
         self.hooks = []
         self.batch_state = {}  # instance var to share state across batches
+        self.last_batch_order = None
+        self.batch_run = 0
         # properties
         self.test_name = test_name
         self.valid_name = valid_name
@@ -94,10 +96,10 @@ class Trainer(object):
     def on_epoch_begin(self, epoch):
         self.log("epoch_begin", {"epoch": epoch})
 
-    def on_epoch_end(self, epoch, loss, num_examples, duration, valid_loss=None):
+    def on_epoch_end(self, epoch, loss, examples, duration, valid_loss=None):
         self.log("epoch_end", {"epoch": epoch,
                                "loss": dict(zip(self.loss_labels, loss)),
-                               "examples": num_examples,
+                               "examples": examples,
                                "duration": duration})
         if self.early_stopping is not None and valid_loss is not None:
             self.early_stopping.add_checkpoint(self.merge_loss(valid_loss),
@@ -202,15 +204,28 @@ class Trainer(object):
             self.optimizer_step()
         return (loss.data[0], )
 
-    def train_epoch(self, epoch, checkpoint, shuffle, **kwargs):
-        # compute batch order
-        dataset = self.datasets['train']
-        batch_order = range(len(dataset))
+    def _get_batch_order(self, shuffle, num_batches=None):
+        batch_order = list(range(len(self.datasets['train'])))
         if shuffle:
             batch_order = np.random.permutation(batch_order)
-        start = time.time()
-        epoch_loss, check_loss = self.init_loss(), self.init_loss()
-        epoch_examples, check_examples = 0, 0
+        if num_batches is not None:
+            if self.last_batch_order is not None:
+                batch_order = self.last_batch_order
+            while num_batches > len(batch_order):
+                extra_order = list(range(len(self.datasets['train'])))
+                if shuffle:
+                    extra_order = np.random.permutation(extra_order)
+                batch_order += extra_order
+            self.last_batch_order = batch_order[num_batches:]
+            return batch_order[:num_batches]
+        else:
+            return batch_order
+
+    def _train(self, epoch, checkpoint, batch_order, **kwargs):
+        # compute batch order
+        dataset = self.datasets['train']
+        run_loss, check_loss = self.init_loss(), self.init_loss()
+        run_examples, check_examples, start = 0, 0, time.time()
         for batch_num, batch in enumerate(batch_order):
             self.zero_grad()
             batch_data = dataset[batch]
@@ -223,9 +238,9 @@ class Trainer(object):
             # for reporting purposes we need the total loss per batch,
             # but it can be just the average loss depending on `size_average`
             batch_loss = self.reweight_loss(loss, num_examples)
-            epoch_loss = self.update_loss(epoch_loss, batch_loss)
+            run_loss = self.update_loss(run_loss, batch_loss)
             check_loss = self.update_loss(check_loss, batch_loss)
-            epoch_examples += num_examples
+            run_examples += num_examples
             check_examples += num_examples
             # checkpoint
             if checkpoint and batch_num > 0 and batch_num % checkpoint == 0:
@@ -244,7 +259,59 @@ class Trainer(object):
                 check_loss = self.init_loss()
                 check_examples = 0
                 start = time.time()
-        return epoch_loss, epoch_examples
+        return run_loss, run_examples
+
+    def train_batches(self, num_batches, checkpoint, shuffle=False, gpu=False,
+                      **kwargs):
+        """
+        Parameters:
+        ===========
+        - num_batches: int
+        - checkpoint: int, log a checkpoint and hooks every x batches
+        - gpu: bool
+
+        Returns best_model, valid_loss
+        ========
+        - best_model: nn.Module, deep copy of the best model during training.
+            If no early stopping was provided, the best model will be the
+            current model after training.
+        - valid_loss: float or None, best validation loss aggregated according
+            to the function merge_loss. If not early stopping is provided, best
+            loss will be the last validation loss after training.
+        """
+        start = time.time()
+        best_model, valid_loss = None, None
+        try:
+            # train
+            batch_order = self._get_batch_order(shuffle, num_batches)
+            print(batch_order)
+            run_loss, run_examples = self._train(
+                self.batch_run, checkpoint, batch_order, **kwargs)
+            self.batch_run += 1  # increase number of runs
+            run_loss = self.format_loss(
+                self.average_loss(run_loss, run_examples))
+            run_time = time.time() - start
+            # valid
+            if self.valid_name in self.datasets:
+                self.model.eval()
+                valid_loss = self.validate_model(**kwargs)
+                self.on_validation_end(self.batch_run, valid_loss)
+                self.model.train()
+            self.on_epoch_end(
+                self.batch_run, run_loss, run_examples, run_time,
+                valid_loss=valid_loss)
+            if valid_loss is not None:  # merge after callbacks
+                valid_loss = self.merge_loss(valid_loss)
+        except EarlyStoppingException as e:
+            message, data = e.args
+            best_model, valid_loss = data['model'], data['smallest']
+            self.log("info", message)
+        except KeyboardInterrupt:
+            self.log("info", "Training interrupted")
+        self.log("info", "Trained for [{:.3f} sec]".format(time.time()-start))
+        best_model = best_model or self.model
+        best_model.cpu()
+        return best_model, valid_loss
 
     def train(self, epochs, checkpoint, shuffle=False, gpu=False, **kwargs):
         """
@@ -264,8 +331,8 @@ class Trainer(object):
             loss will be the last validation loss after training.
         - test_loss: float or None, test loss aggregated as per merge_loss
         """
-        start = time.time()
         best_model, valid_loss, test_loss = None, None, None
+        start = time.time()
         for epoch in range(1, epochs + 1):
             self.epoch = epoch
             start_epoch = time.time()
@@ -273,8 +340,9 @@ class Trainer(object):
             self.on_epoch_begin(epoch)
             try:
                 # train
-                epoch_loss, epoch_examples = self.train_epoch(
-                    epoch, checkpoint, shuffle, **kwargs)
+                batch_order = self._get_batch_order(shuffle)
+                epoch_loss, epoch_examples = self._train(
+                    epoch, checkpoint, batch_order, **kwargs)
                 epoch_loss = self.format_loss(
                     self.average_loss(epoch_loss, epoch_examples))
                 epoch_time = time.time() - start_epoch
