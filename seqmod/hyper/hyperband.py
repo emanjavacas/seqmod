@@ -9,7 +9,7 @@ from math import log, ceil
 from time import time, ctime
 
 
-class Hyperband:
+class Hyperband(object):
     """
     Parameters:
     -----------
@@ -58,10 +58,11 @@ class Hyperband:
                 for t in T:
                     # TODO: cache previously run config
                     self.counter += 1
-                    print("\n{} | {} | lowest loss so far: {:.4f} (run {})\n"
-                          .format(self.counter, ctime(),
-                                  self.best_loss,
-                                  self.best_counter))
+                    msg = "\n{} | {} | lowest loss so far: {:.4f} (run {})\n"
+                    print(msg.format(self.counter,
+                                     ctime(),
+                                     self.best_loss,
+                                     self.best_counter))
                     # record time
                     start_time = time()
                     # run
