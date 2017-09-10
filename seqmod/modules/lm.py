@@ -370,8 +370,13 @@ class LM(nn.Module):
         self.vocab = vocab
         self.emb_dim = emb_dim
         self.hid_dim = hid_dim
+        self.num_layers = num_layers
         self.tie_weights = tie_weights
+        self.cell = cell
+        self.bias = bias
         self.train_init = train_init
+        self.has_dropout = bool(dropout)
+        self.dropout = dropout
         self.add_attn = att_dim and att_dim > 0
         self.deepout_layers = deepout_layers
         self.deepout_act = deepout_act
@@ -381,12 +386,8 @@ class LM(nn.Module):
             logging.warn("When tying weights, output layer and embedding " +
                          "layer should have equal size. A projection layer " +
                          "will be insterted to accomodate for this")
-        self.cell = cell
         if cell.startswith('RHN'):
             self.num_layers = 1
-        self.bias = bias
-        self.has_dropout = bool(dropout)
-        self.dropout = dropout
         self.conds = conds
         super(LM, self).__init__()
 
