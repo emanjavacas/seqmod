@@ -1,6 +1,6 @@
 """
-Taken from https://github.com/zygmuntz/hyperband/
-Copyright (c) 2017, Zygmunt Zając
+Inspired by https://github.com/zygmuntz/hyperband/
+Copyright (c) 2017, Zygmunt Zając, Enrique Manjavacas
 """
 
 import numpy as np
@@ -21,9 +21,8 @@ class Hyperband(object):
         defined by try_params.
     eta: number, downsampling rate
     """
-    def __init__(self, get_params, try_params, max_iter=81, eta=3):
-        self.get_params = get_params
-        self.try_params = try_params
+    def __init__(self, manager, max_iter=81, eta=3):
+        self.manager = manager
         self.max_iter = max_iter  # maximum iterations per configuration
         self.eta = eta  # defines configuration downsampling rate (default = 3)
 
@@ -43,55 +42,38 @@ class Hyperband(object):
             # initial number of iterations per config
             r = self.max_iter * self.eta ** (-s)
             # n random configurations
-            T = [self.get_params() for i in range(n)]
+            self.manager.sample_n(n)
 
             for i in range(s + 1):
                 # Run each config `n_iters` & keep best (n_configs/eta) configs
                 n_configs = n * self.eta ** (-i)
                 n_iters = r * self.eta ** (i)
-
-                print("\n*** {} configurations x {:.1f} iterations each"
-                      .format(n_configs, n_iters))
-
-                val_losses, early_stops = [], []
-
-                for t in T:
-                    # TODO: cache previously run config
+                # report
+                print("\n{} configs x {:.1f} iters".format(n_configs, n_iters))
+                # run each remaining config
+                for m, data in self.manager:
                     self.counter += 1
-                    msg = "\n{} | {} | lowest loss so far: {:.4f} (run {})\n"
-                    print(msg.format(self.counter,
-                                     ctime(),
-                                     self.best_loss,
-                                     self.best_counter))
-                    # record time
                     start_time = time()
+                    # report run
+                    msg = "\n{} | {} | lowest loss so far: {:.4f} (run {})\n"
+                    print(msg.format(self.counter, ctime(),
+                                     self.best_loss, self.best_counter))
                     # run
-                    result = self.try_params(n_iters, t)
-                    # record loss
-                    loss = result['loss']
-                    val_losses.append(loss)
-                    # record early_stop
-                    early_stops.append(result.get('early_stop', False))
-
-                    # keep track of the best result so far (for display only)
-                    # could do it by checking results each time, but hey
-                    if loss < self.best_loss:
-                        self.best_loss = loss
+                    result = m(n_iters)
+                    # keep track of the best result so far
+                    if result['loss'] < self.best_loss:
+                        self.best_loss = result['loss']
                         self.best_counter = self.counter
 
                     # register result
                     result['counter'] = self.counter
                     result['seconds'] = int(round(time() - start_time))
-                    result['params'] = t
                     result['iterations'] = n_iters
-
                     self.results.append(result)
-
-                # select
-                indices = np.argsort(val_losses)
-                # filter out early stops
-                T = [T[i] for i in indices if not early_stops[i]]
-                # select a number of best configurations for the next loop
-                T = T[0:int(n_configs / self.eta)]
+                    # add result to model metadata
+                    data['runs'].append(result)
+                # prune
+                self.manager.prune_early_stopped()
+                self.manager.prune_topk(int(n_configs / self.eta))
 
         return self.results
