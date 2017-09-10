@@ -1,10 +1,11 @@
 
 import logging
+import warnings
 try:
     from visdom import Visdom
     import numpy as np
 except ImportError:
-    print("Couldn't import visdom. VisdomLogger is disabled")
+    warnings.warn("Couldn't import visdom. VisdomLogger is disabled")
     Visdom = None
 
 
