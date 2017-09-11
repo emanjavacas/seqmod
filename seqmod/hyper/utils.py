@@ -67,5 +67,5 @@ class ModelManager(object):
                        if not data.get('early_stop', False)]
 
     def prune_topk(self, k):
-        sorted_models = sorted(self.models, lambda m: m[1]['runs'][-1]['loss'])
+        sorted_models = sorted(self.models, key=lambda m: m[1]['runs'][-1]['loss'])
         self.models = sorted_models[:k]

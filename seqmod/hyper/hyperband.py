@@ -33,7 +33,7 @@ class Hyperband(object):
         self.results = []       # list of dicts
         self.counter = 0
         self.best_loss = np.inf
-        self.best_counter = -1
+        self.best_counter = None
 
     def run(self):
         for s in reversed(range(self.s_max + 1)):
@@ -51,7 +51,7 @@ class Hyperband(object):
                 # report
                 print("\n{} configs x {:.1f} iters".format(n_configs, n_iters))
                 # run each remaining config
-                for m, data in self.manager:
+                for m, data in self.manager.models:
                     self.counter += 1
                     start_time = time()
                     # report run
@@ -60,9 +60,11 @@ class Hyperband(object):
                                      self.best_loss, self.best_counter))
                     # run
                     result = m(n_iters)
+                    # get loss
+                    loss = result['loss'] or np.inf
                     # keep track of the best result so far
-                    if result['loss'] < self.best_loss:
-                        self.best_loss = result['loss']
+                    if loss < self.best_loss:
+                        self.best_loss = loss
                         self.best_counter = self.counter
 
                     # register result
