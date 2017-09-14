@@ -66,6 +66,7 @@ class Hyperband(object):
         self.counter = 0
         self.best_loss = np.inf
         self.best_counter = None
+        self.best_model = None
 
     def run(self):
         for s in reversed(range(self.s_max + 1)):
@@ -98,12 +99,13 @@ class Hyperband(object):
                     if loss < self.best_loss:
                         self.best_loss = loss
                         self.best_counter = self.counter
+                        self.best_model = m
 
                     # register result
                     result['counter'] = self.counter
                     result['seconds'] = int(round(time() - start_time))
                     result['iterations'] = n_iters
-                    self.results.append(result)
+                    self.results.append({'params': data['params'], **result})
                     # add result to model metadata
                     data['runs'].append(result)
                 # prune
