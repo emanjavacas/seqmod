@@ -15,7 +15,7 @@ except:
 import torch.nn as nn
 
 from seqmod.hyper import Hyperband
-from seqmod.hyper.utils import ModelManager, make_sampler
+from seqmod.hyper.utils import make_sampler
 
 from seqmod.modules.lm import LM
 from seqmod import utils as u
@@ -191,6 +191,6 @@ if __name__ == '__main__':
 
         return run
 
-    hb = Hyperband(ModelManager(param_sampler, model_builder),
+    hb = Hyperband(param_sampler, model_builder,
                    max_iter=args.max_iter, eta=args.eta)
     print(hb.run())

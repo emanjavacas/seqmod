@@ -9,20 +9,52 @@ from math import log, ceil
 from time import time, ctime
 
 
+class ModelManager(object):
+    """
+    Parameters:
+    -----------
+    param_sampler: fn() -> dict (sampled param space)
+
+    model_builder: fn(params) -> fn(n_iters) -> dict
+        result {'loss': float, 'early_stop': bool}
+    """
+    def __init__(self, param_sampler, model_builder):
+        self.param_sampler = param_sampler
+        self.model_builder = model_builder
+        self.models = []
+
+    def sample_n(self, n):
+        for _ in range(n):
+            params = self.param_sampler()
+            self.models.append(
+                (self.model_builder(params), {'params': params, 'runs': []})
+            )
+
+    def prune_early_stopped(self):
+        self.models = [(m, data) for (m, data) in self.models
+                       if not data.get('early_stop', False)]
+
+    def prune_topk(self, k):
+        sorted_models = sorted(self.models, key=lambda m: m[1]['runs'][-1]['loss'])
+        self.models = sorted_models[:k]
+
+
 class Hyperband(object):
     """
     Parameters:
     -----------
+    param_sampler: fn() -> dict (sampled param space)
 
-    get_params: fn() => sampled param space
-    try_params: fn(n_iters, params) => {'loss': float, 'early_stop': bool}
+    model_builder: fn(params) -> fn(n_iters) -> dict
+        result {'loss': float, 'early_stop': bool}
 
     max_iter: int, total maximum of iterations where an iteration is internally
         defined by try_params.
+
     eta: number, downsampling rate
     """
-    def __init__(self, manager, max_iter=81, eta=3):
-        self.manager = manager
+    def __init__(self, param_sampler, model_builder, max_iter=81, eta=3):
+        self.manager = ModelManager(param_sampler, model_builder)
         self.max_iter = max_iter  # maximum iterations per configuration
         self.eta = eta  # defines configuration downsampling rate (default = 3)
 

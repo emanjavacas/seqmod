@@ -40,32 +40,3 @@ def random_search_generator(space, n_iter=math.inf):
     while counter < n_iter:
         yield sampler()
         counter += 1
-
-
-class ModelManager(object):
-    """
-    Parameters:
-    -----------
-    param_sampler: fn() -> dict (sampled param space)
-    model_builder: fn(params) -> fn(n_iters) -> dict
-        result {'loss': float, 'early_stop': bool}
-    """
-    def __init__(self, param_sampler, model_builder):
-        self.param_sampler = param_sampler
-        self.model_builder = model_builder
-        self.models = []
-
-    def sample_n(self, n):
-        for _ in range(n):
-            params = self.param_sampler()
-            self.models.append(
-                (self.model_builder(params), {'params': params, 'runs': []})
-            )
-
-    def prune_early_stopped(self):
-        self.models = [(m, data) for (m, data) in self.models
-                       if not data.get('early_stop', False)]
-
-    def prune_topk(self, k):
-        sorted_models = sorted(self.models, key=lambda m: m[1]['runs'][-1]['loss'])
-        self.models = sorted_models[:k]
