@@ -481,7 +481,9 @@ class MaxOut(nn.Module):
         # (batch x self.k * self.out_dim) -> (batch x self.out_dim x self.k)
         out = self.projection(inp).view(batch, self.out_dim, self.k)
         out, _ = out.max(2)
-        return out.squeeze(2)
+        if torch.__version__.startswith('0.2'):
+            return out
+        return out#.squeeze(2)
 
 
 # Stateless modules
