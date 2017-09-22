@@ -163,6 +163,13 @@ class Dict(object):
         self.min_freq = min_freq
         self.sequential = sequential
 
+    def __repr__(self):
+        return (
+            "<Dict fitted={}, max_size={}, min_freq={}, bos_token={}, "
+            "eos_token={}, unk_token={}, sequential={}, n_symbols={}>").format(
+                self.fitted, self.max_size, self.min_freq, self.bos_token,
+                self.eos_token, self.unk_token, self.sequential, len(self))
+
     def __len__(self):
         return len(self.vocab)
 

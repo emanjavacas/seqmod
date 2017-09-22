@@ -2,7 +2,6 @@
 import os
 import random; random.seed(1001)
 from collections import OrderedDict
-from itertools import groupby
 
 import torch
 import torch.nn.init as init

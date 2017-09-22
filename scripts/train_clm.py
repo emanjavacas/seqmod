@@ -33,9 +33,12 @@ def linearize_data(lines, conds, lang_d, conds_d, table=None):
 
 
 def examples_from_lines(lines, conds, lang_d, conds_d, table=None):
-    generator = linearize_data(lines, conds, lang_d, conds_d, table=table)
-    dims = 2 if table is not None else len(conds_d) + 1
-    return torch.LongTensor(list(generator)).view(-1, dims).t().contiguous()
+    t = linearize_data(lines, conds, lang_d, conds_d, table=table)
+    t = torch.LongTensor(list(t))
+    if table is not None:       # text + encoded conditions
+        return t.view(-1, 2).t().contiguous()
+    else:                       # text + conditions
+        return t.view(-1, len(conds_d) + 1).t().contiguous()
 
 
 if __name__ == '__main__':
