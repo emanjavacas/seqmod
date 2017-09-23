@@ -9,7 +9,7 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 
 from seqmod.modules.custom import word_dropout, StackedLSTM, StackedGRU
-from seqmod.modules.encoder import Encoder
+from seqmod.modules.encoder_decoder import Encoder
 
 
 class EncoderVAE(Encoder):
