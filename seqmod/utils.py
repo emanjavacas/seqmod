@@ -156,21 +156,17 @@ def map_index(t, source_idx, target_idx):
 
 def select_cols(t, vec):
     """
-    Select columns in t according to vec.
+    Select entries in `t` according to a column index `vec` with
+    the same number of rows as `t`.
 
     Parameters:
     -----------
     - t: torch.Tensor (m x n)
-    - vec: list or torch.LongTensor with indices of length m
-        with the longest integer at most n-1.
+    - vec: list or torch.LongTensor of size equal to number of rows in t
     """
-    nrows, ncols = t.size()
     if isinstance(vec, list):
         vec = torch.LongTensor(vec)
-    rows = torch.LongTensor(list(range(ncols)))
-    rows = rows.unsqueeze(1).repeat(nrows, 1)
-    vec  =  vec.unsqueeze(1).repeat(1, ncols)
-    return t[rows == vec]
+    return t.gather(1, vec.unsqueeze(1))
 
 
 # Initializers
@@ -227,7 +223,7 @@ def initialize_model(model, overwrite_custom=True, **init_ops):
     -----------
     model: nn.Module to be initialize
     overwrite_custom: bool, whether to use submodule's custom_init
-        to overwrite  user input initializer values.
+        to overwrite user input initializer values.
     init_ops: any opts passed to make_initializer
     """
     model.apply(make_initializer(**init_ops))
