@@ -166,7 +166,7 @@ def select_cols(t, vec):
     """
     if isinstance(vec, list):
         vec = torch.LongTensor(vec)
-    return t.gather(1, vec.unsqueeze(1))
+    return t.gather(1, vec.unsqueeze(1)).squeeze(1)
 
 
 # Initializers
