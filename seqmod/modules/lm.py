@@ -59,10 +59,11 @@ def read_batch(m, seed_texts, temperature=1., gpu=False, **kwargs):
             hs.append(h), cs.append(c)
         else:
             hs.append(hidden)
+    prev = torch.LongTensor(prev).unsqueeze(0)
     if m.cell.startswith('LSTM'):
-        return torch.LongTensor(prev), (torch.cat(hs, 1), torch.cat(cs, 1))
+        return prev, (torch.cat(hs, 1), torch.cat(cs, 1))
     else:
-        return torch.LongTensor(prev), torch.cat(hs, 1)
+        return prev, torch.cat(hs, 1)
 
 
 class Decoder(object):
@@ -200,9 +201,9 @@ class Decoder(object):
         """
         prev, hidden = self._seed(
             seed_texts, batch_size, bos, eos, temperature=temperature)
-        batch = prev.size(1)
+        batch_size = prev.size(1)  # not equal to input if seed_texts
         hyps, scores = [], 0
-        finished = np.array([False] * batch)
+        finished = np.array([False] * batch_size)
         for _ in range(max_seq_len):
             outs, hidden, _ = self.model(prev, hidden=hidden, **kwargs)
             prev = outs.div_(temperature).exp().multinomial(1).t()
