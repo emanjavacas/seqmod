@@ -564,6 +564,10 @@ class LM(nn.Module):
         temperature: float, temperature for multinomial sampling (only applies
             to method 'sample')
         width: int, beam size width (only applies to the 'beam' method)
+        bos: bool, whether to prefix the seed with the bos_token. Only used if
+            seed_texts is given and the dictionary has a bos_token.
+        eos: bool, whether to suffix the seed with the eos_token. Only used if
+            seed_texts is given and the dictionary has a eos_token.
         ignore_eos: bool, whether to stop generation after hitting <eos> or not
         batch_size: int, number of parallel generations (only used if
             seed_texts is None)
