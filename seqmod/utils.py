@@ -156,13 +156,16 @@ def map_index(t, source_idx, target_idx):
 
 def select_cols(t, vec):
     """
-    Select entries in `t` according to a column index `vec` with
-    the same number of rows as `t`.
+    `vec[i]` contains the index of the column to pick from the ith row  in `t`
 
     Parameters:
     -----------
     - t: torch.Tensor (m x n)
     - vec: list or torch.LongTensor of size equal to number of rows in t
+
+    >>> x = torch.arange(0, 10).repeat(10, 1).t()  # [[0, ...], [1, ...], ...]
+    >>> list(select_cols(x, list(range(10))))
+    [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0]
     """
     if isinstance(vec, list):
         vec = torch.LongTensor(vec)
