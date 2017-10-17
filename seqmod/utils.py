@@ -295,8 +295,9 @@ def format_hyp(score, hyp, hyp_num, d, level='word'):
         sent=sep.join([d.vocab[c] for c in hyp]))
 
 
-def make_lm_hook(d, seed_text, max_seq_len=25, gpu=False, method='sample',
-                 temperature=1, width=5, early_stopping=None, validate=True):
+def make_lm_hook(d, seed_texts=None, max_seq_len=25, gpu=False,
+                 method='sample', temperature=1, width=5,
+                 early_stopping=None, validate=True):
     """
     Make a generator hook for a normal language model
     """
@@ -311,7 +312,7 @@ def make_lm_hook(d, seed_text, max_seq_len=25, gpu=False, method='sample',
                 early_stopping.add_checkpoint(trainer.merge_loss(loss))
         trainer.log("info", "Generating text...")
         scores, hyps = trainer.model.generate(
-            d, seed_text=seed_text, max_seq_len=max_seq_len, gpu=gpu,
+            d, seed_texts=seed_texts, max_seq_len=max_seq_len, gpu=gpu,
             method=method, temperature=temperature, width=width)
         hyps = [format_hyp(score, hyp, hyp_num + 1, d)
                 for hyp_num, (score, hyp) in enumerate(zip(scores, hyps))]
@@ -320,8 +321,9 @@ def make_lm_hook(d, seed_text, max_seq_len=25, gpu=False, method='sample',
     return hook
 
 
-def make_mlm_hook(d, seed_text, max_seq_len=25, gpu=False, method='sample',
-                  temperature=1, width=5, early_stopping=None, validate=True):
+def make_mlm_hook(d, seed_texts=None, max_seq_len=25, gpu=False,
+                  method='sample', temperature=1, width=5,
+                  early_stopping=None, validate=True):
     """
     Make a generator hook for a normal language model
     """
@@ -338,7 +340,7 @@ def make_mlm_hook(d, seed_text, max_seq_len=25, gpu=False, method='sample',
         for head in trainer.model.project:
             trainer.log("info", "Head: {}".format(head))
             scores, hyps = trainer.model.generate(
-                d, head=head, seed_text=seed_text, max_seq_len=max_seq_len,
+                d, head=head, seed_texts=seed_texts, max_seq_len=max_seq_len,
                 gpu=gpu, method=method, temperature=temperature, width=width)
             hyps = [format_hyp(score, hyp, hyp_num + 1, d)
                     for hyp_num, (score, hyp) in enumerate(zip(scores, hyps))]

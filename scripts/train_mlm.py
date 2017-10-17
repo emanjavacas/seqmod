@@ -170,7 +170,7 @@ if __name__ == '__main__':
         early_stopping = EarlyStopping(10, patience=args.early_stopping)
     model_hook = u.make_mlm_hook(
         d, method=args.decoding_method, temperature=args.temperature,
-        max_seq_len=args.max_seq_len, seed_text=args.seed, gpu=args.gpu,
+        max_seq_len=args.max_seq_len, gpu=args.gpu,
         early_stopping=early_stopping)
     trainer.add_hook(model_hook, hooks_per_epoch=args.hooks_per_epoch)
 
