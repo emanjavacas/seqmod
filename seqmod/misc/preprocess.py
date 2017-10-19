@@ -30,7 +30,7 @@ def text_processor(language='en', num=False, lower=False, level='token'):
         ('replace_emails', {'replacement': '<email>'}),
         ('replace_emojis', {'replacement': '<emoji>'}),
         ('replace_urls', {'replacement': '<url>'})]
-    normalizr = Normalizr(language=language)
+    normalizr = Normalizr()
 
     import re
     NUM = re.compile('[0-9]+')

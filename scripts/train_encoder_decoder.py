@@ -40,7 +40,7 @@ def translate(model, target, gpu, beam=False):
     return scores, hyps, att
 
 
-def make_encdec_hook(target, gpu, beam=False):
+def make_encdec_hook(target, gpu, beam=True):
 
     def hook(trainer, epoch, batch_num, checkpoint):
         trainer.log("info", "Translating %s" % target)
@@ -82,41 +82,40 @@ def make_criterion(vocab_size, pad):
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--path', default='', type=str)
+    # dataset
+    parser.add_argument('--path', type=str)
     parser.add_argument('--train_len', default=10000, type=int)
-    parser.add_argument('--target', default='redrum', type=str)
-    parser.add_argument('--batch_size', default=64, type=int)
+    parser.add_argument('--vocab', default=list(string.ascii_letters) + [' '])
     parser.add_argument('--min_len', default=1, type=int)
     parser.add_argument('--max_len', default=15, type=int)
     parser.add_argument('--sample_fn', default='reverse', type=str)
     parser.add_argument('--dev', default=0.1, type=float)
-    parser.add_argument('--non_bidi', action='store_true')
+    # model
     parser.add_argument('--layers', default=1, type=int)
     parser.add_argument('--dec_layers', default=1, type=int)
     parser.add_argument('--cell', default='LSTM', type=str)
-    parser.add_argument('--emb_dim', default=4, type=int)
+    parser.add_argument('--emb_dim', default=24, type=int)
     parser.add_argument('--hid_dim', default=64, type=int)
     parser.add_argument('--att_dim', default=64, type=int)
     parser.add_argument('--att_type', default='Bahdanau', type=str)
     parser.add_argument('--maxout', default=0, type=int)
     parser.add_argument('--tie_weights', action='store_true')
     parser.add_argument('--init_hidden', default='last')
+    # training
     parser.add_argument('--epochs', default=5, type=int)
-    parser.add_argument('--prefix', default='model', type=str)
-    parser.add_argument('--vocab', default=list(string.ascii_letters) + [' '])
-    parser.add_argument('--checkpoint', default=100, type=int)
-    parser.add_argument('--hooks_per_epoch', default=2, type=int)
+    parser.add_argument('--batch_size', default=20, type=int)
     parser.add_argument('--optim', default='Adam', type=str)
-    parser.add_argument('--plot', action='store_true')
     parser.add_argument('--lr', default=0.01, type=float)
-    parser.add_argument('--dropout', default=0.0, type=float)
+    parser.add_argument('--max_norm', default=5., type=float)
+    parser.add_argument('--dropout', default=0.3, type=float)
     parser.add_argument('--word_dropout', default=0.0, type=float)
     parser.add_argument('--patience', default=3, type=int)
-    parser.add_argument('--lr_decay', default=0.5, type=float)
-    parser.add_argument('--start_decay_at', default=8, type=int)
-    parser.add_argument('--max_norm', default=5., type=float)
     parser.add_argument('--gpu', action='store_true')
+    parser.add_argument('--checkpoint', default=100, type=int)
+    parser.add_argument('--hooks_per_epoch', default=2, type=int)
+    parser.add_argument('--target', default='redrum', type=str)
     parser.add_argument('--beam', action='store_true')
+    parser.add_argument('--plot', action='store_true')
     args = parser.parse_args()
 
     vocab = args.vocab
@@ -124,7 +123,7 @@ if __name__ == '__main__':
     batch_size = args.batch_size
     sample_fn = getattr(d, args.sample_fn)
 
-    if args.path != '':
+    if args.path is not None:
         with open(args.path, 'rb+') as f:
             dataset = PairedDataset.from_disk(f)
         dataset.set_batch_size(args.batch_size)
@@ -132,8 +131,9 @@ if __name__ == '__main__':
         train, valid = dataset.splits(sort_by='src', dev=args.dev, test=None)
         src_dict = dataset.dicts['src']
     else:
-        src, trg = zip(*d.generate_set(
-            size, vocab, args.min_len, args.max_len, sample_fn))
+        str_generator = d.generate_set(
+            size, vocab, args.min_len, args.max_len, sample_fn)
+        src, trg = zip(*str_generator)
         src, trg = list(map(list, src)), list(map(list, trg))
         src_dict = Dict(pad_token=u.PAD, eos_token=u.EOS, bos_token=u.BOS)
         src_dict.fit(src, trg)
@@ -152,7 +152,7 @@ if __name__ == '__main__':
         (args.layers, args.dec_layers), args.emb_dim, args.hid_dim,
         args.att_dim, src_dict, att_type=args.att_type, dropout=args.dropout,
         word_dropout=args.word_dropout,
-        bidi=not args.non_bidi, cell=args.cell, maxout=args.maxout,
+        bidi=True, cell=args.cell, maxout=args.maxout,
         tie_weights=args.tie_weights, init_hidden=args.init_hidden)
 
     # model.freeze_submodule('encoder')
@@ -163,13 +163,13 @@ if __name__ == '__main__':
         model, rnn={'type': 'orthogonal', 'args': {'gain': 1.0}})
 
     optimizer = Optimizer(
-        model.parameters(), args.optim, lr=args.lr, max_norm=args.max_norm,
-        lr_decay=args.lr_decay, start_decay_at=args.start_decay_at)
+        model.parameters(), args.optim, lr=args.lr, max_norm=args.max_norm)
 
     criterion = make_criterion(len(src_dict), src_dict.get_pad())
 
-    print('* number of parameters: %d' % model.n_params())
     print(model)
+    print()
+    print('* number of parameters: %d' % model.n_params())
 
     if args.gpu:
         model.cuda(), criterion.cuda()

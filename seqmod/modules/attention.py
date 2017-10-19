@@ -25,12 +25,14 @@ class GlobalAttention(nn.Module):
         # (batch x att x 1)
         dec_att = self.linear_in(dec_out).unsqueeze(2)
         # (batch x seq_len x att_dim) * (batch x att x 1) -> (batch x seq_len)
-        weights = torch.bmm(enc_outs.t(), dec_att).squeeze(2)
+        weights = torch.bmm(enc_outs.transpose(0, 1), dec_att).squeeze(2)
         weights = F.softmax(weights)
         if mask is not None:
             weights.data.masked_fill_(mask, -math.inf)
         # (batch x 1 x seq_len) * (batch x seq_len x att) -> (batch x att)
-        weighted = weights.unsqueeze(1).bmm(enc_outs.t()).squeeze(1)
+        weighted = weights.unsqueeze(1).bmm(
+            enc_outs.transpose(0, 1)
+        ).squeeze(1)
         # (batch x att_dim * 2)
         combined = torch.cat([weighted, dec_out], 1)
         output = nn.functional.tanh(self.linear_out(combined))
@@ -82,7 +84,8 @@ class BahdanauAttention(nn.Module):
         weights: torch.Tensor (batch x seq_len)
             Attention weights in range [0, 1] for each input term
         """
-        enc_att = enc_att or self.project_enc_outs(enc_outs)
+        if enc_att is None:
+            enc_att = self.project_enc_outs(enc_outs)
         # enc_outputs * weights
         # weights: softmax(E) (seq_len x batch)
         # E: att_v (att_dim) * tanh(dec_att + enc_att) -> (seq_len x batch)
@@ -95,10 +98,12 @@ class BahdanauAttention(nn.Module):
         dec_enc_att = nn.functional.tanh(enc_att + u.tile(dec_att, seq_len))
         # dec_enc_att (seq_len x batch x att_dim) * att_v (att_dim)
         #   -> weights (batch x seq_len)
-        weights = F.softmax(u.bmv(dec_enc_att.t(), self.att_v).squeeze(2))
+        weights = F.softmax(
+            u.bmv(dec_enc_att.transpose(0, 1), self.att_v).squeeze(2)
+        )
         if mask is not None:
             weights.data.masked_fill_(mask, -math.inf)
         # enc_outs: (seq_len x batch x hid_dim) * weights (batch x seq_len)
         #   -> context: (batch x hid_dim)
-        context = weights.unsqueeze(1).bmm(enc_outs.t()).squeeze(1)
+        context = weights.unsqueeze(1).bmm(enc_outs.transpose(0, 1)).squeeze(1)
         return context, weights

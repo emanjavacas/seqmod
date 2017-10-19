@@ -110,21 +110,26 @@ class Decoder(nn.Module):
 
         # attention network
         self.att_type = att_type
+
         if att_type == 'Bahdanau':
             self.attn = attn.BahdanauAttention(att_dim, hid_dim)
         elif att_type == 'Global':
-            assert att_dim == hid_dim, \
-                "For global, Encoder, Decoder & Attention must have same size"
+            if att_dim != hid_dim:
+                raise ValueError(
+                    "Global attention requires same size Encoder and Decoder")
             self.attn = attn.GlobalAttention(hid_dim)
         else:
             raise ValueError("unknown attention network [%s]" % att_type)
+
+        # how to compute first decoder hidden state
         if self.init_hidden == 'project':
-            assert self.att_type != "Global", \
-                "GlobalAttention doesn't support projection"
-            # normally dec_hid_dim == enc_hid_dim, but if not we project
+            if self.att_type == "Global":
+                raise ValueError("GlobalAttention doesn't support projection")
+            # project initial hidden
             self.project_h = nn.Linear(hid_dim * enc_num_layers,
                                        hid_dim * dec_num_layers)
             if self.cell.startswith('LSTM'):
+                # also project initial cell state for LSTM decoders
                 self.project_c = nn.Linear(hid_dim * enc_num_layers,
                                            hid_dim * dec_num_layers)
 
@@ -149,6 +154,7 @@ class Decoder(nn.Module):
             h_t = enc_hidden
         enc_num_layers, bs, hid_dim = h_t.size()
 
+        # don't project if dimensions agree
         if enc_num_layers == self.num_layers:
             if self.cell.startswith('LSTM'):
                 dec_h0, dec_c0 = enc_hidden
@@ -213,7 +219,9 @@ class Decoder(nn.Module):
         """
         if self.add_prev:
             # include last out as input for the prediction of the next item
-            inp = torch.cat([prev, out or self.init_output_for(hidden)], 1)
+            if not isinstance(out, Variable):
+                out = self.init_output_for(hidden)
+            inp = torch.cat([prev, out], 1)
         else:
             inp = prev
         out, hidden = self.rnn_step(inp, hidden)
@@ -441,18 +449,24 @@ class EncoderDecoder(nn.Module):
         inp = word_dropout(
             inp, self.target_code, reserved_codes=self.reserved_codes,
             p=self.word_dropout, training=self.training)
-        emb_inp = self.src_embeddings(inp)
-        enc_outs, enc_hidden = self.encoder(emb_inp)
+
+        enc_outs, enc_hidden = self.encoder(self.src_embeddings(inp))
+
         # decoder
         dec_hidden = self.decoder.init_hidden_for(enc_hidden)
         dec_outs, dec_out, enc_att = [], None, None
+
         if self.decoder.att_type == 'Bahdanau':
             # cache encoder att projection for bahdanau
             enc_att = self.decoder.attn.project_enc_outs(enc_outs)
-        for prev in trg.chunk(trg.size(0)):
-            emb_prev = self.trg_embeddings(prev).squeeze(0)
+
+        for prev in trg:
+            # (seq_len x batch x emb_dim)
+            prev_emb = self.trg_embeddings(prev)
+            # (batch x emb_dim)
+            prev_emb = prev_emb.squeeze(0)
             dec_out, dec_hidden, att_weight = self.decoder(
-                emb_prev, dec_hidden, enc_outs, out=dec_out, enc_att=enc_att)
+                prev_emb, dec_hidden, enc_outs, out=dec_out, enc_att=enc_att)
             dec_outs.append(dec_out)
         return torch.stack(dec_outs)
 
@@ -463,41 +477,49 @@ class EncoderDecoder(nn.Module):
         Parameters:
         -----------
 
-        src: torch.LongTensor (seq_len x 1)
+        src: torch.LongTensor (seq_len x batch_size)
         """
         eos = self.src_dict.get_eos()
         bos = self.src_dict.get_bos()
-        gpu = src.is_cuda
+        seq_len, batch_size = src.size()
+
+        # output variables
+        scores, hyps, atts = 0, [], []
+
         # encode
         emb = self.src_embeddings(src)
         enc_outs, enc_hidden = self.encoder(emb)
+
         # decode
-        dec_hidden = self.decoder.init_hidden_for(enc_hidden)
         dec_out, enc_att = None, None
+        dec_hidden = self.decoder.init_hidden_for(enc_hidden)
+        prev = src.data.new([[bos]]).expand(1, batch_size)
+        prev = Variable(prev, volatile=True)
+        mask = src.data.new(batch_size).zero_().float() + 1
+
         if self.decoder.att_type == 'Bahdanau':
             enc_att = self.decoder.attn.project_enc_outs(enc_outs)
-        scores, hyp, atts = [], [], []
-        prev = Variable(src.data.new([bos]), volatile=True).unsqueeze(0)
-        if gpu:
-            prev = prev.cuda()
+
         for _ in range(len(src) * max_decode_len):
             prev_emb = self.trg_embeddings(prev).squeeze(0)
             dec_out, dec_hidden, att_weights = self.decoder(
                 prev_emb, dec_hidden, enc_outs, out=dec_out, enc_att=enc_att)
             # (batch x vocab_size)
-            outs = self.project(dec_out)
-            # (1 x batch) argmax over log-probs (take idx across batch dim)
-            best_score, prev = outs.max(1)
-            prev = prev.t()
-            # concat of step vectors along seq_len dim
-            scores.append(best_score.squeeze().data[0])
-            atts.append(att_weights.squeeze().data.cpu().numpy().tolist())
-            hyp.append(prev.squeeze().data[0])
-            # termination criterion: decoding <eos>
-            if prev.data.eq(eos).nonzero().nelement() > 0:
+            logprobs = self.project(dec_out)
+            # (batch) argmax over logprobs
+            logprobs, prev = logprobs.max(1)
+            # accumulate
+            scores += logprobs.data.cpu()
+            atts.append(att_weights.data.cpu().tolist())
+            hyps.append(prev.data.cpu().tolist())
+            # update mask
+            mask = mask * (prev.data != eos).float()
+
+            # terminate if all done
+            if mask.sum() == 0:
                 break
-        # add singleton dimension for compatibility with other decoding
-        return [sum(scores)], [hyp], [atts]
+
+        return scores, hyps, atts
 
     def translate_beam(self, src, max_decode_len=2, beam_width=5):
         """
@@ -511,9 +533,11 @@ class EncoderDecoder(nn.Module):
         eos = self.src_dict.get_eos()
         bos = self.src_dict.get_bos()
         gpu = src.is_cuda
+
         # encode
         emb = self.src_embeddings(src)
         enc_outs, enc_hidden = self.encoder(emb)
+
         # decode
         enc_outs = enc_outs.repeat(1, beam_width, 1)
         if self.cell.startswith('LSTM'):
@@ -525,27 +549,33 @@ class EncoderDecoder(nn.Module):
         dec_out, enc_att = None, None
         if self.decoder.att_type == 'Bahdanau':
             enc_att = self.decoder.attn.project_enc_outs(enc_outs)
+
         beam = Beam(beam_width, bos, eos=eos, gpu=gpu)
+
         while beam.active and len(beam) < len(src) * max_decode_len:
-            # add seq_len singleton dim (1 x width)
-            prev_data = beam.get_current_state().unsqueeze(0)
-            prev = Variable(prev_data, volatile=True)
+            # embed
+            # (width) -> (1 x width)
+            prev = beam.get_current_state().unsqueeze(0)
+            prev = Variable(prev, volatile=True)
             prev_emb = self.trg_embeddings(prev).squeeze(0)
+            
             dec_out, dec_hidden, att_weights = self.decoder(
                 prev_emb, dec_hidden, enc_outs, out=dec_out, enc_att=enc_att)
             # (width x vocab_size)
-            outs = self.project(dec_out)
-            beam.advance(outs.data)
-            # TODO: this doesn't seem to affect the output :-s
+            logprobs = self.project(dec_out)
+            beam.advance(logprobs.data)
+
+            # repackage according to source beam
             dec_out = u.swap(dec_out, 0, beam.get_source_beam())
             if self.cell.startswith('LSTM'):
                 dec_hidden = (u.swap(dec_hidden[0], 1, beam.get_source_beam()),
                               u.swap(dec_hidden[1], 1, beam.get_source_beam()))
             else:
                 dec_hidden = u.swap(dec_hidden, 1, beam.get_source_beam())
-        # decode beams
+
         scores, hyps = beam.decode(n=beam_width)
-        return scores, hyps, None  # TODO: return attention
+
+        return scores, hyps, None
 
 
 class ForkableMultiTarget(EncoderDecoder):

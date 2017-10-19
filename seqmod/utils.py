@@ -112,16 +112,17 @@ def tile(t, times):
 
 def swap(x, dim, perm):
     """
-    swap the entries of a tensor in given dimension according to a given perm
-    - dim: int,
-        It has to be less than total number of dimensions in x.
-    - perm: list or torch.LongTensor,
-        It has to be as long as the specified dimension and it can only contain
-        unique elements.
+    Swap the entries of a tensor in given dimension according to a given perm
+
+    Parameters:
+    -----------
+    dim: int, less than total number of dimensions in x.
+    perm: list or torch.LongTensor such that the the perm[i] entry in the selected
+        dimension of swap(x) contains the x[i] entry of the original tensor.
     """
     if isinstance(perm, list):
         perm = torch.LongTensor(perm)
-    return Variable(x.data.index_select(dim, perm))
+    return x.index_select(dim, perm)
 
 
 def repackage_bidi(h_or_c):

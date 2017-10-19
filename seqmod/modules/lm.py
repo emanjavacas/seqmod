@@ -584,8 +584,7 @@ class LM(nn.Module):
             # expand conds to batch
             if conds is None:
                 raise ValueError("conds is required for generating with a CLM")
-            conds = [torch.LongTensor([c]).repeat(1, batch_size)
-                     for c in conds]
+            conds = [torch.LongTensor([c]).repeat(1, batch_size) for c in conds]
             conds = [Variable(c, volatile=True) for c in conds]
             if gpu:
                 conds = [c.cuda() for c in conds]
