@@ -92,10 +92,10 @@ class BahdanauAttention(nn.Module):
         dec_att = self.dec2att(dec_out)
         # elemwise addition of dec_out over enc_att
         # dec_enc_att: (batch x seq_len x att_dim)
-        dec_enc_att = nn.functional.tanh(enc_att + u.tile(dec_att, seq_len))
+        dec_enc_att = nn.functional.tanh(enc_att + dec_att[None, :, :])
         # dec_enc_att (seq_len x batch x att_dim) * att_v (att_dim)
         #   -> weights (batch x seq_len)
-        weights = F.softmax(u.bmv(dec_enc_att.t(), self.att_v).squeeze(2))
+        weights = F.softmax((dec_enc_att.t() @ self.att_v[:, None]).squeeze(2))
         if mask is not None:
             weights.data.masked_fill_(mask, -math.inf)
         # enc_outs: (seq_len x batch x hid_dim) * weights (batch x seq_len)
