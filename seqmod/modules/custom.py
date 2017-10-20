@@ -13,13 +13,13 @@ def make_mask(inp, p, size):
 
 
 # Stateful Modules
-class _StackedRNN(nn.Module):
+class BaseStackedRNN(nn.Module):
     def __init__(self, cell, num_layers, in_dim, hid_dim,
                  dropout=0.0, **kwargs):
         """
         cell: str or custom cell class
         """
-        super(_StackedRNN, self).__init__()
+        super(BaseStackedRNN, self).__init__()
         self.in_dim = in_dim
         self.hid_dim = hid_dim
         self.has_dropout = False
@@ -55,7 +55,7 @@ class _StackedRNN(nn.Module):
         raise NotImplementedError
 
 
-class StackedLSTM(_StackedRNN):
+class StackedLSTM(BaseStackedRNN):
     def __init__(self, *args, **kwargs):
         super(StackedLSTM, self).__init__('LSTMCell', *args, **kwargs)
 
@@ -74,7 +74,7 @@ class StackedLSTM(_StackedRNN):
         return inp, (torch.stack(h_1), torch.stack(c_1))
 
 
-class StackedGRU(_StackedRNN):
+class StackedGRU(BaseStackedRNN):
     def __init__(self, *args, **kwargs):
         super(StackedGRU, self).__init__('GRUCell', *args, **kwargs)
 
@@ -91,7 +91,7 @@ class StackedGRU(_StackedRNN):
         return inp, torch.stack(h_1)
 
 
-class StackedNormalizedGRU(_StackedRNN):
+class StackedNormalizedGRU(BaseStackedRNN):
     def __init__(self, *args, **kwargs):
         super(StackedNormalizedGRU, self).__init__(
             NormalizedGRUCell, *args, **kwargs)
@@ -481,25 +481,23 @@ class MaxOut(nn.Module):
         # (batch x self.k * self.out_dim) -> (batch x self.out_dim x self.k)
         out = self.projection(inp).view(batch, self.out_dim, self.k)
         out, _ = out.max(2)
-        if torch.__version__.startswith('0.2'):
-            return out
-        return out#.squeeze(2)
+        return out
 
 
 # Stateless modules
-def variable_length_dropout_mask(X, dropout_rate, reserved_codes=()):
+def _word_dropout_mask(X, dropout_rate, reserved_codes=()):
     """
     Computes a binary mask across batch examples based on a
     bernoulli distribution with mean equal to dropout.
     """
-    probs = X.new(*X.size()).float().zero_() + dropout_rate
-    # zeroth reserved_codes
+    probs = X.new(*X.size()).zero_().float() + dropout_rate
+    # zero reserved_codes
     probs[sum((X == x) for x in reserved_codes)] = 0
-    return probs.bernoulli().byte()
+    return probs.bernoulli_().byte()
 
 
-def word_dropout(
-        inp, target_code, p=0.0, reserved_codes=(), training=True):
+def word_dropout(inp, target_code, p=0.0, training=True,
+                 reserved_codes=(), lengths=None):
     """
     Applies word dropout to an input Variable. Dropout isn't constant
     across batch examples. This is only to be used to drop input symbols
@@ -514,10 +512,10 @@ def word_dropout(
         be dropped
     - training: bool
     """
-    if not training or not p > 0:
+    if not training or p == 0:
         return inp
-    inp = Variable(inp.data.new(*inp.size()).copy_(inp.data))
-    mask = variable_length_dropout_mask(
+
+    mask = _word_dropout_mask(
         inp.data, dropout_rate=p, reserved_codes=reserved_codes)
-    inp.masked_fill_(Variable(mask), target_code)
-    return inp
+
+    return inp.masked_fill(mask, target_code)

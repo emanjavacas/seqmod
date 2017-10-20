@@ -259,9 +259,9 @@ class Attention(nn.Module):
         hid_att = self.hid2att(hid)
         emb_att = emb_att or self.project_emb(emb)
         # att: (seq_len x batch_size x att_dim)
-        att = F.tanh(emb_att + u.tile(hid_att, seq_len))
+        att = F.tanh(emb_att + hid_att[None, :, :])
         # weights: (batch_size x seq_len)
-        weights = F.softmax(u.bmv(att.t(), self.att_v).squeeze(2))
+        weights = F.softmax((att.t() @ self.att_v[:, None]).squeeze(2))
         # context: (batch_size x emb_dim)
         context = weights.unsqueeze(1).bmm(emb.t()).squeeze(1)
         return context, weights

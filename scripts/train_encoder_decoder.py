@@ -92,15 +92,13 @@ if __name__ == '__main__':
     parser.add_argument('--dev', default=0.1, type=float)
     # model
     parser.add_argument('--layers', default=1, type=int)
-    parser.add_argument('--dec_layers', default=1, type=int)
     parser.add_argument('--cell', default='LSTM', type=str)
     parser.add_argument('--emb_dim', default=24, type=int)
     parser.add_argument('--hid_dim', default=64, type=int)
     parser.add_argument('--att_dim', default=64, type=int)
-    parser.add_argument('--att_type', default='Bahdanau', type=str)
+    parser.add_argument('--att_type', default='Global', type=str)
     parser.add_argument('--maxout', default=0, type=int)
     parser.add_argument('--tie_weights', action='store_true')
-    parser.add_argument('--init_hidden', default='last')
     # training
     parser.add_argument('--epochs', default=5, type=int)
     parser.add_argument('--batch_size', default=20, type=int)
@@ -149,11 +147,11 @@ if __name__ == '__main__':
     print('Building model...')
 
     model = EncoderDecoder(
-        (args.layers, args.dec_layers), args.emb_dim, args.hid_dim,
+        args.layers, args.emb_dim, args.hid_dim,
         args.att_dim, src_dict, att_type=args.att_type, dropout=args.dropout,
         word_dropout=args.word_dropout,
         bidi=True, cell=args.cell, maxout=args.maxout,
-        tie_weights=args.tie_weights, init_hidden=args.init_hidden)
+        tie_weights=args.tie_weights)
 
     # model.freeze_submodule('encoder')
     # model.encoder.register_backward_hook(u.log_grad)

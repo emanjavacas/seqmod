@@ -35,7 +35,7 @@ class GlobalAttention(nn.Module):
         ).squeeze(1)
         # (batch x att_dim * 2)
         combined = torch.cat([weighted, dec_out], 1)
-        output = nn.functional.tanh(self.linear_out(combined))
+        output = F.tanh(self.linear_out(combined))
         return output, weights
 
 
@@ -45,7 +45,7 @@ class BahdanauAttention(nn.Module):
         self.att_dim = att_dim
         self.enc2att = nn.Linear(hid_dim, att_dim, bias=False)
         self.dec2att = nn.Linear(hid_dim, att_dim, bias=False)
-        self.att_v = nn.Parameter(torch.Tensor(att_dim))
+        self.att_v = nn.Parameter(torch.Tensor(att_dim, 1))
 
     def project_enc_outs(self, enc_outs):
         """
@@ -61,7 +61,7 @@ class BahdanauAttention(nn.Module):
         enc_att: torch.Tensor (seq_len x batch x att_dim),
             Projection of encoder output onto attention space
         """
-        return torch.cat([self.enc2att(i).unsqueeze(0) for i in enc_outs])
+        return torch.stack([self.enc2att(i) for i in enc_outs])
 
     def forward(self, dec_out, enc_outs, enc_att=None, mask=None, **kwargs):
         """
@@ -88,21 +88,20 @@ class BahdanauAttention(nn.Module):
             enc_att = self.project_enc_outs(enc_outs)
         # enc_outputs * weights
         # weights: softmax(E) (seq_len x batch)
-        # E: att_v (att_dim) * tanh(dec_att + enc_att) -> (seq_len x batch)
+        # E: att_v (att_dim x 1) * tanh(dec_att + enc_att) -> (seq_len x batch)
         # tanh(dec_out_att + enc_output_att) -> (seq_len x batch x att_dim)
         seq_len, batch, hid_dim = enc_att.size()
         # project current decoder output onto attention (batch_size x att_dim)
         dec_att = self.dec2att(dec_out)
         # elemwise addition of dec_out over enc_att
         # dec_enc_att: (batch x seq_len x att_dim)
-        dec_enc_att = nn.functional.tanh(enc_att + u.tile(dec_att, seq_len))
-        # dec_enc_att (seq_len x batch x att_dim) * att_v (att_dim)
+        dec_enc_att = F.tanh(enc_att + dec_att[None, :, :])
+        # dec_enc_att (seq_len x batch x att_dim) * att_v (att_dim x 1)
         #   -> weights (batch x seq_len)
         weights = F.softmax(
-            u.bmv(dec_enc_att.transpose(0, 1), self.att_v).squeeze(2)
-        )
-        if mask is not None:
-            weights.data.masked_fill_(mask, -math.inf)
+            (dec_enc_att.transpose(0, 1) @ self.att_v[None, :, :]).squeeze(2))
+        # if mask is not None:
+        #     weights.data.masked_fill_(mask, -math.inf)
         # enc_outs: (seq_len x batch x hid_dim) * weights (batch x seq_len)
         #   -> context: (batch x hid_dim)
         context = weights.unsqueeze(1).bmm(enc_outs.transpose(0, 1)).squeeze(1)

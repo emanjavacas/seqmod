@@ -88,43 +88,6 @@ def merge_states(state_dict1, state_dict2, merge_map):
     return state_dict
 
 
-def bmv(bm, v):
-    """
-    Parameters:
-    -----------
-    bm: (batch x dim1 x dim2)
-    v: (dim2)
-
-    Returns: batch-wise product of m and v (batch x dim1 x 1)
-    """
-    batch = bm.size(0)
-    # v -> (batch x dim2 x 1)
-    bv = v.unsqueeze(0).expand(batch, v.size(0)).unsqueeze(2)
-    return bm.bmm(bv)
-
-
-def tile(t, times):
-    """
-    Repeat a tensor across an added first dimension a number of times
-    """
-    return t.unsqueeze(0).expand(times, *t.size())
-
-
-def swap(x, dim, perm):
-    """
-    Swap the entries of a tensor in given dimension according to a given perm
-
-    Parameters:
-    -----------
-    dim: int, less than total number of dimensions in x.
-    perm: list or torch.LongTensor such that the the perm[i] entry in the selected
-        dimension of swap(x) contains the x[i] entry of the original tensor.
-    """
-    if isinstance(perm, list):
-        perm = torch.LongTensor(perm)
-    return x.index_select(dim, perm)
-
-
 def repackage_bidi(h_or_c):
     """
     In a bidirectional RNN output is (output, (h_n, c_n))
@@ -148,6 +111,22 @@ def unpackage_bidi(h_or_c):
                  .view(layers * 2, bs, hid_dim_2 // 2)
 
 
+def swap(x, dim, perm):
+    """
+    Swap the entries of a tensor in given dimension according to a given perm
+
+    Parameters:
+    -----------
+
+    - dim: int, less than total number of dimensions in x.
+    - perm: list or torch.LongTensor such that the the perm[i] entry in the selected
+        dimension of swap(x) contains the x[i] entry of the original tensor.
+    """
+    if isinstance(perm, list):
+        perm = torch.LongTensor(perm)
+    return x.index_select(dim, perm)
+
+
 def map_index(t, source_idx, target_idx):
     """
     Map a source integer to a target integer across all dims of a LongTensor.
@@ -157,13 +136,17 @@ def map_index(t, source_idx, target_idx):
 
 def select_cols(t, vec):
     """
-    Select entries in `t` according to a column index `vec` with
-    the same number of rows as `t`.
+    `vec[i]` contains the index of the column to pick from the ith row  in `t`
 
-    Parameters:
-    -----------
+    Parameters
+    ----------
+
     - t: torch.Tensor (m x n)
     - vec: list or torch.LongTensor of size equal to number of rows in t
+
+    >>> x = torch.arange(0, 10).repeat(10, 1).t()  # [[0, ...], [1, ...], ...]
+    >>> list(select_cols(x, list(range(10))))
+    [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0]
     """
     if isinstance(vec, list):
         vec = torch.LongTensor(vec)
@@ -220,8 +203,9 @@ def initialize_model(model, overwrite_custom=True, **init_ops):
     Applies initializer function, eventually calling any module
     specific custom initializers.
 
-    Parameters:
-    -----------
+    Parameters
+    ----------
+
     model: nn.Module to be initialize
     overwrite_custom: bool, whether to use submodule's custom_init
         to overwrite user input initializer values.
@@ -352,8 +336,9 @@ def make_clm_hook(d, sampled_conds=None, max_seq_len=200, gpu=False,
     """
     Make a generator hook for a CLM.
 
-    Parameters:
-    -----------
+    Parameters
+    ----------
+
     d: list of Dicts, the first one being the Dict for language, the tail
         being Dicts for conditions in the same order as passed to the model
     sampled_conds: list of lists of str, or int, or None,
