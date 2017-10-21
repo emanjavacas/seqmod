@@ -36,18 +36,17 @@ class StdLogger(Logger):
     """
     Standard python logger.
 
-    Parameters:
-    ===========
+    Parameters
+    ----------
+
     - outputfile: str, file to print log to. If None, only a console
         logger will be used.
     - level: str, one of 'INFO', 'DEBUG', ... See logging.
     - msgfmt: str, message formattter
     - datefmt: str, date formatter
     """
-    def __init__(self, outputfile=None,
-                 level='INFO',
-                 msgfmt="[%(asctime)s] %(message)s",
-                 datefmt='%m-%d %H:%M:%S'):
+    def __init__(self, outputfile=None, level='INFO',
+                 msgfmt="[%(asctime)s] %(message)s", datefmt='%m-%d %H:%M:%S'):
         self.logger = logging.getLogger(__name__)
         self.logger.propagate = False
         self.logger.handlers = []
@@ -97,8 +96,9 @@ class VisdomLogger(Logger):
     """
     Logger that uses visdom to create learning curves
 
-    Parameters:
-    ===========
+    Parameters
+    ----------
+
     - env: str, name of the visdom environment
     - log_checkpoints: bool, whether to use checkpoints or epoch averages
         for training loss

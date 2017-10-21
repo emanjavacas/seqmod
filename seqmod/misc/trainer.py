@@ -24,7 +24,8 @@ class Trainer(object):
                  loss_labels=('loss',), size_average=True, verbose=True):
         """
         Parameter:
-        ==========
+        ----------
+
         - loss_labels: tuple of str, a tuple specifying the names of the
             losses return by run_batch (typically this is useful to tell
             apart the different losses in a complex loss function)
@@ -36,7 +37,7 @@ class Trainer(object):
         self.model = model
         self.datasets = datasets   # is a dict with at least a 'train' entry
         self.criterion = criterion
-        self.optimizer = optimizer  # might be a dict
+        self.optimizer = optimizer
         self.scheduler = scheduler
         self.early_stopping = early_stopping
         self.loss_labels = loss_labels
@@ -126,19 +127,13 @@ class Trainer(object):
 
     def optimizer_step(self, val_loss=None):
         "Runs an optimizing step"
-        if isinstance(self.optimizer, dict):
-            for opt in self.optimizer.values():
-                opt.step()
-        else:
-            self.optimizer.step()
+        self.optimizer.step()
+
         if self.scheduler is not None:
             if val_loss is None:
-                self.log("info", "omitting scheduler, because of missing loss")
-                if isinstance(self.scheduler, dict):
-                    for sch in self.scheduler.values():
-                        sch.step(val_loss)
-                else:
-                    self.scheduler.step(val_loss)
+                self.log("info", "Omitting scheduler, because of missing loss")
+            else:
+                self.scheduler.step(val_loss)
 
     # loss
     def init_loss(self):
@@ -205,6 +200,7 @@ class Trainer(object):
         return (loss.data[0], )
 
     def _get_batch_order(self, shuffle, num_batches=None):
+        "Get batch indices in case of batch level training"
         batch_order = list(range(len(self.datasets['train'])))
         if shuffle:
             batch_order = np.random.permutation(batch_order)
@@ -222,10 +218,12 @@ class Trainer(object):
             return batch_order
 
     def _train(self, epoch, checkpoint, batch_order, **kwargs):
+        "General train loop"
         # compute batch order
         dataset = self.datasets['train']
         run_loss, check_loss = self.init_loss(), self.init_loss()
         run_examples, check_examples, start = 0, 0, time.time()
+
         for batch_num, batch in enumerate(batch_order):
             self.zero_grad()
             batch_data = dataset[batch]
@@ -283,14 +281,16 @@ class Trainer(object):
         an actual epoch if `num_batches` equals dataset length).
 
         Parameters:
-        ===========
+        -----------
+
         - num_batches: int
         - checkpoint: int, log a checkpoint and hooks every x batches
         - gpu: bool
         - run_test: bool, whether to run testing after the number of batches
 
         Returns (best_model, valid_loss), test_loss
-        ========
+        -------
+
         - best_model: nn.Module, deep copy of the best model during training.
             If no early stopping was provided, the best model will be the
             current model after training.
@@ -340,13 +340,15 @@ class Trainer(object):
     def train(self, epochs, checkpoint, shuffle=False, gpu=False, **kwargs):
         """
         Parameters:
-        ===========
+        -----------
+
         - epochs: int
         - checkpoint: int, log a checkpoint and hooks every x batches
         - gpu: bool
 
         Returns (best_model, valid_loss), test_loss
-        ========
+        -------
+
         - best_model: nn.Module, deep copy of the best model during training.
             If no early stopping was provided, the best model will be the
             current model after training.
@@ -355,8 +357,8 @@ class Trainer(object):
             loss will be the last validation loss after training.
         - test_loss: float or None, test loss aggregated as per merge_loss
         """
-        best_model, valid_loss, test_loss = None, None, None
         start = time.time()
+        best_model, valid_loss, test_loss = None, None, None
         for e in range(1, epochs + 1):
             self.epoch, start_epoch = e, time.time()
             self.model.train()

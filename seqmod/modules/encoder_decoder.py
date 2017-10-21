@@ -111,9 +111,8 @@ class Decoder(nn.Module):
             raise ValueError("Unknown attention network [%s]" % att_type)
 
         # maxout
-        self.has_maxout = False
-        if bool(maxout):
-            self.has_maxout = True
+        self.has_maxout = bool(maxout)
+        if self.has_maxout:
             self.maxout = MaxOut(att_dim + emb_dim, att_dim, maxout)
 
     def init_hidden_for(self, enc_hidden):
@@ -121,9 +120,10 @@ class Decoder(nn.Module):
         Creates a variable at decoding step 0 to be fed as init hidden step.
 
         Returns (h_0, c_0):
-        --------
-        h_0: torch.Tensor (num_layers x batch x hid_dim)
-        c_0: torch.Tensor (num_layers x batch x hid_dim)
+        -------------------
+
+        - h_0: torch.Tensor (num_layers x batch x hid_dim)
+        - c_0: torch.Tensor (num_layers x batch x hid_dim)
         """
         if self.cell.startswith('LSTM'):
             h_0, _ = enc_hidden
@@ -142,12 +142,14 @@ class Decoder(nn.Module):
 
         Parameters:
         -----------
-        hidden: tuple (h_0, c_0)
-        h_0: torch.Tensor (num_layers x batch x hid_dim)
-        c_0: torch.Tensor (num_layers x batch x hid_dim)
+
+        - hidden: tuple (h_0, c_0)
+        - h_0: torch.Tensor (num_layers x batch x hid_dim)
+        - c_0: torch.Tensor (num_layers x batch x hid_dim)
 
         Returns:
         --------
+
         torch.Tensor (batch x hid_dim)
         """
         if self.cell.startswith('LSTM'):
@@ -191,21 +193,22 @@ class EncoderDecoder(nn.Module):
 
     Parameters:
     -----------
-    num_layers: int,
+
+    - num_layers: int,
         Number of layers for both the encoder and the decoder.
-    emb_dim: int, embedding dimension
-    hid_dim: int, Hidden state size for the encoder and the decoder
-    att_dim: int, Hidden state for the attention network.
+    - emb_dim: int, embedding dimension
+    - hid_dim: int, Hidden state size for the encoder and the decoder
+    - att_dim: int, Hidden state for the attention network.
         Note that it has to be equal to the encoder/decoder hidden
         size when using GlobalAttention.
-    src_dict: Dict, A fitted Dict used to encode the data into integers.
-    trg_dict: Dict, Same as src_dict in case of bilingual training.
-    cell: string, Cell type to use. One of (LSTM, GRU).
-    att_type: string, Attention mechanism to use. One of (Global, Bahdanau).
-    dropout: float
-    word_dropout: float
-    bidi: bool, Whether to use bidirectional.
-    add_prev: bool,
+    - src_dict: Dict, A fitted Dict used to encode the data into integers.
+    - trg_dict: Dict, Same as src_dict in case of bilingual training.
+    - cell: string, Cell type to use. One of (LSTM, GRU).
+    - att_type: string, Attention mechanism to use. One of (Global, Bahdanau).
+    - dropout: float
+    - word_dropout: float
+    - bidi: bool, Whether to use bidirectional.
+    - add_prev: bool,
         Whether to feed back the last decoder state as input to
         the decoder for the next step together with the last
         predicted word embedding.
@@ -528,14 +531,3 @@ class EncoderDecoder(nn.Module):
         scores, hyps = beam.decode(n=beam_width)
 
         return scores, hyps, None
-
-
-class ForkableMultiTarget(EncoderDecoder):
-    def fork_target(self, **init_opts):
-        import copy
-        model = copy.deepcopy(self)
-        model.freeze_submodule('src_embeddings')
-        model.freeze_submodule('encoder')
-        u.initialize_model(model.decoder, **init_opts)
-        u.initialize_model(model.encoder, **init_opts)
-        return model
