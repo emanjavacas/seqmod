@@ -46,6 +46,7 @@ class BahdanauAttention(nn.Module):
         self.enc2att = nn.Linear(hid_dim, att_dim, bias=False)
         self.dec2att = nn.Linear(hid_dim, att_dim, bias=False)
         self.att_v = nn.Parameter(torch.Tensor(att_dim, 1))
+        self.att_v.data.uniform_(-0.05, 0.05)
 
     def project_enc_outs(self, enc_outs):
         """
@@ -100,8 +101,8 @@ class BahdanauAttention(nn.Module):
         #   -> weights (batch x seq_len)
         weights = F.softmax(
             (dec_enc_att.transpose(0, 1) @ self.att_v[None, :, :]).squeeze(2))
-        # if mask is not None:
-        #     weights.data.masked_fill_(mask, -math.inf)
+        if mask is not None:
+            weights.masked_fill_(mask, -math.inf)
         # enc_outs: (seq_len x batch x hid_dim) * weights (batch x seq_len)
         #   -> context: (batch x hid_dim)
         context = weights.unsqueeze(1).bmm(enc_outs.transpose(0, 1)).squeeze(1)
