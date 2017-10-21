@@ -86,7 +86,9 @@ class TestBlockDataset(unittest.TestCase):
 
     def test_target(self):
         for src, trg in self.simple_dataset:
-            self.assertEqual(src[1:], trg[:-1], "Target batch is shifted by 1")
+            self.assertEqual(
+                src[1:].data.sum(), trg[:-1].data.sum(),
+                "Target batch is shifted by 1")
 
     def _recover_sentences(self, words):
         "Remove <bos><eos> markup and split into sequences"
