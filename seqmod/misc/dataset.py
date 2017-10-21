@@ -150,23 +150,27 @@ class Dict(object):
     """
     def __init__(self, pad_token=None, eos_token=None, bos_token=None,
                  unk_token=u.UNK, force_unk=False, max_size=None, min_freq=1,
-                 sequential=True):
+                 sequential=True, max_len=None, use_vocab=True):
         self.counter = Counter()
+        self.reserved = set()
         self.fitted = False
+        self.use_vocab = use_vocab
         self.pad_token = pad_token
         self.eos_token = eos_token
         self.bos_token = bos_token
         self.unk_token = unk_token
 
         # only index unk_token if needed or requested
-        self.reserved = {t for t in [pad_token, eos_token, bos_token] if t}
-        if force_unk:
-            if unk_token is None:
-                raise ValueError("<unk> token needed")
-            self.reserved.add(self.unk_token)
+        if self.use_vocab:
+            self.reserved = {t for t in [pad_token, eos_token, bos_token] if t}
+            if force_unk:
+                if unk_token is None:
+                    raise ValueError("<unk> token needed")
+                self.reserved.add(self.unk_token)
 
         self.max_size = max_size
         self.min_freq = min_freq
+        self.max_len = max_len
         self.sequential = sequential
 
     def __repr__(self):
@@ -203,6 +207,8 @@ class Dict(object):
                 self.counter.update(dataset)
             else:
                 for example in dataset:
+                    if self.max_len is not None and len(example) > self.max_len:
+                        example = example[:self.max_len]
                     self.counter.update(example)
 
     def fit(self, *datasets):
@@ -216,8 +222,10 @@ class Dict(object):
         if self.fitted:
             raise ValueError('Dict is already fitted')
 
-        self.partial_fit(*datasets)
+        if not self.use_vocab:
+            return self
 
+        self.partial_fit(*datasets)
         self.compute_vocab()
 
         return self
@@ -250,6 +258,8 @@ class Dict(object):
         eos = [self.get_eos()] if self.eos_token else []
         for example in examples:
             if self.sequential:
+                if self.max_len is not None and len(example) > self.max_len:
+                    example = example[:self.max_len]
                 yield bos + [self.index(s) for s in example] + eos
             else:
                 yield self.index(example)
@@ -320,8 +330,11 @@ class MultiDict(object):
         fitted = [list() for _ in range(len(self.dicts))]
         for seq in examples:
             for idx, (k, d) in enumerate(self.dicts.items()):
-                output = next(d.transform([seq[k]]))
-                fitted[idx].append(output)
+                if d.use_vocab:
+                    output = next(d.transform([seq[k]]))
+                    fitted[idx].append(output)
+                else:
+                    fitted[idx].append(seq[k])
         return fitted
 
 
@@ -452,12 +465,13 @@ class PairedDataset(Dataset):
                 "all input datasets must be equal size"
             assert len(data) == len(dicts), \
                 "equal number of input sequences and Dicts needed"
-            fitted = (d.transform(subset) for subset, d in zip(data, dicts))
+            fitted = (d.transform(subset) if d.use_vocab else subset
+                      for subset, d in zip(data, dicts))
             return list(zip(*fitted))
 
         # single input
         else:
-            return list(dicts.transform(data))
+            return list(dicts.transform(data)) if dicts.use_vocab else data
 
     def _pack(self, batch, dicts):
         # multi-input dataset
@@ -593,8 +607,9 @@ class BlockDataset(Dataset):
     def _fit(self, examples, dicts, batch_size):
         # multiple input dataset with MultiDict
         if isinstance(dicts, MultiDict):
-            return tuple([i for seq in subset for i in seq]
-                         for subset in dicts.transform(examples))
+            fitted = dicts.transform(examples) if dicts.use_vocab else examples
+            fitted = ([i for seq in subset for i in seq] for subset in fitted)
+            return tuple(fitted)
 
         # multiple input dataset
         if isinstance(examples, tuple) or isinstance(dicts, tuple):
@@ -609,15 +624,16 @@ class BlockDataset(Dataset):
             if len(examples[0]) // batch_size == 0:
                 raise ValueError(f"Not enough data for batch [{batch_size}]")
 
-            fitted = ([i for seq in d.transform(subset) for i in seq]
-                      for (subset, d) in zip(examples, dicts))
+            fitted = dicts.transform(examples) if dicts.use_vocab else examples
+            fitted = ([i for seq in subset for i in seq] for subset in fitted)
             return tuple(fitted)
 
         # single input dataset
         else:
             if len(examples) // batch_size == 0:
                 raise ValueError(f"Not enough data for batch [{batch_size}]")
-            return [i for seq in dicts.transform(examples) for i in seq]
+            fitted = dicts.transform(examples) if dicts.use_vocab else examples
+            return [i for seq in fitted for i in seq]
 
     def _get_batch(self, data, idx):
         """
