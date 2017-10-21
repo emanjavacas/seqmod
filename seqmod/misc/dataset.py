@@ -490,7 +490,7 @@ class PairedDataset(Dataset):
     def set_gpu(self, new_gpu):
         self.gpu = new_gpu
 
-    def sort_(self, sort_by='src', reverse=True):
+    def sort_(self, key=lambda x: len(x), reverse=True, sort_by='src'):
         """
         Sort dataset examples according to sequence length. By default source
         sequences are used for sorting (see sort_by function).
@@ -506,9 +506,9 @@ class PairedDataset(Dataset):
         if self.autoregressive:
             if sort_by == 'trg':
                 logging.warn("Omitting sort_by in autoregressive dataset")
-            self.data['src'].sort(reverse=reverse)
+            self.data['src'].sort(key=key, reverse=reverse)
         else:
-            ix = argsort([len(i) for i in self.data[sort_by]], reverse=reverse)
+            ix = argsort([key(i) for i in self.data[sort_by]], reverse=reverse)
             self.data['src'] = [self.data['src'][i] for i in ix]
             self.data['trg'] = [self.data['trg'][i] for i in ix]
 
