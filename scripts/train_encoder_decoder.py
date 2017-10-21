@@ -29,7 +29,7 @@ import dummy as d
 
 def translate(model, target, gpu, beam=False):
     target = torch.LongTensor(
-        list(model.src_dict.transform([target], bos=False)))
+        list(model.src_dict.transform([target])))
     batch = Variable(target.t(), volatile=True)
     batch = batch.cuda() if gpu else batch
     if beam:
