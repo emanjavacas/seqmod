@@ -502,30 +502,25 @@ class EncoderDecoderTrainer(Trainer):
         return tuple(math.exp(min(l, 100)) for l in loss)
 
     def run_batch(self, batch_data, dataset='train', split=52, **kwargs):
-        valid, loss = dataset != 'train', self.init_loss()
         pad, eos = self.model.src_dict.get_pad(), self.model.src_dict.get_eos()
-        source, targets = batch_data
+        valid = dataset != 'train'
+        inp, trg = batch_data
         # remove <eos> from decoder targets substituting them with <pad>
-        decode_targets = Variable(u.map_index(targets[:-1].data, eos, pad))
+        dec_trg = Variable(u.map_index(trg[:-1].data, eos, pad))
         # remove <bos> from loss targets
-        loss_targets = targets[1:]
+        loss_trg = trg[1:]
         # compute model output
-        outs = self.model(source[1:], decode_targets)
-        # dettach outs from computational graph
-        det_outs = Variable(outs.data, requires_grad=not valid, volatile=valid)
-        for out, trg in zip(det_outs.split(split), loss_targets.split(split)):
-            # (seq_len x batch x hid_dim) -> (seq_len * batch x hid_dim)
-            out = out.view(-1, out.size(2))
-            pred = self.model.project(out)
-            loss = self.update_loss(loss, self.criterion(pred, trg.view(-1)))
+        dec_outs, _ = self.model(inp, dec_trg)
+        logprobs = self.model.project(dec_outs.view(-1, dec_outs.size(2)))
+        # compute loss
+        loss = self.criterion(logprobs, loss_trg.view(-1))
+        # run update
         if not valid:
-            batch = outs.size(1)
-            for l in loss:
-                l.div(batch).backward()
-            grad = None if det_outs.grad is None else det_outs.grad.data
-            outs.backward(grad)
+            num_batch_examples = self.num_batch_examples(batch_data)
+            loss[0].div(num_batch_examples).backward()
             self.optimizer_step()
-        return tuple(l.data[0] for l in loss)
+
+        return (loss[0].data, )
 
     def num_batch_examples(self, batch_data):
         _, targets = batch_data
