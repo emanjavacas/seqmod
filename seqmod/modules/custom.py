@@ -2,10 +2,13 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.autograd import Variable
+from torch.autograd import Variable, Function
 
 
 def make_mask(inp, p, size):
+    """
+    Make dropout mask variable
+    """
     keep_p = 1 - p
     mask = inp.data.new(*size)
     mask.bernoulli_(keep_p).div_(keep_p)
@@ -13,6 +16,46 @@ def make_mask(inp, p, size):
 
 
 # Stateful Modules
+class MLP(nn.Module):
+    """
+    Standard MLP
+    """
+    def __init__(self, inp_size, hid_size, nb_classes,
+                 nb_layers=1, dropout=0.0, act='relu'):
+        self.inp_size, self.hid_size = inp_size, hid_size
+        self.nb_layers, self.nb_classes = nb_layers, nb_classes
+        self.dropout, self.act = dropout, act
+        super(MLP, self).__init__()
+
+        layers = []
+        for i in range(nb_layers):
+            layers.append(nn.Linear(inp_size, hid_size))
+            inp_size = hid_size
+        self.layers = nn.ModuleList(layers)
+
+        self.output = nn.Linear(hid_size, nb_classes)
+
+    def forward(self, inp):
+        """
+        :param inp: torch.FloatTensor (batch_size x inp_size)
+
+        :return: torch.FloatTensor (batch_size x nb_classes)
+        """
+        # hidden layers
+        for layer in self.layers:
+            out = layer(inp)
+            if self.act is not None:
+                out = getattr(F, self.act)(out)
+            if self.dropout > 0:
+                out = F.dropout(out, p=self.dropout, training=self.training)
+            inp = out
+
+        # output projection
+        out = self.output(out)
+
+        return out
+
+
 class BaseStackedRNN(nn.Module):
     def __init__(self, cell, num_layers, in_dim, hid_dim,
                  dropout=0.0, **kwargs):
@@ -519,3 +562,23 @@ def word_dropout(inp, target_code, p=0.0, training=True,
         inp.data, dropout_rate=p, reserved_codes=reserved_codes)
 
     return inp.masked_fill(mask, target_code)
+
+
+# gracefully taken from:
+# https://discuss.pytorch.org/t/solved-reverse-gradients-in-backward-pass/3589/4
+class GradReverse(Function):
+    "Implementation of GRL from DANN (Domain Adaptation Neural Network) paper"
+    @staticmethod
+    def forward(ctx, x):
+        return x.view_as(x)
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        return grad_output.neg()
+
+
+def grad_reverse(x):
+    """
+    GRL must be placed between the feature extractor and the domain classifier
+    """
+    return GradReverse.apply(x)
