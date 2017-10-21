@@ -9,8 +9,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 
-from seqmod.modules.custom import word_dropout
-from seqmod.modules.custom import StackedLSTM, StackedGRU, MaxOut
+from seqmod.modules.custom import word_dropout, grad_reverse
+from seqmod.modules.custom import StackedLSTM, StackedGRU, MaxOut, MLP
 from seqmod.modules import attention as attn
 from seqmod.misc.beam_search import Beam
 from seqmod import utils as u
@@ -48,17 +48,19 @@ class Encoder(nn.Module):
         """
         Paremeters:
         -----------
-        inp: torch.Tensor (seq_len x batch x emb_dim)
 
-        hidden: tuple (h_0, c_0)
+        - inp: torch.Tensor (seq_len x batch x emb_dim)
+
+        - hidden: tuple (h_0, c_0)
             h_0: ((num_layers * num_dirs) x batch x hid_dim)
             n_0: ((num_layers * num_dirs) x batch x hid_dim)
 
         Returns: output, (h_t, c_t)
         --------
-        output: (seq_len x batch x hidden_size * num_directions)
-        h_t: (num_layers x batch x hidden_size * num_directions)
-        c_t: (num_layers x batch x hidden_size * num_directions)
+
+        - output: (seq_len x batch x hidden_size * num_directions)
+        - h_t: (num_layers x batch x hidden_size * num_directions)
+        - c_t: (num_layers x batch x hidden_size * num_directions)
         """
         hidden = hidden if hidden is not None else self.init_hidden_for(inp)
         outs, hidden = self.rnn(inp, hidden)
@@ -79,18 +81,25 @@ class Decoder(nn.Module):
 
     Parameters:
     -----------
-    add_prev: bool, whether to append last hidden state.
+
+    - add_prev: bool, whether to append last hidden state.
     """
     def __init__(self, emb_dim, hid_dim, num_layers, cell,
                  att_dim, att_type='Bahdanau', maxout=2, dropout=0.0,
-                 add_prev=True):
-        in_dim = emb_dim if not add_prev else hid_dim + emb_dim
+                 add_prev=False, cond_dim=None):
         self.num_layers = num_layers
         self.hid_dim = hid_dim
         self.cell = cell
         self.add_prev = add_prev
         self.dropout = dropout
         super(Decoder, self).__init__()
+
+        in_dim = emb_dim if not add_prev else hid_dim + emb_dim
+
+        # handle conditions
+        if cond_dim is not None:
+            in_dim += cond_dim
+            # TODO: implement FactorCell
 
         # rnn layers
         stacked = StackedLSTM if cell == 'LSTM' else StackedGRU
@@ -157,8 +166,8 @@ class Decoder(nn.Module):
         data = dec_hidden.data.new(dec_hidden.size(1), self.hid_dim).zero_()
         return Variable(data, requires_grad=False)
 
-    def forward(self, prev, hidden, enc_outs,
-                out=None, enc_att=None, mask=None):
+    def forward(self, prev, hidden, enc_outs, conds=None,
+                prev_out=None, enc_att=None, mask=None):
         """
         Parameters:
         -----------
@@ -168,22 +177,31 @@ class Decoder(nn.Module):
         hidden: Used to seed the initial hidden state of the decoder.
             h_t: (num_layers x batch x hid_dim)
             c_t: (num_layers x batch x hid_dim)
-        enc_outs: torch.Tensor (seq_len x batch x enc_hid_dim),
+        enc_outs: torch.Tensor (seq_len x batch x hid_dim),
             Output of the encoder at the last layer for all encoding steps.
+        prev_out: torch.Tensor (batch x hid_dim), previous hidden output
         """
         if self.add_prev:
             # include last out as input for the prediction of the next item
-            if not isinstance(out, Variable):
-                out = self.init_output_for(hidden)
-            inp = torch.cat([prev, out], 1)
-        else:
-            inp = prev
-        out, hidden = self.rnn_step(inp, hidden)
-        # out (batch x hid_dim), att_weight (batch x seq_len)
+            if not isinstance(prev_out, Variable):
+                prev_out = self.init_output_for(hidden)
+            prev = torch.cat([prev, prev_out], 1)
+
+        # handle conditions
+        if conds is not None:
+            prev = torch.cat([prev, conds], 1)
+
+        # step
+        out, hidden = self.rnn_step(prev, hidden)
+
+        # attention (batch x hid_dim), att_weight (batch x seq_len)
         out, att_weight = self.attn(out, enc_outs, enc_att=enc_att, mask=mask)
-        out = F.dropout(out, p=self.dropout, training=self.training)
+
+        # deep output
         if self.has_maxout:
+            out = F.dropout(out, p=self.dropout, training=self.training)
             out = self.maxout(torch.cat([out, prev], 1))
+
         return out, hidden, att_weight
 
 
@@ -226,8 +244,10 @@ class EncoderDecoder(nn.Module):
                  word_dropout=0.0,
                  maxout=0,
                  bidi=True,
-                 add_prev=True,
-                 tie_weights=False):
+                 add_prev=False,
+                 tie_weights=False,
+                 cond_vocabs=None,
+                 cond_dims=None):
         super(EncoderDecoder, self).__init__()
         self.cell = cell
         self.add_prev = add_prev
@@ -244,7 +264,7 @@ class EncoderDecoder(nn.Module):
                                self.src_dict.get_bos(),
                                self.src_dict.get_pad())
 
-        # embedding layer(s)
+        # Embedding layer(s)
         self.src_embeddings = nn.Embedding(
             src_vocab_size, emb_dim, padding_idx=self.src_dict.get_pad())
         if self.bilingual:
@@ -253,18 +273,36 @@ class EncoderDecoder(nn.Module):
         else:
             self.trg_embeddings = self.src_embeddings
 
-        # encoder
+        # Encoder
         self.encoder = Encoder(
             emb_dim, hid_dim, num_layers,
             cell=cell, bidi=bidi, dropout=dropout)
 
-        # decoder
+        # Decoder
+        # (handle conditions)
+        self.cond_dim, self.cond_embs, self.grls = None, None, None
+
+        if cond_dims is not None:
+            if len(cond_dims) != len(cond_vocabs):
+                raise ValueError("cond_dims & cond_vocabs must be same length")
+            # total cond embedding size
+            self.cond_dim = 0
+            # allocate parameters
+            self.cond_embs, self.grls = nn.ModuleList(), nn.ModuleList()
+            for cond_vocab, cond_dim in zip(cond_vocabs, cond_dims):
+                # (add conds embeddings)
+                self.cond_embs.append(nn.Embedding(cond_vocab, cond_dim))
+                self.cond_dim += cond_dim
+                # (add GRL)
+                self.grls.append(MLP(hid_dim, hid_dim, cond_vocab))
+
+        # (add rnn)
         self.decoder = Decoder(
             emb_dim, hid_dim, num_layers, cell, att_dim,
             dropout=dropout, maxout=maxout, add_prev=add_prev,
-            att_type=att_type)
+            att_type=att_type, cond_dim=self.cond_dim)
 
-        # output projection
+        # Output projection
         output_size = trg_vocab_size if self.bilingual else src_vocab_size
         if tie_weights:
             project = nn.Linear(emb_dim, output_size)
@@ -379,7 +417,7 @@ class EncoderDecoder(nn.Module):
         for p in getattr(self, module).parameters():
             p.requires_grad = False
 
-    def forward(self, inp, trg):
+    def forward(self, inp, trg, conds=None):
         """
         Parameters:
         -----------
@@ -388,15 +426,27 @@ class EncoderDecoder(nn.Module):
 
         Returns: outs, att_weights
         --------
-        outs: torch.Tensor (seq_len x batch x hid_dim)
-        att_weights: (batch x seq_len x target_len)
+        dec_outs: torch.Tensor (seq_len x batch x hid_dim)
         """
+        if self.cond_dim is not None:
+            if conds is None:
+                raise ValueError("Conditional decoder needs conds")
+            conds = [emb(cond) for cond, emb in zip(conds, self.cond_embs)]
+            # (batch_size x total emb dim)
+            conds = torch.cat(conds, 1)
+
         # encoder
         inp = word_dropout(
             inp, self.target_code, reserved_codes=self.reserved_codes,
             p=self.word_dropout, training=self.training)
 
         enc_outs, enc_hidden = self.encoder(self.src_embeddings(inp))
+        cond_out = []
+        if self.cond_dim is not None:
+            # use last step as summary vector
+            enc_out = grad_reverse(enc_outs[-1])
+            for grl in self.grls:
+                cond_out.append(F.log_softmax(grl(enc_out)))
 
         # decoder
         dec_hidden = self.decoder.init_hidden_for(enc_hidden)
@@ -412,11 +462,13 @@ class EncoderDecoder(nn.Module):
             # (batch x emb_dim)
             prev_emb = prev_emb.squeeze(0)
             dec_out, dec_hidden, att_weight = self.decoder(
-                prev_emb, dec_hidden, enc_outs, out=dec_out, enc_att=enc_att)
+                prev_emb, dec_hidden, enc_outs, enc_att=enc_att,
+                prev_out=dec_out, conds=conds)
             dec_outs.append(dec_out)
-        return torch.stack(dec_outs)
 
-    def translate(self, src, max_decode_len=2):
+        return torch.stack(dec_outs), tuple(cond_out)
+
+    def translate(self, src, max_decode_len=2, conds=None):
         """
         Translate a single input sequence using greedy decoding..
 
@@ -438,11 +490,19 @@ class EncoderDecoder(nn.Module):
         # output variables
         scores, hyps, atts = 0, [], []
 
-        # encode
+        # Encode
         emb = self.src_embeddings(src)
         enc_outs, enc_hidden = self.encoder(emb)
 
-        # decode
+        # Decode
+        # (handler conditions)
+        if self.cond_dim is not None:
+            if conds is None:
+                raise ValueError("Conditional decoder needs conds")
+            conds = [emb(cond) for cond, emb in zip(conds, self.cond_embs)]
+            # (batch_size x total emb dim)
+            conds = torch.cat(conds, 1)
+
         dec_hidden = self.decoder.init_hidden_for(enc_hidden)
         dec_out, enc_att = None, None
         if self.decoder.att_type == 'Bahdanau':
@@ -456,7 +516,8 @@ class EncoderDecoder(nn.Module):
             prev = prev.unsqueeze(1)  # add seq_len dim
             prev_emb = self.trg_embeddings(prev).squeeze(0)
             dec_out, dec_hidden, att_weights = self.decoder(
-                prev_emb, dec_hidden, enc_outs, out=dec_out, enc_att=enc_att)
+                prev_emb, dec_hidden, enc_outs, prev_out=dec_out,
+                enc_att=enc_att)
             # (batch x vocab_size)
             logprobs = self.project(dec_out)
             # (batch) argmax over logprobs
@@ -477,7 +538,7 @@ class EncoderDecoder(nn.Module):
 
         return scores, hyps, atts
 
-    def translate_beam(self, src, max_decode_len=2, beam_width=5):
+    def translate_beam(self, src, max_decode_len=2, beam_width=5, conds=None):
         """
         Translate a single input sequence using beam search.
 
@@ -501,6 +562,15 @@ class EncoderDecoder(nn.Module):
             enc_hidden = enc_hidden.repeat(1, beam_width, 1)
 
         # decode
+        # (handler conditions)
+        if self.cond_dim is not None:
+            if conds is None:
+                raise ValueError("Conditional decoder needs conds")
+            conds = [emb(cond) for cond, emb in zip(conds, self.cond_embs)]
+            # (batch_size x total emb dim)
+            conds = torch.cat(conds, 1)
+            conds = conds.repeat(beam_width, 1)
+
         dec_hidden = self.decoder.init_hidden_for(enc_hidden)
         dec_out, enc_att = None, None
         if self.decoder.att_type == 'Bahdanau':
@@ -515,7 +585,8 @@ class EncoderDecoder(nn.Module):
             prev_emb = self.trg_embeddings(prev).squeeze(0)
             
             dec_out, dec_hidden, att_weights = self.decoder(
-                prev_emb, dec_hidden, enc_outs, out=dec_out, enc_att=enc_att)
+                prev_emb, dec_hidden, enc_outs, prev_out=dec_out,
+                enc_att=enc_att, conds=conds)
             # (width x vocab_size)
             logprobs = self.project(dec_out)
             beam.advance(logprobs.data)
