@@ -11,12 +11,10 @@ except:
     warnings.warn('no NVIDIA driver found')
     torch.manual_seed(1001)
 
-import torch.nn as nn
-
 from seqmod.modules.lm import LM
 from seqmod import utils as u
 
-from seqmod.misc.trainer import LMTrainer
+from seqmod.misc.trainer import Trainer
 from seqmod.misc.loggers import StdLogger, VisdomLogger
 from seqmod.misc.optimizer import Optimizer
 from seqmod.misc.dataset import Dict, BlockDataset
@@ -120,7 +118,7 @@ if __name__ == '__main__':
         print("Processing datasets...")
         proc = text_processor(lower=args.lower, num=args.num, level=args.level)
         d = Dict(max_size=args.max_size, min_freq=args.min_freq,
-                 eos_token=u.EOS)
+                 eos_token=u.EOS, force_unk=True)
         train, valid, test = None, None, None
         # already split
         if os.path.isfile(os.path.join(args.path, 'train.txt')):
@@ -133,7 +131,7 @@ if __name__ == '__main__':
                 train_data, d, args.batch_size, args.bptt, gpu=args.gpu)
             del train_data
             test = BlockDataset(
-                load_lines(os.path.join(args.path, 'test.txt'), processor=proc),
+                load_lines(os.path.join(args.path, 'test.txt'), proc),
                 d, args.batch_size, args.bptt, gpu=args.gpu, evaluation=True)
             if os.path.isfile(os.path.join(args.path, 'valid.txt')):
                 valid = BlockDataset(
@@ -156,30 +154,28 @@ if __name__ == '__main__':
     print(' * number of train batches. %d' % len(train))
 
     print('Building model...')
-    model = LM(len(d), args.emb_dim, args.hid_dim,
-               num_layers=args.num_layers, cell=args.cell, dropout=args.dropout,
-               att_dim=args.att_dim, tie_weights=args.tie_weights,
-               deepout_layers=args.deepout_layers, train_init=args.train_init,
-               deepout_act=args.deepout_act, maxouts=args.maxouts,
-               word_dropout=args.word_dropout, target_code=d.get_unk())
+    m = LM(len(d), args.emb_dim, args.hid_dim,
+           num_layers=args.num_layers, cell=args.cell, dropout=args.dropout,
+           att_dim=args.att_dim, tie_weights=args.tie_weights,
+           deepout_layers=args.deepout_layers, train_init=args.train_init,
+           deepout_act=args.deepout_act, maxouts=args.maxouts,
+           word_dropout=args.word_dropout, target_code=d.get_unk())
 
-    u.initialize_model(model)
+    u.initialize_model(m)
 
     if args.gpu:
-        model.cuda()
+        m.cuda()
 
-    print(model)
-    print('* number of parameters: %d' % model.n_params())
+    print(m)
+    print('* number of parameters: %d' % m.n_params())
 
     optim = Optimizer(
-        model.parameters(), args.optim, lr=args.lr, max_norm=args.max_norm,
+        m.parameters(), args.optim, lr=args.lr, max_norm=args.max_norm,
         lr_decay=args.lr_decay, start_decay_at=args.start_decay_at,
         decay_every=args.decay_every)
-    criterion = nn.NLLLoss()
 
     # create trainer
-    trainer = LMTrainer(model, {"train": train, "test": test, "valid": valid},
-                        criterion, optim)
+    trainer = Trainer(m, {"train": train, "test": test, "valid": valid}, optim)
 
     # hooks
     early_stopping = None
@@ -199,8 +195,8 @@ if __name__ == '__main__':
             server='http://' + args.visdom_host)
         trainer.add_loggers(visdom_logger)
 
-    (best_model, valid_loss), test_loss = \
-        trainer.train(args.epochs, args.checkpoint, gpu=args.gpu)
+    (best_model, valid_loss), test_loss = trainer.train(
+        args.epochs, args.checkpoint)
 
     if args.save:
         u.save_checkpoint(args.save_path, best_model, d, args, ppl=test_loss)

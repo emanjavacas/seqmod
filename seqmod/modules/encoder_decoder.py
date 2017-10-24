@@ -257,12 +257,16 @@ class EncoderDecoder(nn.Module):
         trg_vocab_size = len(self.trg_dict)
         self.bilingual = bool(trg_dict)
 
-        # word_dropout
+        # Word_dropout
         self.word_dropout = word_dropout
         self.target_code = self.src_dict.get_unk()
         self.reserved_codes = (self.src_dict.get_eos(),
                                self.src_dict.get_bos(),
                                self.src_dict.get_pad())
+
+        # NLLLoss weight (downweight loss on pad)
+        self.nll_weight = torch.ones(len(self.trg_dict))
+        self.nll_weight[self.trg_dict.get_pad()] = 0
 
         # Embedding layer(s)
         self.src_embeddings = nn.Embedding(
@@ -468,6 +472,50 @@ class EncoderDecoder(nn.Module):
 
         return torch.stack(dec_outs), tuple(cond_out)
 
+    def loss(self, batch_data, test=False):
+        """
+        Return batch-averaged loss and examples processed for speed monitoring
+        """
+        pad, eos = self.src_dict.get_pad(), self.src_dict.get_eos()
+        src, trg = batch_data
+
+        src_conds, trg_conds = None, None
+        if self.cond_dim is not None:
+            (src, *src_conds), (trg, *trg_conds) = src, trg
+
+        # remove <eos> from decoder targets substituting them with <pad>
+        dec_trg = Variable(u.map_index(trg[:-1].data, eos, pad))
+        # remove <bos> from loss targets
+        loss_trg = trg[1:]
+
+        # compute model output
+        dec_outs, cond_outs = self(src, dec_trg, conds=src_conds)
+        logprobs = self.project(dec_outs.view(-1, dec_outs.size(2)))
+
+        # compute number of examples in batch
+        num_examples = trg.data.ne(pad).sum()
+        # compute word loss
+        weight = self.nll_weight
+        if self.is_cuda():
+            weight = self.nll_weight.cuda()
+        loss = F.nll_loss(logprobs, loss_trg.view(-1),
+                          weight=weight, size_average=False) / num_examples
+
+        # compute cond loss
+        cond_loss = []
+        if trg_conds is not None:
+            cond_loss = [F.nll_loss(pred, target, size_average=True)
+                         for pred, target in zip(cond_outs, trg_conds)]
+
+        if not test:
+            # accumulate gradient
+            loss.backward()
+
+            if trg_conds is not None:
+                sum(cond_loss).backward()
+
+        return (loss, *[loss.data[0] for loss in cond_loss]), num_examples
+
     def translate(self, src, max_decode_len=2, conds=None):
         """
         Translate a single input sequence using greedy decoding..
@@ -551,7 +599,7 @@ class EncoderDecoder(nn.Module):
         bos = self.src_dict.get_bos()
         gpu = src.is_cuda
 
-        # encode
+        # Encode
         emb = self.src_embeddings(src)
         enc_outs, enc_hidden = self.encoder(emb)
         enc_outs = enc_outs.repeat(1, beam_width, 1)
@@ -561,7 +609,7 @@ class EncoderDecoder(nn.Module):
         else:
             enc_hidden = enc_hidden.repeat(1, beam_width, 1)
 
-        # decode
+        # Decode
         # (handler conditions)
         if self.cond_dim is not None:
             if conds is None:
@@ -583,7 +631,7 @@ class EncoderDecoder(nn.Module):
             prev = beam.get_current_state().unsqueeze(0)
             prev = Variable(prev, volatile=True)
             prev_emb = self.trg_embeddings(prev).squeeze(0)
-            
+
             dec_out, dec_hidden, att_weights = self.decoder(
                 prev_emb, dec_hidden, enc_outs, prev_out=dec_out,
                 enc_att=enc_att, conds=conds)

@@ -3,6 +3,8 @@ import os
 import random; random.seed(1001)
 from collections import OrderedDict
 
+import numpy as np
+
 import torch
 import torch.nn.init as init
 from torch.autograd import Variable
@@ -111,6 +113,13 @@ def unpackage_bidi(h_or_c):
                  .view(layers * 2, bs, hid_dim_2 // 2)
 
 
+def repackage_hidden(h):
+    if type(h) == Variable:
+        return Variable(h.data)
+    else:
+        return tuple(repackage_hidden(v) for v in h)
+
+
 def swap(x, dim, perm):
     """
     Swap the entries of a tensor in given dimension according to a given perm
@@ -119,8 +128,9 @@ def swap(x, dim, perm):
     -----------
 
     - dim: int, less than total number of dimensions in x.
-    - perm: list or torch.LongTensor such that the the perm[i] entry in the selected
-        dimension of swap(x) contains the x[i] entry of the original tensor.
+    - perm: list or torch.LongTensor such that the the perm[i] entry in the
+        selected dimension of swap(x) contains the x[i] entry of the original
+        tensor.
     """
     if isinstance(perm, list):
         perm = torch.LongTensor(perm)
@@ -151,6 +161,37 @@ def select_cols(t, vec):
     if isinstance(vec, list):
         vec = torch.LongTensor(vec)
     return t.gather(1, vec.unsqueeze(1)).squeeze(1)
+
+
+def _wrap_variable(t, volatile, gpu):
+    if len(t) == 0:             # don't wrap empty vectors
+        return t
+    if isinstance(t, np.ndarray):
+        if t.dtype == np.int64 or t.dtype == np.int32:
+            t = torch.LongTensor(t)
+        else:
+            t = torch.Tensor(t)
+    elif isinstance(t, list):
+        if isinstance(t[0], int):
+            t = torch.LongTensor(t)
+        else:
+            t = torch.Tensor(t)
+    t = Variable(t, volatile=volatile)
+    if gpu:
+        return t.cuda()
+    return t
+
+
+def wrap_variables(tensor, volatile=False, gpu=False):
+    "Transform tensors into variables"
+    if isinstance(tensor, tuple):
+        return tuple(wrap_variables(t, volatile, gpu) for t in tensor)
+    return _wrap_variable(tensor, volatile, gpu)
+
+
+def unwrap_variables(variables):
+    "Transform variables into tensors"
+    return [v.data[0] if isinstance(v, Variable) else v for v in variables]
 
 
 # Initializers
@@ -287,11 +328,11 @@ def make_lm_hook(d, seed_texts=None, max_seq_len=25, gpu=False,
     def hook(trainer, epoch, batch_num, checkpoint):
         trainer.log("info", "Checking training...")
         if validate:
-            loss = trainer.validate_model()
+            loss = sum(trainer.validate_model().pack())
             trainer.log("info", "Valid loss: %g" % loss)
             trainer.log("info", "Registering early stopping loss...")
             if early_stopping is not None:
-                early_stopping.add_checkpoint(trainer.merge_loss(loss))
+                early_stopping.add_checkpoint(loss)
         trainer.log("info", "Generating text...")
         scores, hyps = trainer.model.generate(
             d, seed_texts=seed_texts, max_seq_len=max_seq_len, gpu=gpu,
@@ -313,11 +354,11 @@ def make_mlm_hook(d, seed_texts=None, max_seq_len=25, gpu=False,
     def hook(trainer, epoch, batch_num, checkpoint):
         trainer.log("info", "Checking training...")
         if validate:
-            loss = trainer.validate_model()
+            loss = sum(trainer.validate_model().pack())
             trainer.log("info", "Valid loss: %g" % loss)
             trainer.log("info", "Registering early stopping loss...")
             if early_stopping is not None:
-                early_stopping.add_checkpoint(trainer.merge_loss(loss))
+                early_stopping.add_checkpoint(loss)
         trainer.log("info", "Generating text...")
         for head in trainer.model.project:
             trainer.log("info", "Head: {}".format(head))

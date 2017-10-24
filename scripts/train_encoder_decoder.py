@@ -20,7 +20,7 @@ from seqmod import utils as u
 
 from seqmod.misc.optimizer import Optimizer
 from seqmod.misc.early_stopping import EarlyStopping
-from seqmod.misc.trainer import EncoderDecoderTrainer
+from seqmod.misc.trainer import Trainer
 from seqmod.misc.loggers import StdLogger, VisdomLogger
 from seqmod.misc.dataset import PairedDataset, Dict
 
@@ -173,8 +173,8 @@ if __name__ == '__main__':
         model.cuda(), criterion.cuda()
 
     early_stopping = EarlyStopping(max(10, args.patience), args.patience)
-    trainer = EncoderDecoderTrainer(
-        model, {'train': train, 'valid': valid}, criterion, optimizer,
+    trainer = Trainer(
+        model, {'train': train, 'valid': valid}, optimizer,
         early_stopping=early_stopping)
     trainer.add_loggers(StdLogger())
     trainer.add_loggers(VisdomLogger(env='encdec'))
@@ -183,4 +183,4 @@ if __name__ == '__main__':
     trainer.add_hook(hook, hooks_per_epoch=args.hooks_per_epoch)
 
     (model, valid_loss), test_loss = trainer.train(
-        args.epochs, args.checkpoint, shuffle=True, gpu=args.gpu)
+        args.epochs, args.checkpoint, shuffle=True)

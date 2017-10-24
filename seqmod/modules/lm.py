@@ -72,6 +72,7 @@ class Decoder(object):
 
     Parameters:
     -----------
+
     model: LM, fitted LM model to use for generation.
     d: Dict, dictionary fitted on the LM's input vocabulary.
     gpu: bool, whether to run generation on the gpu.
@@ -96,8 +97,9 @@ class Decoder(object):
         will be done in a batch of size `batch_size` thus generating as many
         outputs.
 
-        Parameters
+        Parameters:
         -----------
+
         seed_texts: list (of list (of string)) or None,
             Seed text to initialize the generator. It should be an iterable of
             lists of strings over vocabulary tokens. If seed_texts is given and
@@ -109,8 +111,9 @@ class Decoder(object):
             seed_texts is given and the dictionary has a eos_token.
         kwargs: extra LM.forward parameters
 
-        Returns
-        ---------
+        Returns:
+        --------
+
         prev: (1 x batch_size), first integer token to feed into the generator
         hidden: hidden state to seed the generator, may be None if no seed text
             was passed to the generation function.
@@ -145,28 +148,31 @@ class Decoder(object):
             prev = prev.cuda()
         return prev, hidden
 
-    def argmax(self, seed_texts=None, max_seq_len=25,
+    def argmax(self, seed_texts=None, max_seq_len=25, batch_size=1,
                ignore_eos=False, bos=False, eos=False, **kwargs):
         """
         Generate a sequence sampling the element with highest probability
         in the output distribution at each generation step.
         """
-        prev, hidden = self._seed(seed_texts, 1, bos, eos)
+        prev, hidden = self._seed(seed_texts, batch_size, bos, eos)
         hyps, scores = [], 0
-        finished = np.array([False])
+        mask = torch.ones(batch_size).long()
+
         for _ in range(max_seq_len):
             outs, hidden, _ = self.model(prev, hidden=hidden, **kwargs)
             score, prev = outs.max(1)
             score, prev = score.squeeze(), prev.t()
             hyps.append(prev.squeeze().data.tolist())
+
             if self.eos is not None and not ignore_eos:
-                mask = (prev.squeeze().data == self.eos).cpu().numpy() == 1
-                finished[mask] = True
-                if all(finished == True):  # nopep8
+                mask = mask * (prev.squeeze().data.cpu() != self.eos).long()
+                if mask.sum() == 0:
                     break
                 # 0-mask scores for finished batch examples
-                score.data[torch.ByteTensor(finished.tolist())] = 0
+                score.data[mask == 0] = 0
+
             scores += score.data
+
         return scores.tolist(), list(zip(*hyps))
 
     def beam(self, width=5, seed_texts=None, max_seq_len=25,
@@ -178,6 +184,7 @@ class Decoder(object):
         prev, hidden = self._seed(seed_texts, 1, bos, eos)
         eos = self.eos if not ignore_eos else None
         beam = Beam(width, prev.squeeze().data[0], eos=eos)
+
         while beam.active and len(beam) < max_seq_len:
             prev_data = beam.get_current_state().unsqueeze(0)
             prev = Variable(prev_data, volatile=True)
@@ -188,7 +195,9 @@ class Decoder(object):
                           u.swap(hidden[1], 1, beam.get_source_beam()))
             else:
                 hidden = u.swap(hidden, 1, beam.get_source_beam())
+
         scores, hyps = beam.decode(n=width)
+
         return scores, hyps
 
     def sample(self, temperature=1., seed_texts=None, max_seq_len=25,
@@ -203,24 +212,30 @@ class Decoder(object):
             seed_texts, batch_size, bos, eos, temperature=temperature)
         batch_size = prev.size(1)  # not equal to input if seed_texts
         hyps, scores = [], 0
-        finished = np.array([False] * batch_size)
+        mask = torch.zeros(batch_size).long() + 1
+
         for _ in range(max_seq_len):
             outs, hidden, _ = self.model(prev, hidden=hidden, **kwargs)
             prev = outs.div_(temperature).exp().multinomial(1).t()
             score = u.select_cols(outs.data.cpu(), prev.squeeze().data.cpu())
             hyps.append(prev.squeeze().data.tolist())
+
             if self.eos is not None and not ignore_eos:
-                mask = (prev.squeeze().data == self.eos).cpu().numpy() == 1
-                finished[mask] = True
-                if all(finished == True):  # nopep8
+                mask = mask * (prev.squeeze().data.cpu() != self.eos).long()
+                if mask.sum() == 0:
                     break
                 # 0-mask scores for finished batch examples
-                score[torch.ByteTensor(finished.tolist())] = 0
+                score[mask == 0] = 0
+
             scores += score
+
         return scores.tolist(), list(zip(*hyps))
 
 
 class Attention(nn.Module):
+    """
+    Attention module over path hidden activations in an RNN
+    """
     def __init__(self, att_dim, hid_dim, emb_dim):
         self.att_dim = att_dim
         self.hid_dim = hid_dim
@@ -229,11 +244,13 @@ class Attention(nn.Module):
         self.hid2att = nn.Linear(hid_dim, att_dim)    # W
         self.emb2att = nn.Linear(emb_dim, att_dim)       # U
         self.att_v = nn.Parameter(torch.Tensor(att_dim))  # b
+        self.att_v.data.uniform_(-0.05, 0.05)
 
     def project_emb(self, emb):
         """
         Returns:
         --------
+
         torch.Tensor: (seq_len x batch_size x att_dim)
         """
         seq_len, batch_size, _ = emb.size()
@@ -244,6 +261,7 @@ class Attention(nn.Module):
         """
         Parameters:
         -----------
+
         hid: torch.Tensor (batch_size x hid_dim)
             Hidden state at step h_{t-1}
         emb: torch.Tensor (seq_len x batch_size x emb_dim)
@@ -299,7 +317,8 @@ class DeepOut(nn.Module):
     DeepOut for Language Model following https://arxiv.org/pdf/1312.6026.pdf
 
     Parameters:
-    ===========
+    -----------
+
     in_dim: int, input dimension for first layer
     layers: iterable of output dimensions for the hidden layers
     activation: str (ReLU, Tanh, MaxOut), activation after linear layer
@@ -335,7 +354,8 @@ class LM(nn.Module):
     Vanilla RNN-based language model.
 
     Parameters:
-    ===========
+    -----------
+
     - vocab: int, vocabulary size.
     - emb_dim: int, embedding size.
     - hid_dim: int, hidden dimension of the RNN.
@@ -368,6 +388,12 @@ class LM(nn.Module):
                  word_dropout=0.0, target_code=None, reserved_codes=(),
                  att_dim=None, tie_weights=False, train_init=False,
                  deepout_layers=0, deepout_act='MaxOut', maxouts=2):
+
+        if tie_weights and not emb_dim == hid_dim:
+            logging.warn("When tying weights, output layer and embedding " +
+                         "layer should have equal size. A projection layer " +
+                         "will be insterted to accomodate for this")
+
         self.vocab = vocab
         self.emb_dim = emb_dim
         self.hid_dim = hid_dim
@@ -383,21 +409,16 @@ class LM(nn.Module):
         self.deepout_act = deepout_act
         self.maxouts = maxouts
         self.add_deepout = deepout_layers and deepout_layers > 0
-        if tie_weights and not self.emb_dim == self.hid_dim:
-            logging.warn("When tying weights, output layer and embedding " +
-                         "layer should have equal size. A projection layer " +
-                         "will be insterted to accomodate for this")
-        if cell.startswith('RHN'):
-            self.num_layers = 1
         self.conds = conds
+        self.hidden_state = {}  # for hidden state persistance during training
         super(LM, self).__init__()
 
-        # word dropout
+        # Word dropout
         self.word_dropout = word_dropout
         self.target_code = target_code
         self.reserved_codes = reserved_codes
 
-        # embeddings
+        # Embeddings
         self.embeddings = nn.Embedding(vocab, self.emb_dim)
         rnn_input_size = self.emb_dim
         if self.conds is not None:
@@ -407,7 +428,9 @@ class LM(nn.Module):
                 rnn_input_size += c['emb_dim']
             self.conds = nn.ModuleList(conds)
 
-        # rnn
+        # Rnn
+        if cell.startswith('RHN'):
+            self.num_layers = 1
         if self.train_init:
             self.h_0 = nn.Parameter(torch.zeros(hid_dim * self.num_layers))
             if cell.startswith('LSTM'):
@@ -441,7 +464,7 @@ class LM(nn.Module):
                 maxouts=maxouts,
                 dropout=self.dropout)
 
-        # output projection
+        # Output projection
         if self.tie_weights:
             if self.emb_dim == self.hid_dim:
                 self.project = nn.Linear(self.hid_dim, self.vocab)
@@ -539,6 +562,24 @@ class LM(nn.Module):
             outs = self.deepout(outs)
         outs = F.log_softmax(self.project(outs))
         return outs, hidden, weights
+
+    def loss(self, batch_data, test=False):
+        # unpack data
+        (source, targets), conds = batch_data, None
+        if self.conds is not None:
+            (source, *conds), (targets, *_) = source, targets
+
+        hidden = self.hidden_state.get('hidden', None)
+        output, hidden, _ = self(source, hidden=hidden, conds=conds)
+
+        self.hidden_state['hidden'] = u.repackage_hidden(hidden)
+        loss = F.nll_loss(output, targets.view(-1), size_average=True)
+        num_examples = source.nelement()
+
+        if not test:
+            loss.backward()
+
+        return (loss.data[0], ), num_examples
 
     def generate(self, d, conds=None, seed_texts=None, max_seq_len=25,
                  gpu=False, method='sample', temperature=1., width=5,
@@ -639,78 +680,3 @@ class LM(nn.Module):
         outs, *_ = self(Variable(inp, volatile=True), **kwargs)
         log_probs = u.select_cols(outs[:-1], inp[1:])
         return log_probs.sum().data[0] / len(log_probs)
-
-
-class MultiheadLM(LM):
-    """
-    A variant LM that has multiple output embeddings (one for each of a
-    given number of heads). This allows the model to fine tune different
-    output distribution on different datasets.
-    """
-    def __init__(self, *args, heads=(), **kwargs):
-        super(MultiheadLM, self).__init__(*args, **kwargs)
-        assert heads, "MultiheadLM requires at least 1 head but got 0"
-        import copy
-        if self.add_attn:
-            attn = self.attn
-            del self.attn
-            self.attn = {}
-        project = self.project
-        del self.project
-        self.project = {}
-        for head in heads:
-            project_module = copy.deepcopy(project)
-            self.add_module(head, project_module)
-            self.project[head] = project_module
-            if self.add_attn:
-                attn_module = copy.deepcopy(attn)
-                self.add_module(head, attn_module)
-                self.attn[head] = attn_module
-
-    def forward(self, inp, hidden=None, head=None, **kwargs):
-        inp = word_dropout(
-            inp, self.target_code, p=self.word_dropout,
-            reserved_codes=self.reserved_codes, training=self.training)
-        emb = self.embeddings(inp)
-        if self.has_dropout:
-            emb = F.dropout(emb, p=self.dropout, training=self.training)
-        hidden = hidden if hidden is not None else self.init_hidden_for(emb)
-        outs, hidden = self.rnn(emb, hidden)
-        if self.has_dropout:
-            outs = F.dropout(outs, p=self.dropout, training=self.training)
-        weights = None
-        if self.add_attn:
-            outs, weights = self.attn[head](outs, emb)
-        seq_len, batch, hid_dim = outs.size()
-        outs = outs.view(seq_len * batch, hid_dim)
-        if self.add_deepout:
-            outs = self.deepout(outs)
-        outs = F.log_softmax(self.project[head](outs))
-        return outs, hidden, weights
-
-    @classmethod
-    def from_pretrained_model(cls, that, heads):
-        """
-        Create a multihead model from a pretrained LM initializing all weights
-        to the LM states and all heads to the same output projection layer
-        weights of the parent.
-        """
-        assert isinstance(that, LM) and that.conds is None
-        this = cls(
-            that.vocab, that.emb_dim, that.hid_dim, heads=heads,
-            num_layers=that.num_layers, cell=that.cell, bias=that.bias,
-            dropout=that.dropout, word_dropout=that.word_dropout,
-            target_code=that.target_code, reserved_codes=that.reserved_codes,
-            att_dim=that.att_dim, train_init=that.train_init,
-            maxouts=that.maxouts, deepout_layers=that.deepout_layers,
-            deepout_act=that.deepout_act)
-        this_state_dict = this.state_dict()
-        for p, w in that.state_dict().items():
-            if p in this_state_dict:
-                this_state_dict[p] = w
-            else:               # got project or attn layer
-                *_, weight = p.split('.')
-                for head in this.heads:
-                    this_state_dict[head + "." + weight] = w
-        this.load_state_dict(this_state_dict)
-        return this

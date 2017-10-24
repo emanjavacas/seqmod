@@ -68,7 +68,6 @@ class Embedder(object):
         return self
 
     def transform(self, documents):
-        default = np.zeros(self.size, dtype='float64')
         X = []
 
         for d in documents:

@@ -9,33 +9,34 @@ from math import log, ceil
 from time import time, ctime
 
 
-class ModelManager(object):
+class Manager(object):
     """
     Parameters:
     -----------
-    param_sampler: fn() -> dict (sampled param space)
+    param_sampler: callable() -> dict (sampled param space)
 
-    model_builder: fn(params) -> fn(n_iters) -> dict
+    create_runner: callable(params) -> callable(n_iters) -> dict
         result {'loss': float, 'early_stop': bool}
     """
-    def __init__(self, param_sampler, model_builder):
+    def __init__(self, param_sampler, create_runner):
         self.param_sampler = param_sampler
-        self.model_builder = model_builder
+        self.runner_builder = create_runner
         self.models = []
 
     def sample_n(self, n):
         for _ in range(n):
             params = self.param_sampler()
-            self.models.append(
-                (self.model_builder(params), {'params': params, 'runs': []})
-            )
+            model = self.runner_builder(params)
+            self.models.append((model, {'params': params, 'runs': []}))
 
     def prune_early_stopped(self):
         self.models = [(m, data) for (m, data) in self.models
                        if not data.get('early_stop', False)]
 
     def prune_topk(self, k):
-        sorted_models = sorted(self.models, key=lambda m: m[1]['runs'][-1]['loss'])
+        sorted_models = sorted(self.models,
+                               key=lambda m: m[1]['runs'][-1]['loss'])
+
         self.models = sorted_models[:k]
 
 
@@ -43,9 +44,9 @@ class Hyperband(object):
     """
     Parameters:
     -----------
-    param_sampler: fn() -> dict (sampled param space)
+    param_sampler: callable() -> dict (sampled param space)
 
-    model_builder: fn(params) -> fn(n_iters) -> dict
+    create_runner: callable(params) -> callable(n_iters) -> dict
         result {'loss': float, 'early_stop': bool}
 
     max_iter: int, total maximum of iterations where an iteration is internally
@@ -53,8 +54,8 @@ class Hyperband(object):
 
     eta: number, downsampling rate
     """
-    def __init__(self, param_sampler, model_builder, max_iter=81, eta=3):
-        self.manager = ModelManager(param_sampler, model_builder)
+    def __init__(self, param_sampler, create_runner, max_iter=81, eta=3):
+        self.manager = Manager(param_sampler, create_runner)
         self.max_iter = max_iter  # maximum iterations per configuration
         self.eta = eta  # defines configuration downsampling rate (default = 3)
 

@@ -1,4 +1,5 @@
 
+import math
 import logging
 
 import numpy as np
@@ -8,8 +9,28 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 
+import seqmod.utils as u
 from seqmod.modules.custom import word_dropout, StackedLSTM, StackedGRU
 from seqmod.modules.encoder_decoder import Encoder
+
+
+def generic_sigmoid(a=1, b=1, c=1):
+    return lambda x: a / (1 + b * math.exp(-x * c))
+
+
+def kl_annealing_schedule(inflection, steepness=4):
+    b = 10 ** steepness
+    return generic_sigmoid(b=b, c=math.log(b) / inflection)
+
+
+# KL-divergence loss
+def KL_loss(mu, logvar):
+    """
+    https://arxiv.org/abs/1312.6114
+    0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
+    """
+    element = mu.pow(2).add_(logvar.exp()).mul_(-1).add_(1).add_(logvar)
+    return torch.sum(element).mul_(-0.5)
 
 
 class EncoderVAE(Encoder):
@@ -102,55 +123,56 @@ class DecoderVAE(nn.Module):
 class SequenceVAE(nn.Module):
     def __init__(self, emb_dim, hid_dim, z_dim, src_dict, num_layers=1,
                  cell='LSTM', bidi=True, dropout=0.0, word_dropout=0.0,
-                 project_init=False, add_z=False, tie_weights=False):
-        if isinstance(hid_dim, tuple):
-            enc_hid_dim, dec_hid_dim = hid_dim
-        else:
-            enc_hid_dim, dec_hid_dim = hid_dim, hid_dim
-        if isinstance(num_layers, tuple):
-            enc_num_layers, dec_num_layers = num_layers
-        else:
-            enc_num_layers, dec_num_layers = num_layers, num_layers
+                 project_init=False, add_z=False, tie_weights=False,
+                 inflection_point=5000):
+        self.hid_dim, self.num_layers = hid_dim, num_layers
         self.add_z = add_z
         self.src_dict = src_dict
         vocab_size = len(src_dict)
         super(SequenceVAE, self).__init__()
 
-        # word_dropout
+        # Training stuff
+        self.nll_weight = torch.ones(vocab_size)
+        self.nll_weight[self.src_dict.get_pad()] = 0
+
+        self.kl_weight = 0.0
+        self.kl_schedule = kl_annealing_schedule(inflection_point)
+
+        # Word_dropout
         self.word_dropout = word_dropout
         self.target_code = self.src_dict.get_unk()
         self.reserved_codes = (self.src_dict.get_bos(),
                                self.src_dict.get_eos(),
                                self.src_dict.get_pad())
 
-        # embedding layer(s)
+        # Embedding layer(s)
         self.embeddings = nn.Embedding(
             vocab_size, emb_dim, padding_idx=self.src_dict.get_pad())
 
-        # encoder
+        # Encoder
         self.encoder = EncoderVAE(
-            z_dim, emb_dim, enc_hid_dim, enc_num_layers,
+            z_dim, emb_dim, hid_dim, num_layers,
             cell=cell, bidi=bidi, dropout=dropout)
 
-        # decoder
+        # Decoder
         self.decoder = DecoderVAE(
-            z_dim, emb_dim, dec_hid_dim, dec_num_layers, cell,
+            z_dim, emb_dim, hid_dim, num_layers, cell,
             project_init=project_init, add_z=add_z, dropout=dropout)
 
-        # projection
+        # Projection
         if tie_weights:
             projection = nn.Linear(emb_dim, vocab_size)
             projection.weight = self.embeddings.weight
-            if emb_dim != dec_hid_dim:
+            if emb_dim != hid_dim:
                 logging.warn("When tying weights, output layer and " +
                              "embedding layer should have equal size. " +
                              "A projection layer will be insterted.")
-                tied_projection = nn.Linear(dec_hid_dim, emb_dim)
+                tied_projection = nn.Linear(hid_dim, emb_dim)
                 self.out_proj = nn.Sequential(tied_projection, projection)
             else:
                 self.out_proj = projection
         else:
-            self.out_proj = nn.Linear(dec_hid_dim, vocab_size)
+            self.out_proj = nn.Linear(hid_dim, vocab_size)
 
     def init_embeddings(self, weight):
         emb_elements = self.embeddings.weight.data.nelement()
@@ -215,6 +237,36 @@ class SequenceVAE(nn.Module):
         dec_outs = torch.stack(dec_outs)
         return self.project(dec_outs), mu, logvar
 
+    def loss(self, batch_data, test=False):
+        """
+        Compute loss, eventually backpropagate and return losses and batch size
+        for speed monitoring
+        """
+        pad, eos = self.src_dict.get_pad(), self.src_dict.get_eos()
+        src, _ = batch_data
+        # remove <eos> from decoder targets dealing with different <pad> sizes
+        dec_trg = Variable(u.map_index(src[:-1].data, eos, pad))
+        # remove <bos> from loss targets
+        loss_trg = src[1:].view(-1)
+        # preds: (batch * seq_len x vocab)
+        preds, mu, logvar = self(src[1:], dec_trg)
+
+        # compute loss
+        weight = self.nll_weight
+        if next(self.parameters()).is_cuda:
+            weight = weight.cuda()
+
+        log_examples, kl_examples = src.data.ne(pad).sum(), src.size(1)
+
+        log_loss = F.nll_loss(
+            preds, loss_trg, size_average=False, weight=weight) / log_examples
+        kl_loss = KL_loss(mu, logvar) / kl_examples
+
+        if not test:
+            (log_loss + self.kl_weight * kl_loss).backward()
+
+        return (log_loss.data[0], kl_loss.data[0]), log_examples
+
     def generate(self, inp=None, z_params=None,
                  max_inp_len=2, max_len=20, **kwargs):
         """
@@ -225,30 +277,44 @@ class SequenceVAE(nn.Module):
             - mu: (1 x z_dim)
             - logvar: (1 x z_dim)
         """
-        assert inp is not None or z_params is not None, \
-            "At least one of (inp, z_params) must be given"
-        # encoder
+        if inp is None or z_params is None:
+            raise ValueError("At least one of (inp, z_params) must be given")
+
+        eos, bos = self.src_dict.get_eos(), self.src_dict.get_bos()
+
+        # Encoder
         if z_params is None:
             mu, logvar = self.encoder(self.embeddings(inp))
             max_len = len(inp) * max_inp_len
+            batch_size = inp.size(1)
         else:
             mu, logvar = z_params
             max_len = max_len
-        # sample from the hidden code
+            batch_size = z_params.size(0)
+
+        # Sample from the hidden code
         z = self.encoder.reparametrize(mu, logvar)
-        # decoder
+
+        # Decoder
         hidden = self.decoder.init_hidden_for(z)
         scores, preds, z_cond = [], [], z if self.add_z else None
-        prev_data = mu.data.new([self.src_dict.get_bos()]).long()
-        prev = Variable(prev_data, volatile=True).unsqueeze(0)
+        prev_data = mu.data.new([bos]).long().repeat(batch_size)
+        prev = Variable(prev_data, volatile=True)
+        mask = torch.ones(batch_size).long()
+
         for _ in range(max_len):
             prev_emb = self.embeddings(prev).squeeze(0)
             dec_out, hidden = self.decoder(prev_emb, hidden, z=z_cond)
             dec_out = self.project(dec_out.unsqueeze(0))
+
             score, pred = dec_out.max(1)
             scores.append(score.squeeze().data[0])
             preds.append(pred.squeeze().data[0])
             prev = pred
-            if prev.data.eq(self.src_dict.get_eos()).nonzero().nelement() > 0:
+
+            mask = mask * (pred.squeeze().data[0].cpu() != eos)
+
+            if mask.sum() == 0:
                 break
+
         return [sum(scores)], [preds]

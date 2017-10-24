@@ -12,14 +12,12 @@ except:
     warnings.warn('no NVIDIA driver found')
     torch.manual_seed(1001)
 
-import torch.nn as nn
-
 from seqmod.hyper import Hyperband
 from seqmod.hyper.utils import make_sampler
 
 from seqmod.modules.lm import LM
 from seqmod import utils as u
-from seqmod.misc.trainer import LMTrainer
+from seqmod.misc.trainer import Trainer
 from seqmod.misc.loggers import StdLogger
 from seqmod.misc.optimizer import Optimizer
 from seqmod.misc.dataset import Dict, BlockDataset
@@ -97,6 +95,7 @@ if __name__ == '__main__':
     parser.add_argument('--save_path', default='models', type=str)
     args = parser.parse_args()
 
+    # process data
     if args.processed:
         print("Loading preprocessed datasets...")
         assert args.dict_path, "Processed data requires DICT_PATH"
@@ -109,7 +108,7 @@ if __name__ == '__main__':
         print("Processing datasets...")
         proc = text_processor(lower=args.lower, num=args.num, level=args.level)
         d = Dict(max_size=args.max_size, min_freq=args.min_freq,
-                 eos_token=u.EOS)
+                 eos_token=u.EOS, force_unk=True)
         train, valid, test = None, None, None
         # already split
         if os.path.isfile(os.path.join(args.path, 'train.txt')):
@@ -122,7 +121,7 @@ if __name__ == '__main__':
                 train_data, d, args.batch_size, args.bptt, gpu=args.gpu)
             del train_data
             test = BlockDataset(
-                load_lines(os.path.join(args.path, 'test.txt'), processor=proc),
+                load_lines(os.path.join(args.path, 'test.txt'), proc),
                 d, args.batch_size, args.bptt, gpu=args.gpu, evaluation=True)
             if os.path.isfile(os.path.join(args.path, 'valid.txt')):
                 valid = BlockDataset(
@@ -144,7 +143,8 @@ if __name__ == '__main__':
     print(' * vocabulary size. %d' % len(d))
     print(' * number of train batches. %d' % len(train))
 
-    param_sampler = make_sampler({
+    # prepare hyperband functions
+    sampler = make_sampler({
         'emb_dim': ['uniform', int, 20, 50],
         'hid_dim': ['uniform', int, 100, 1000],
         'num_layers': ['choice', int, (1, 2)],
@@ -157,40 +157,48 @@ if __name__ == '__main__':
         # 'lr': ['loguniform', float, math.log(0.001), math.log(0.05)]
     })
 
-    def model_builder(params):
-        m = LM(len(d), params['emb_dim'], params['hid_dim'],
-               num_layers=params['num_layers'], cell=params['cell'],
-               dropout=params['dropout'], train_init=params['train_init'],
-               deepout_layers=params['deepout_layers'],
-               maxouts=params['maxouts'],
-               word_dropout=params['word_dropout'], target_code=d.get_unk())
-        u.initialize_model(m)
+    class create_runner(object):
+        def __init__(self, params):
+            self.trainer, self.early_stopping = None, None
 
-        optim = Optimizer(
-            m.parameters(), args.optim, lr=args.lr, max_norm=args.max_norm)
-        criterion = nn.NLLLoss()
-        early_stopping = EarlyStopping(5, patience=3, reset_patience=False)
+            m = LM(len(d), params['emb_dim'], params['hid_dim'],
+                   num_layers=params['num_layers'], cell=params['cell'],
+                   dropout=params['dropout'], train_init=params['train_init'],
+                   deepout_layers=params['deepout_layers'],
+                   maxouts=params['maxouts'], target_code=d.get_unk(),
+                   word_dropout=params['word_dropout'])
+            u.initialize_model(m)
 
-        def early_stop_hook(trainer, epoch, batch_num, num_checkpoints):
-            valid_loss = trainer.merge_loss(trainer.validate_model())
-            early_stopping.add_checkpoint(valid_loss)
+            optim = Optimizer(
+                m.parameters(), args.optim, lr=args.lr, max_norm=args.max_norm)
 
-        trainer = LMTrainer(m, {"train": train, "test": test, "valid": valid},
-                            criterion, optim)
-        trainer.add_hook(early_stop_hook, hooks_per_epoch=5)
-        trainer.add_loggers(StdLogger())
+            self.early_stopping = EarlyStopping(
+                5, patience=3, reset_patience=False)
 
-        def run(n_iters):
+            def early_stop_hook(trainer, epoch, batch_num, num_checkpoints):
+                valid_loss = trainer.validate_model()
+                self.early_stopping.add_checkpoint(sum(valid_loss.pack()))
+
+            trainer = Trainer(
+                m, {"train": train, "test": test, "valid": valid}, optim)
+            trainer.add_hook(early_stop_hook, hooks_per_epoch=5)
+            trainer.add_loggers(StdLogger())
+
+            self.trainer = trainer
+
+        def __call__(self, n_iters):
             # max run will be 5 epochs
-            batches = int(len(train) / args.max_iter) * 5
+            batches = len(self.trainer.datasets['train'])
+            batches = int((batches / args.max_iter) * 5)
+
             if args.gpu:
-                m.cuda()
-            (_, loss), _ = trainer.train_batches(batches, 10, gpu=args.gpu)
-            m.cpu()
-            return {'loss': loss, 'early_stop': early_stopping.stopped}
+                self.trainer.model.cuda()
+            (_, loss), _ = self.trainer.train_batches(batches, 10)
+            self.trainer.model.cpu()
 
-        return run
+            return {'loss': loss, 'early_stop': self.early_stopping.stopped}
 
-    hb = Hyperband(param_sampler, model_builder,
-                   max_iter=args.max_iter, eta=args.eta)
+    hb = Hyperband(
+        sampler, create_runner, max_iter=args.max_iter, eta=args.eta)
+
     print(hb.run())

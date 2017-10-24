@@ -2,26 +2,91 @@
 import time
 import copy
 import math
+import collections
+
 import numpy as np
-from torch.autograd import Variable
 
 from seqmod import utils as u
 from seqmod.misc.early_stopping import EarlyStoppingException
 
 
-# Utility functions (repackage_hidden, memory effective loss, etc.)
-def repackage_hidden(h):
-    if type(h) == Variable:
-        return Variable(h.data)
-    else:
-        return tuple(repackage_hidden(v) for v in h)
+def ppl(loss):
+    return math.exp(min(100, loss))
 
 
-# Base Trainer class
+class LossStatistics(object):
+    """
+    Accumulator for different losses (for report purposes)
+
+    Parameters:
+    ----------
+
+    - losses: str or dict. Loss definition. If string, it will
+        be the label for the loss, and defaults for formatting
+        will be used. If a dict, it should contain the fields
+        `loss`, loss label, and `format`, a format function.
+        Losses should be input in same order as output by the
+        model.
+    """
+    def __init__(self, *losses):
+        self.losses = []
+        for loss in losses:
+            if isinstance(loss, str):
+                self.losses.append({'loss': loss, 'format': ppl})
+            else:
+                if 'format' not in loss:
+                    loss['format'] = ppl  # default to ppl
+                self.losses.append(loss)
+
+        self.history = []
+        self.examples = 0
+
+    def init(self):
+        """
+        Return a new copy of the current loss.
+        """
+        return LossStatistics(*self.losses)
+
+    def reset(self):
+        """
+        Reset history
+        """
+        self.history = []
+
+    def add(self, loss, num_examples):
+        """
+        Accumulate average batch loss
+        """
+        if not isinstance(loss, collections.Iterable):
+            loss = [loss]
+
+        if len(loss) != len(self.losses):
+            raise ValueError(
+                f"Got {len(loss)} losses but needs {len(self.losses)}")
+
+        self.history.append(tuple(loss))
+        self.examples += num_examples
+
+    def pack(self, labels=False):
+        """
+        Compute average losses over batches.
+
+        - labels: bool, if true output will be a dict with loss labels
+        """
+        losses, packed = list(zip(*self.history)), []
+        for formatter, loss in zip(self.losses, losses):
+            packed.append(formatter['format'](sum(loss) / len(self.history)))
+
+        if labels:
+            packed = dict(zip([l['loss'] for l in self.losses], packed))
+
+        return packed
+
+
 class Trainer(object):
-    def __init__(self, model, datasets, criterion, optimizer, scheduler=None,
+    def __init__(self, model, datasets, optimizer, scheduler=None,
                  early_stopping=None, test_name='test', valid_name='valid',
-                 loss_labels=('loss',), size_average=True, verbose=True):
+                 losses=('loss',), verbose=True):
         """
         Parameter:
         ----------
@@ -36,15 +101,12 @@ class Trainer(object):
         # attributes
         self.model = model
         self.datasets = datasets   # is a dict with at least a 'train' entry
-        self.criterion = criterion
         self.optimizer = optimizer
         self.scheduler = scheduler
         self.early_stopping = early_stopping
-        self.loss_labels = loss_labels
-        self.epoch = 0          # safe global epoch
+        self.loss = LossStatistics(*losses)
         # config
         self.verbose = verbose
-        self.size_average = size_average
         # containers
         self.loggers = []
         self.hooks = []
@@ -80,17 +142,17 @@ class Trainer(object):
     def run_hooks(self, epoch, batch_num, checkpoint):
         batches = len(self.datasets['train'])
         for hook in self.hooks:
-            _num_checkpoints = batch_num // checkpoint  # checkpoints in epoch
+            num_checkpoints = batch_num // checkpoint  # checkpoints in epoch
             if hook['hooks_per_epoch'] is not None:
-                _execute_every = max(
+                execute_every = max(
                     1, batches // (checkpoint * hook['hooks_per_epoch']))
             else:
-                _execute_every = 1
-            if _execute_every > 0 and _num_checkpoints % _execute_every == 0:
-                hook['hook'](self, epoch, batch_num, _num_checkpoints)
+                execute_every = 1
+            if execute_every > 0 and num_checkpoints % execute_every == 0:
+                hook['hook'](self, epoch, batch_num, num_checkpoints)
 
     # callbacks
-    def on_batch_end(self, batch, batch_loss):
+    def on_batch_end(self, epoch, batch, loss):
         # reset hidden, and things like that
         pass
 
@@ -99,32 +161,24 @@ class Trainer(object):
 
     def on_epoch_end(self, epoch, loss, examples, duration, valid_loss=None):
         self.log("epoch_end", {"epoch": epoch,
-                               "loss": dict(zip(self.loss_labels, loss)),
+                               "loss": loss.pack(labels=True),
                                "examples": examples,
                                "duration": duration})
 
     def on_validation_end(self, epoch, loss):
         self.log("validation_end", {"epoch": epoch,
-                                    "loss": dict(zip(self.loss_labels, loss))})
+                                    "loss": loss.pack(labels=True)})
         if self.early_stopping is not None:
             self.early_stopping.add_checkpoint(
-                self.merge_loss(loss), copy.deepcopy(self.model))
+                sum(loss.pack()), copy.deepcopy(self.model))
 
     def on_test_begin(self, epoch):
         self.log("test_begin", {"epoch": epoch})
 
     def on_test_end(self, loss):
-        self.log("test_end", {"loss": dict(zip(self.loss_labels, loss))})
+        self.log("test_end", {"loss": loss.pack(labels=True)})
 
     # optimizer
-    def zero_grad(self):
-        "Reset accumulated gradients for the optimizer"
-        if isinstance(self.optimizer, dict):
-            for opt in self.optimizer.values():
-                opt.zero_grad()
-        else:
-            self.optimizer.zero_grad()
-
     def optimizer_step(self, val_loss=None):
         "Runs an optimizing step"
         self.optimizer.step()
@@ -135,132 +189,148 @@ class Trainer(object):
             else:
                 self.scheduler.step(val_loss)
 
-    # loss
-    def init_loss(self):
-        "Function defining the shape of the loss before training"
-        return tuple([0] * len(self.loss_labels))
-
-    def format_loss(self, loss):
-        "Eventually transform loss into something meaningful (e.g. ppl)"
-        return loss
-
-    def reweight_loss(self, loss, num_examples):
-        "Reweight the loss to account for all instances in batch (deaveraging)"
-        weight = (num_examples if self.size_average else 1)
-        return tuple([l * weight for l in loss])
-
-    def update_loss(self, acc_loss, loss):
-        """
-        Updates loss across batches given an accumulated loss `acc_loss`
-        and the current new loss `loss`
-        """
-        return tuple([acc + new for (acc, new) in zip(acc_loss, loss)])
-
-    def average_loss(self, epoch_loss, num_epoch_examples):
-        "Computes average loss per instance after epoch"
-        return tuple([l / num_epoch_examples for l in epoch_loss])
-
-    def merge_loss(self, loss):
-        "Combine in case of complex loss"
-        return sum(loss)
-
-    # training code
-    def num_batch_examples(self, batch_data):
-        """
-        By default consider all target elements in batch.
-        """
-        source, target = batch_data
-        return target.nelement()
-
-    def validate_model(self, test=False, **kwargs):
-        loss, num_examples = self.init_loss(), 0
+    def validate_model(self, test=False):
+        loss = self.loss.init()
         dataset = self.datasets[self.test_name if test else self.valid_name]
+
         for batch_num in range(len(dataset)):
             batch = dataset[batch_num]
-            batch_examples = self.num_batch_examples(batch)
-            num_examples += batch_examples
-            batch_loss = self.run_batch(
-                batch, dataset=self.valid_name, **kwargs)
-            batch_loss = self.reweight_loss(batch_loss, batch_examples)
-            loss = self.update_loss(loss, batch_loss)
-        return self.format_loss(self.average_loss(loss, num_examples))
+            batch_loss, batch_examples = self.model.loss(batch, test=True)
+            loss.add(u.unwrap_variables(batch_loss), batch_examples)
+            del batch_loss
 
-    def run_batch(self, batch_data, dataset='train', **kwargs):
-        """
-        Compute batch loss and (eventually) run optimizations on the model.
-        It should return the loss as a tuple of floats. It can return None
-        if the batch has to be skipped.
-        """
-        source, targets = batch_data
-        outs = self.model(source)
-        loss = self.criterion(outs, targets.view(-1))
-        if dataset == 'train':
-            self.merge_loss(loss).backward()
-            self.optimizer_step()
-        return (loss.data[0], )
+        return loss
 
-    def _get_batch_order(self, shuffle, num_batches=None):
-        "Get batch indices in case of batch level training"
+    def get_batch_order(self, shuffle, num_batches):
+        "Get batch order for an undefined number of batches"
         batch_order = list(range(len(self.datasets['train'])))
         if shuffle:
             batch_order = np.random.permutation(batch_order)
-        if num_batches is not None:
-            if self.last_batch_order is not None:
-                batch_order = self.last_batch_order
-            while num_batches > len(batch_order):
-                extra_order = list(range(len(self.datasets['train'])))
-                if shuffle:
-                    extra_order = np.random.permutation(extra_order)
-                batch_order += extra_order
-            self.last_batch_order = batch_order[num_batches:]
-            return batch_order[:num_batches]
-        else:
-            return batch_order
 
-    def _train(self, epoch, checkpoint, batch_order, **kwargs):
-        "General train loop"
+        if self.last_batch_order is not None:
+            batch_order = self.last_batch_order
+
+        while num_batches > len(batch_order):
+            extra_order = list(range(len(self.datasets['train'])))
+            if shuffle:
+                extra_order = np.random.permutation(extra_order)
+            batch_order += extra_order
+
+        self.last_batch_order = batch_order[num_batches:]
+
+        return batch_order[:num_batches]
+
+    def get_epoch_batch_order(self, shuffle):
+        "Get batch order for a single epoch"
+        batch_order = list(range(len(self.datasets['train'])))
+        if shuffle:
+            batch_order = np.random.permutation(batch_order)
+        return batch_order
+
+    def run_inner_loop(self, epoch, checkpoint, batch_order):
+        "General train loop for a single run"
         # compute batch order
-        dataset = self.datasets['train']
-        run_loss, check_loss = self.init_loss(), self.init_loss()
-        run_examples, check_examples, start = 0, 0, time.time()
+        run_loss, check_loss = self.loss.init(), self.loss.init()
+        start = time.time()
 
         for batch_num, batch in enumerate(batch_order):
-            self.zero_grad()
-            batch_data = dataset[batch]
-            loss = self.run_batch(batch_data, dataset='train', **kwargs)
-            if loss is None:  # to skip a batch run_batch might return None
+
+            self.optimizer.zero_grad()
+            batch_data = self.datasets['train'][batch]
+            batch_loss, batch_examples = self.model.loss(batch_data)
+
+            if batch_loss is None:  # to skip a batch loss might return None
                 continue
-            self.on_batch_end(batch_num, self.format_loss(loss))
-            # report
-            num_examples = self.num_batch_examples(batch_data)
-            # for reporting purposes we need the total loss per batch,
-            # but it can be just the average loss depending on `size_average`
-            batch_loss = self.reweight_loss(loss, num_examples)
-            run_loss = self.update_loss(run_loss, batch_loss)
-            check_loss = self.update_loss(check_loss, batch_loss)
-            run_examples += num_examples
-            check_examples += num_examples
+
+            self.optimizer_step()
+
+            batch_loss = u.unwrap_variables(batch_loss)
+            run_loss.add(batch_loss, batch_examples)
+            check_loss.add(batch_loss, batch_examples)
+
+            self.on_batch_end(epoch, batch_num, run_loss)
+
             # checkpoint
             if checkpoint and batch_num > 0 and batch_num % checkpoint == 0:
-                format_loss = self.average_loss(check_loss, check_examples)
-                format_loss = self.format_loss(format_loss)
                 self.model.eval()
                 self.log('checkpoint', {
                     'epoch': epoch,
                     'batch': batch_num,
                     'total_batches': len(batch_order),
-                    'examples': check_examples,
+                    'examples': check_loss.examples,
                     'duration': time.time() - start,
-                    'loss': dict(zip(self.loss_labels, format_loss))})
+                    'loss': check_loss.pack(labels=True)})
                 self.run_hooks(epoch, batch_num, checkpoint)
                 self.model.train()
-                check_loss = self.init_loss()
-                check_examples = 0
+                check_loss.reset()
                 start = time.time()
-        return run_loss, run_examples
 
-    def train_batches(self, num_batches, checkpoint, shuffle=False, gpu=False,
-                      run_test=False, **kwargs):
+        return run_loss
+
+    def run_outer_loop(self, checkpoint, epochs=None, num_batches=None,
+                       shuffle=True, run_test=True):
+        "General train loop for many runs"
+
+        best_model, valid_loss, test_loss = None, None, None
+
+        # check run mode (training for epochs or number of batches)
+        batch_first = epochs is None
+        if batch_first:
+            epochs = 1
+
+        try:
+            for e in range(epochs):
+                start = time.time()
+
+                # train
+                self.model.train()
+
+                if batch_first:
+                    batch_order = self.get_batch_order(shuffle, num_batches)
+                    e = self.batch_run   # report number of runs as epoch
+                    self.batch_run += 1  # increase number of runs
+                else:
+                    batch_order = self.get_epoch_batch_order(shuffle)
+                    self.on_epoch_begin(e)
+
+                run_loss = self.run_inner_loop(e, checkpoint, batch_order)
+
+                run_time = time.time() - start
+                self.on_epoch_end(e, run_loss, run_loss.examples, run_time)
+
+                # valid
+                if self.valid_name in self.datasets:
+                    self.model.eval()
+                    valid_loss = self.validate_model()
+                    self.on_validation_end(e, valid_loss)
+                    self.model.train()
+                if valid_loss is not None:  # merge after callback
+                    valid_loss = sum(valid_loss.pack())
+
+        except EarlyStoppingException as e:
+            message, data = e.args
+            best_model, valid_loss = data['model'], data['smallest']
+            self.log("info", message)
+
+        except KeyboardInterrupt:
+            self.log("info", "Training interrupted")
+
+        self.log("info", f"Trained for [{time.time() - start:.3f} sec]")
+
+        # test
+        if run_test and self.test_name in self.datasets:
+            self.model.eval()
+            self.on_test_begin(self.batch_run)
+            test_loss = self.validate_model(test=True)
+            self.on_test_end(test_loss)
+            test_loss = sum(test_loss.pack())
+
+        best_model = best_model or copy.deepcopy(self.model)
+
+        return (best_model.cpu(), valid_loss), test_loss
+
+    def train_batches(self, num_batches, checkpoint,
+                      shuffle=False, run_test=False):
         """
         Run training on a given number of batches. `num_batches` might be
         larger than the actual total number of batches in the dataset, in
@@ -294,57 +364,21 @@ class Trainer(object):
         - best_model: nn.Module, deep copy of the best model during training.
             If no early stopping was provided, the best model will be the
             current model after training.
-        - valid_loss: float or None, best validation loss aggregated according
-            to the function merge_loss. If not early stopping is provided, best
+        - valid_loss: float or None, best validation loss. If not early
+            stopping is provided, best
             loss will be the last validation loss after training.
-        - test_loss: float or None, test loss aggregated as per merge_loss
+        - test_loss: float or None
         """
-        start = time.time()
-        best_model, valid_loss, test_loss = None, None, None
-        try:
-            # train
-            self.on_epoch_begin(self.batch_run)
-            batch_order = self._get_batch_order(shuffle, num_batches)
-            run_loss, run_examples = self._train(
-                self.batch_run, checkpoint, batch_order, **kwargs)
-            self.batch_run += 1  # increase number of runs
-            run_loss = self.format_loss(
-                self.average_loss(run_loss, run_examples))
-            run_time = time.time() - start
-            self.on_epoch_end(self.batch_run, run_loss, run_examples, run_time)
-            # valid
-            if self.valid_name in self.datasets:
-                self.model.eval()
-                valid_loss = self.validate_model(**kwargs)
-                self.on_validation_end(self.batch_run, valid_loss)
-                self.model.train()
-            if valid_loss is not None:  # merge after callback
-                valid_loss = self.merge_loss(valid_loss)
-        except EarlyStoppingException as e:
-            message, data = e.args
-            best_model, valid_loss = data['model'], data['smallest']
-            self.log("info", message)
-        except KeyboardInterrupt:
-            self.log("info", "Training interrupted")
-        self.log("info", "Trained for [{:.3f} sec]".format(time.time()-start))
-        # test
-        if run_test and self.test_name in self.datasets:
-            self.model.eval()
-            self.on_test_begin(self.batch_run)
-            test_loss = self.validate_model(test=True, **kwargs)
-            self.on_test_end(test_loss)
-            test_loss = self.merge_loss(test_loss)  # merge after callback
-        best_model = best_model or copy.deepcopy(self.model)
-        return (best_model.cpu(), valid_loss), test_loss
+        return self.run_outer_loop(checkpoint, num_batches=num_batches,
+                                   shuffle=shuffle, run_test=run_test)
 
-    def train(self, epochs, checkpoint, shuffle=False, gpu=False, **kwargs):
+    def train(self, epochs, checkpoint, shuffle=False):
         """
         Parameters:
         -----------
 
         - epochs: int
         - checkpoint: int, log a checkpoint and hooks every x batches
-        - gpu: bool
 
         Returns (best_model, valid_loss), test_loss
         -------
@@ -352,176 +386,10 @@ class Trainer(object):
         - best_model: nn.Module, deep copy of the best model during training.
             If no early stopping was provided, the best model will be the
             current model after training.
-        - valid_loss: float or None, best validation loss aggregated according
-            to the function merge_loss. If not early stopping is provided, best
-            loss will be the last validation loss after training.
-        - test_loss: float or None, test loss aggregated as per merge_loss
+        - valid_loss: LossStatistics or None, best validation loss.
+            If not early stopping is provided, best loss will be the last
+            validation loss after training.
+        - test_loss: LossStatistics, test loss
         """
-        start = time.time()
-        best_model, valid_loss, test_loss = None, None, None
-        for e in range(1, epochs + 1):
-            self.epoch, start_epoch = e, time.time()
-            self.model.train()
-            try:
-                # train
-                self.on_epoch_begin(e)
-                batch_order = self._get_batch_order(shuffle)
-                epoch_loss, epoch_examples = self._train(
-                    e, checkpoint, batch_order, **kwargs)
-                epoch_loss = self.format_loss(
-                    self.average_loss(epoch_loss, epoch_examples))
-                epoch_time = time.time() - start_epoch
-                self.on_epoch_end(e, epoch_loss, epoch_examples, epoch_time)
-                # valid
-                if self.valid_name in self.datasets:
-                    self.model.eval()
-                    valid_loss = self.validate_model(**kwargs)
-                    self.on_validation_end(e, valid_loss)
-                    self.model.train()
-                if valid_loss is not None:  # merge after callback
-                    valid_loss = self.merge_loss(valid_loss)
-            except EarlyStoppingException as ex:
-                message, data = ex.args
-                best_model, valid_loss = data['model'], data['smallest']
-                self.log("info", message)
-                break
-            except KeyboardInterrupt:
-                self.log("info", "Training interrupted")
-                break
-        self.log("info", "Trained for [{:.3f} sec]".format(time.time()-start))
-        # test
-        if self.test_name in self.datasets:
-            self.model.eval()
-            self.on_test_begin(e)
-            test_loss = self.validate_model(test=True, **kwargs)
-            self.on_test_end(test_loss)
-            test_loss = self.merge_loss(test_loss)  # merge after callback
-        best_model = best_model or copy.deepcopy(self.model)
-        return (best_model.cpu(), valid_loss), test_loss
-
-
-class LMTrainer(Trainer):
-    """
-    General LMTrainer for standard LMs
-    """
-    def __init__(self, *args, reset_hidden=False, **kwargs):
-        super(LMTrainer, self).__init__(*args, **kwargs)
-        self.reset_hidden = reset_hidden
-
-    def format_loss(self, loss):
-        return tuple(math.exp(min(l, 100)) for l in loss)
-
-    def run_batch(self, batch_data, dataset='train', **kwargs):
-        # compute loss
-        source, targets = batch_data
-        hidden = self.batch_state.get('hidden', None)
-        output, hidden, _ = self.model(source, hidden=hidden)
-        # detach hidden from graph
-        self.batch_state['hidden'] = repackage_hidden(hidden)
-        loss = self.criterion(output, targets.view(-1))
-        # optimize
-        if dataset == 'train':
-            loss.backward(), self.optimizer_step()
-        return (loss.data[0], )
-
-    def on_batch_end(self, batch, loss):
-        if self.reset_hidden:
-            if isinstance(self.batch_state['hidden'], tuple):
-                for h in self.batch_state['hidden']:
-                    h.data.zero_()
-            else:
-                self.batch_state['hidden'].data.zero_()
-
-    def num_batch_examples(self, batch_data):
-        src, trg, *_ = batch_data
-        return trg.nelement()
-
-
-class CyclicLMTrainer(LMTrainer):
-    """
-    Trainer to be used with a multiheaded LM and a CyclicBlockDataset
-    that iterates over batches from different source datasets and finetunes
-    a different output distribution per source dataset.
-    """
-    def run_batch(self, batch_data, dataset='train', subset=None):
-        source, targets, head = batch_data
-        if subset is not None and subset != head:
-            # if subset is given, skip all other subsets
-            return
-        hidden = self.batch_state.get('hidden', {}).get(head, None)
-        output, hidden, _ = self.model(source, hidden=hidden, head=head)
-        if 'hidden' not in self.batch_state:
-            self.batch_state['hidden'] = {}
-        # dettach hidden from graph
-        self.batch_state['hidden'][head] = repackage_hidden(hidden)
-        loss = self.criterion(output, targets.view(-1))
-        # optimize
-        if dataset == 'train':
-            loss.backward(), self.optimizer_step()
-        return (loss.data[0], )
-
-    def on_batch_end(self, batch, loss):
-        if self.reset_hidden:
-            for v in self.batch_state['hidden'].values():
-                if isinstance(v, tuple):  # lstm
-                    for h in v:
-                        h.data.zero_()
-                else:
-                    v.data.zero_()
-
-
-class CLMTrainer(LMTrainer):
-    """
-    Trainer for the conditional language model
-    """
-    def run_batch(self, batch_data, dataset='train', **kwargs):
-        (src, *conds), (trg, *_) = batch_data
-        hidden = self.batch_state.get('hidden', None)
-        output, hidden, _ = self.model(src, hidden=hidden, conds=conds)
-        self.batch_state['hidden'] = repackage_hidden(hidden)
-        loss = self.criterion(output, trg.view(-1))
-        if dataset == 'train':
-            loss.backward(), self.optimizer_step()
-        return (loss.data[0], )
-
-    def num_batch_examples(self, batch_data):
-        (src, *_), _ = batch_data
-        return src.nelement()
-
-
-class EncoderDecoderTrainer(Trainer):
-    """
-    Trainer for a general Encoder-Decoder model
-    """
-    def __init__(self, *args, **kwargs):
-        super(EncoderDecoderTrainer, self).__init__(*args, **kwargs)
-        # sum loss over batch samples instead of average
-        self.size_average = False
-
-    def format_loss(self, loss):
-        return tuple(math.exp(min(l, 100)) for l in loss)
-
-    def run_batch(self, batch_data, dataset='train', split=52, **kwargs):
-        pad, eos = self.model.src_dict.get_pad(), self.model.src_dict.get_eos()
-        valid = dataset != 'train'
-        inp, trg = batch_data
-        # remove <eos> from decoder targets substituting them with <pad>
-        dec_trg = Variable(u.map_index(trg[:-1].data, eos, pad))
-        # remove <bos> from loss targets
-        loss_trg = trg[1:]
-        # compute model output
-        dec_outs, _ = self.model(inp, dec_trg)
-        logprobs = self.model.project(dec_outs.view(-1, dec_outs.size(2)))
-        # compute loss
-        loss = self.criterion(logprobs, loss_trg.view(-1))
-        # run update
-        if not valid:
-            num_batch_examples = self.num_batch_examples(batch_data)
-            loss[0].div(num_batch_examples).backward()
-            self.optimizer_step()
-
-        return (loss[0].data, )
-
-    def num_batch_examples(self, batch_data):
-        _, targets = batch_data
-        return targets.data.ne(self.model.src_dict.get_pad()).sum()
+        return self.run_outer_loop(checkpoint, epochs=epochs, shuffle=shuffle,
+                                   run_test=True)

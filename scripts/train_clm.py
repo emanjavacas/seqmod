@@ -8,7 +8,7 @@ from seqmod.modules.lm import LM
 from seqmod.misc.dataset import BlockDataset, Dict, CompressionTable
 from seqmod.misc.optimizer import Optimizer
 from seqmod.misc.early_stopping import EarlyStopping
-from seqmod.misc.trainer import CLMTrainer
+from seqmod.misc.trainer import Trainer
 from seqmod.misc.loggers import StdLogger
 import seqmod.utils as u
 
@@ -150,30 +150,29 @@ if __name__ == '__main__':
     if args.load_model:
         print('Loading model...')
         assert args.model_path, "load_model requires model_path"
-        model = u.load_model(args.model_path)
+        m = u.load_model(args.model_path)
     else:
         print('Building model...')
-        model = LM(len(lang_d), args.emb_dim, args.hid_dim,
-                   num_layers=args.layers, cell=args.cell,
-                   dropout=args.dropout, tie_weights=args.tie_weights,
-                   deepout_layers=args.deepout_layers,
-                   deepout_act=args.deepout_act,
-                   word_dropout=args.word_dropout,
-                   target_code=lang_d.get_unk(), conds=conds)
-        u.initialize_model(model)
+        m = LM(len(lang_d), args.emb_dim, args.hid_dim,
+               num_layers=args.layers, cell=args.cell,
+               dropout=args.dropout, tie_weights=args.tie_weights,
+               deepout_layers=args.deepout_layers,
+               deepout_act=args.deepout_act,
+               word_dropout=args.word_dropout,
+               target_code=lang_d.get_unk(), conds=conds)
+        u.initialize_model(m)
 
-    print(model)
-    print(' * n parameters. %d' % model.n_params())
+    print(m)
+    print(' * n parameters. %d' % m.n_params())
 
     if args.gpu:
-        model.cuda()
+        m.cuda()
 
     optim = Optimizer(
-        model.parameters(), args.optim, lr=args.lr, max_norm=args.max_norm,
+        m.parameters(), args.optim, lr=args.lr, max_norm=args.max_norm,
         lr_decay=args.lr_decay, start_decay_at=args.start_decay_at,
         decay_every=args.decay_every)
     early_stopping = EarlyStopping(max(args.patience, 10), args.patience)
-    criterion = nn.NLLLoss()
 
     # hook
     check_hook = u.make_clm_hook(
@@ -182,14 +181,14 @@ if __name__ == '__main__':
     # logger
     std_logger = StdLogger()
     # trainer
-    trainer = CLMTrainer(
-        model, {'train': train, 'valid': valid, 'test': test},
-        criterion, optim, early_stopping=early_stopping)
+    trainer = Trainer(
+        m, {'train': train, 'valid': valid, 'test': test},
+        optim, early_stopping=early_stopping)
     trainer.add_loggers(std_logger)
     trainer.add_hook(check_hook, hooks_per_epoch=args.hooks_per_epoch)
 
     (best_model, val_ppl), test_ppl = trainer.train(
-        args.epochs, args.checkpoint, gpu=args.gpu)
+        args.epochs, args.checkpoint)
 
     if args.save:
         u.save_checkpoint(args.model_path, best_model, d, vars(args),

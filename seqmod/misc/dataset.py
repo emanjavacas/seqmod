@@ -6,9 +6,9 @@ from collections import Counter, Sequence, OrderedDict
 
 import torch
 import torch.utils.data
-from torch.autograd import Variable
 
 from seqmod import utils as u
+from seqmod.utils import wrap_variables
 
 
 def shuffle_pairs(pair1, pair2):
@@ -81,15 +81,6 @@ def pad_pack_batch(examples, pad_token):
         out[i].narrow(0, 0, length).copy_(example)
     # turn to batch second and return
     return out.t().contiguous()
-
-
-def wrap_variable(out, volatile, gpu):
-    if isinstance(out, tuple):
-        return tuple(wrap_variable(o, volatile, gpu) for o in out)
-    out = Variable(out, volatile=volatile)
-    if gpu:
-        out = out.cuda()
-    return out
 
 
 def default_sort_key(pair):
@@ -483,7 +474,7 @@ class PairedDataset(Dataset):
         else:
             out = dicts.pack(batch)
 
-        return wrap_variable(out, volatile=self.evaluation, gpu=self.gpu)
+        return wrap_variables(out, volatile=self.evaluation, gpu=self.gpu)
 
     def __len__(self):
         return self.num_batches
@@ -528,7 +519,7 @@ class PairedDataset(Dataset):
 
         return self
 
-    def splits(self, test=0.1, dev=0.2, shuffle=False, sort_by=None):
+    def splits(self, test=0.1, dev=0.2, shuffle=False, sort=True, **kwargs):
         """
         Compute splits on dataset instance. For convenience, it can return
         BatchIterator objects instead of Dataset via method chaining.
@@ -561,11 +552,11 @@ class PairedDataset(Dataset):
                 src, trg, self.d, self.batch_size, fitted=True, gpu=self.gpu,
                 evaluation=evaluation)
 
-            if sort_by:
-                subset.sort_(sort_by=sort_by)
+            if sort:
+                subset.sort_(**kwargs)
 
             sets.append(subset)
-    
+
         return tuple(sets)
 
 
@@ -644,8 +635,8 @@ class BlockDataset(Dataset):
         idx *= self.bptt
         seq_len = min(self.bptt, len(data) - 1 - idx)
         src_data, trg_data = data[idx:idx+seq_len], data[idx+1:idx+seq_len+1]
-        src = wrap_variable(src_data, self.evaluation, self.gpu)
-        trg = wrap_variable(trg_data, self.evaluation, self.gpu)
+        src = wrap_variables(src_data, self.evaluation, self.gpu)
+        trg = wrap_variables(trg_data, self.evaluation, self.gpu)
         return src, trg
 
     def __len__(self):
@@ -677,12 +668,12 @@ class BlockDataset(Dataset):
             if self.table is not None:
                 # source
                 src_pre, src_target, src_post = destruct(src, self.table_idx)
-                src_target = tuple(wrap_variable(t, self.evaluation, self.gpu)
+                src_target = tuple(wrap_variables(t, self.evaluation, self.gpu)
                                    for t in self.table.expand(src_target.data))
                 src = tuple(src_pre + src_target + src_post)
                 # target
                 trg_pre, trg_target, trg_post = destruct(trg, self.table_idx)
-                trg_target = tuple(wrap_variable(t, self.evaluation, self.gpu)
+                trg_target = tuple(wrap_variables(t, self.evaluation, self.gpu)
                                    for t in self.table.expand(trg_target.data))
                 trg = tuple(trg_pre + trg_target + trg_post)
         # single-input
