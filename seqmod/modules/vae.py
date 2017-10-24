@@ -174,6 +174,9 @@ class SequenceVAE(nn.Module):
         else:
             self.out_proj = nn.Linear(hid_dim, vocab_size)
 
+    def is_cuda(self):
+        return next(self.parameters()).is_cuda
+
     def init_embeddings(self, weight):
         emb_elements = self.embeddings.weight.data.nelement()
         mismatch_msg = "Expected " + str(emb_elements) + "elements but got %d"
@@ -267,15 +270,15 @@ class SequenceVAE(nn.Module):
 
         return (log_loss.data[0], kl_loss.data[0]), log_examples
 
-    def generate(self, inp=None, z_params=None,
+    def generate(self, inp=None, z_params=None, beam_width=5,
                  max_inp_len=2, max_len=20, **kwargs):
         """
-        inp: None or (seq_len x 1). Input sequences to be encoded. It will
-            be ignored if `z_params` is not None.
+        inp: None or (seq_len x batch_size). Input sequences to be encoded.
+            It will be ignored if `z_params` is not None.
         z_params: None or tuple(mu, logvar). If given, decoding will be done
             from the latent code and `inp` will be ignored.
-            - mu: (1 x z_dim)
-            - logvar: (1 x z_dim)
+            - mu: (batch_size x z_dim)
+            - logvar: (batch_size x z_dim)
         """
         if inp is None or z_params is None:
             raise ValueError("At least one of (inp, z_params) must be given")
@@ -285,22 +288,21 @@ class SequenceVAE(nn.Module):
         # Encoder
         if z_params is None:
             mu, logvar = self.encoder(self.embeddings(inp))
-            max_len = len(inp) * max_inp_len
-            batch_size = inp.size(1)
+            max_len, batch_size = len(inp) * max_inp_len, inp.size(1)
         else:
             mu, logvar = z_params
-            max_len = max_len
-            batch_size = z_params.size(0)
+            max_len, batch_size = max_len, z_params.size(0)
 
         # Sample from the hidden code
         z = self.encoder.reparametrize(mu, logvar)
 
         # Decoder
-        hidden = self.decoder.init_hidden_for(z)
         scores, preds, z_cond = [], [], z if self.add_z else None
-        prev_data = mu.data.new([bos]).long().repeat(batch_size)
+        mask = mu.data.new(batch_size).long() + 1
+
+        hidden = self.decoder.init_hidden_for(z)
+        prev_data = mu.data.new(batch_size).zero_().long() + bos
         prev = Variable(prev_data, volatile=True)
-        mask = torch.ones(batch_size).long()
 
         for _ in range(max_len):
             prev_emb = self.embeddings(prev).squeeze(0)
@@ -312,7 +314,7 @@ class SequenceVAE(nn.Module):
             preds.append(pred.squeeze().data[0])
             prev = pred
 
-            mask = mask * (pred.squeeze().data[0].cpu() != eos)
+            mask = mask * (pred.squeeze().data[0] != eos)
 
             if mask.sum() == 0:
                 break

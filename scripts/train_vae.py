@@ -11,10 +11,10 @@ from seqmod.misc.optimizer import Optimizer
 from seqmod.misc.preprocess import text_processor
 from seqmod.misc.dataset import PairedDataset, Dict
 from seqmod.misc.trainer import Trainer
+from seqmod.modules.vae import SequenceVAE
 from seqmod.loaders import load_twisty, load_dataset
 
 from w2v import load_embeddings
-from vae import SequenceVAE
 
 
 def kl_weight_hook(trainer, epoch, batch, checkpoints):
