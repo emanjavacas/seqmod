@@ -11,6 +11,39 @@ from seqmod import utils as u
 from seqmod.utils import wrap_variables
 
 
+def bucketing(*args):
+    """
+    - args: sequence of ints in increasing order that define buckets
+    """
+    args = sorted(args)
+
+    def func(x):
+        x = int(x)
+        for idx, arg in enumerate(args):
+            if x < arg:
+                return str(idx)
+        return str(len(args))
+
+    return func
+
+
+def truncate(max_size):
+    """
+    - max_size: int, maximum size to truncate to.
+    """
+    if max_size is None:
+        def func(x): return x
+
+    else:
+
+        def func(x):
+            if len(x) <= max_size:
+                return x
+            return x[:max_size]
+
+    return func
+
+
 def shuffle_pairs(pair1, pair2):
     """
     Symmetrically shuffle two lists
