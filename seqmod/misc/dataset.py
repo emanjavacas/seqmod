@@ -174,7 +174,8 @@ class Dict(object):
     """
     def __init__(self, pad_token=None, eos_token=None, bos_token=None,
                  unk_token=u.UNK, force_unk=False, max_size=None, min_freq=1,
-                 sequential=True, max_len=None, use_vocab=True):
+                 sequential=True, max_len=None, use_vocab=True,
+                 preprocessing=None):
         self.counter = Counter()
         self.reserved = set()
         self.fitted = False
@@ -183,6 +184,7 @@ class Dict(object):
         self.eos_token = eos_token
         self.bos_token = bos_token
         self.unk_token = unk_token
+        self.preprocessing = preprocessing
 
         # only index unk_token if needed or requested
         if self.use_vocab:
@@ -228,11 +230,18 @@ class Dict(object):
     def partial_fit(self, *datasets):
         for dataset in datasets:
             if not self.sequential:
-                self.counter.update(dataset)
+                if self.preprocessing is not None:
+                    self.counter.update(
+                        self.preprocessing(example)
+                        for example in dataset)
+                else:
+                    self.counter.update(dataset)
             else:
                 for example in dataset:
                     if self.max_len is not None and len(example) > self.max_len:
                         example = example[:self.max_len]
+                    if self.preprocessing is not None:
+                        example = self.preprocessing(example)
                     self.counter.update(example)
 
     def fit(self, *datasets):
@@ -281,6 +290,8 @@ class Dict(object):
         bos = [self.get_bos()] if self.bos_token else []
         eos = [self.get_eos()] if self.eos_token else []
         for example in examples:
+            if self.preprocessing is not None:
+                example = self.preprocessing(example)
             if self.sequential:
                 if self.max_len is not None and len(example) > self.max_len:
                     example = example[:self.max_len]
