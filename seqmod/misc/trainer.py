@@ -189,13 +189,14 @@ class Trainer(object):
             else:
                 self.scheduler.step(val_loss)
 
-    def validate_model(self, test=False):
+    def validate_model(self, test=False, **kwargs):
         loss = self.loss.init()
         dataset = self.datasets[self.test_name if test else self.valid_name]
 
         for batch_num in range(len(dataset)):
             batch = dataset[batch_num]
-            batch_loss, batch_examples = self.model.loss(batch, test=True)
+            batch_loss, batch_examples = self.model.loss(
+                batch, test=True, **kwargs)
             loss.add(u.unwrap_variables(batch_loss), batch_examples)
             del batch_loss
 
@@ -227,7 +228,7 @@ class Trainer(object):
             batch_order = np.random.permutation(batch_order)
         return batch_order
 
-    def run_inner_loop(self, epoch, checkpoint, batch_order):
+    def run_inner_loop(self, epoch, checkpoint, batch_order, **kwargs):
         "General train loop for a single run"
         # compute batch order
         run_loss, check_loss = self.loss.init(), self.loss.init()
@@ -237,7 +238,7 @@ class Trainer(object):
 
             self.optimizer.zero_grad()
             batch_data = self.datasets['train'][batch]
-            batch_loss, batch_examples = self.model.loss(batch_data)
+            batch_loss, batch_examples = self.model.loss(batch_data, **kwargs)
 
             if batch_loss is None:  # to skip a batch loss might return None
                 continue
@@ -268,7 +269,7 @@ class Trainer(object):
         return run_loss
 
     def run_outer_loop(self, checkpoint, epochs=None, num_batches=None,
-                       shuffle=True, run_test=True):
+                       shuffle=True, run_test=True, **kwargs):
         "General train loop for many runs"
 
         best_model, valid_loss, test_loss = None, None, None
@@ -293,7 +294,8 @@ class Trainer(object):
                     batch_order = self.get_epoch_batch_order(shuffle)
                     self.on_epoch_begin(e)
 
-                run_loss = self.run_inner_loop(e, checkpoint, batch_order)
+                run_loss = self.run_inner_loop(
+                    e, checkpoint, batch_order, **kwargs)
 
                 run_time = time.time() - start
                 self.on_epoch_end(e, run_loss, run_loss.examples, run_time)
@@ -301,7 +303,7 @@ class Trainer(object):
                 # valid
                 if self.valid_name in self.datasets:
                     self.model.eval()
-                    valid_loss = self.validate_model()
+                    valid_loss = self.validate_model(**kwargs)
                     self.on_validation_end(e, valid_loss)
                     self.model.train()
                 if valid_loss is not None:  # merge after callback
@@ -321,7 +323,7 @@ class Trainer(object):
         if run_test and self.test_name in self.datasets:
             self.model.eval()
             self.on_test_begin(self.batch_run)
-            test_loss = self.validate_model(test=True)
+            test_loss = self.validate_model(test=True, **kwargs)
             self.on_test_end(test_loss)
             test_loss = sum(test_loss.pack())
 
@@ -330,7 +332,7 @@ class Trainer(object):
         return (best_model.cpu(), valid_loss), test_loss
 
     def train_batches(self, num_batches, checkpoint,
-                      shuffle=False, run_test=False):
+                      shuffle=False, run_test=False, **kwargs):
         """
         Run training on a given number of batches. `num_batches` might be
         larger than the actual total number of batches in the dataset, in
@@ -355,8 +357,8 @@ class Trainer(object):
 
         - num_batches: int
         - checkpoint: int, log a checkpoint and hooks every x batches
-        - gpu: bool
         - run_test: bool, whether to run testing after the number of batches
+        - kwargs: rest loss kwargs
 
         Returns (best_model, valid_loss), test_loss
         -------
@@ -369,10 +371,11 @@ class Trainer(object):
             loss will be the last validation loss after training.
         - test_loss: float or None
         """
-        return self.run_outer_loop(checkpoint, num_batches=num_batches,
-                                   shuffle=shuffle, run_test=run_test)
+        return self.run_outer_loop(
+            checkpoint, num_batches=num_batches, shuffle=shuffle,
+            run_test=run_test, **kwargs)
 
-    def train(self, epochs, checkpoint, shuffle=False):
+    def train(self, epochs, checkpoint, shuffle=False, **kwargs):
         """
         Parameters:
         -----------
@@ -391,5 +394,6 @@ class Trainer(object):
             validation loss after training.
         - test_loss: LossStatistics, test loss
         """
-        return self.run_outer_loop(checkpoint, epochs=epochs, shuffle=shuffle,
-                                   run_test=True)
+        return self.run_outer_loop(
+            checkpoint, epochs=epochs, shuffle=shuffle,
+            run_test=True, **kwargs)
