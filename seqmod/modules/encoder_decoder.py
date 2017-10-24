@@ -16,6 +16,44 @@ from seqmod.misc.beam_search import Beam
 from seqmod import utils as u
 
 
+def detach_vars(data):
+    """Split variables from the tree to allow for memory efficient computation
+    of softmax losses over a whole sequence."""
+    for k, v in data.items():
+        if v.requires_grad:
+            v = Variable(v.data, requires_grad=True, volatile=False)
+        yield k, v
+
+
+def shards(data, size=25, test=False):
+    """
+    Generator over variables that will be involved in a costly loss computation
+    such as the softmax. It yields dictionaries of the same form as the input,
+    where the variables have been splitted in smaller shards and detach from
+    the graph. It expects the consumer to back propagate through them in shards
+    of given a size. After all shards are consumed, the generator will take
+    care of backprop further from the input using the accumulated gradients.
+    """
+    # Inspired by www.github.com/OpenNMT/OpenNMT-py/blob/master/onmt/Loss.py
+    if test:
+        yield data
+        return
+
+    detached = dict(detach_vars(data))
+    splits = ((key, torch.split(v, size)) for key, v in detached.items())
+    keys, splits = zip(*splits)
+
+    for split in zip(*splits):
+        yield dict(zip(keys, split))  # go and accumulate some loss
+
+    inputs, grads = [], []
+    for key, var in detached.items():
+        if var.grad is not None:
+            inputs.append(data[key]), grads.append(var.grad.data)
+
+    torch.autograd.backward(inputs, grads)
+
+
 class Encoder(nn.Module):
     """
     RNN Encoder that computes a sentence matrix representation
@@ -472,7 +510,7 @@ class EncoderDecoder(nn.Module):
 
         return torch.stack(dec_outs), tuple(cond_out)
 
-    def loss(self, batch_data, test=False):
+    def loss(self, batch_data, test=False, split=25):
         """
         Return batch-averaged loss and examples processed for speed monitoring
         """
@@ -490,16 +528,6 @@ class EncoderDecoder(nn.Module):
 
         # compute model output
         dec_outs, cond_outs = self(src, dec_trg, conds=src_conds)
-        logprobs = self.project(dec_outs.view(-1, dec_outs.size(2)))
-
-        # compute number of examples in batch
-        num_examples = trg.data.ne(pad).sum()
-        # compute word loss
-        weight = self.nll_weight
-        if self.is_cuda():
-            weight = self.nll_weight.cuda()
-        loss = F.nll_loss(logprobs, loss_trg.view(-1),
-                          weight=weight, size_average=False) / num_examples
 
         # compute cond loss
         cond_loss = []
@@ -507,18 +535,39 @@ class EncoderDecoder(nn.Module):
             cond_loss = [F.nll_loss(pred, target, size_average=True)
                          for pred, target in zip(cond_outs, trg_conds)]
 
-        if not test:
-            # accumulate gradient
-            loss.backward()
+        # compute memory efficient word loss
+        weight = self.nll_weight
+        if self.is_cuda():
+            weight = self.nll_weight.cuda()
 
+        num_examples = trg.data.ne(pad).sum()
+        loss = 0
+        hid_dim = dec_outs.size(2)
+        shard_data = {'out': dec_outs, 'trg': loss_trg}
+
+        for shard in shards(shard_data, size=split, test=test):
+            # shard is of shape:
+            #     {'out': Tensor(split x batch x hid_dim),
+            #      'trg': LongTensor(split x batch)}
+            logprobs = self.project(shard['out'].view(-1, hid_dim))
+            shard_loss = F.nll_loss(logprobs, shard['trg'].view(-1),
+                                    weight=weight, size_average=False)
+            loss += shard_loss / num_examples
+
+            if not test:
+                # accumulate word gradient
+                loss.backward()
+
+        if not test:
+            # accumulate cond gradient
             if trg_conds is not None:
                 sum(cond_loss).backward()
 
-        return (loss, *[loss.data[0] for loss in cond_loss]), num_examples
+        return (loss.data[0], *[l.data[0] for l in cond_loss]), num_examples
 
     def translate(self, src, max_decode_len=2, conds=None):
         """
-        Translate a single input sequence using greedy decoding..
+        Translate a single input sequence using greedy decoding.
 
         Parameters:
         -----------
