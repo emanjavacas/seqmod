@@ -298,9 +298,10 @@ class EncoderDecoder(nn.Module):
         # Word_dropout
         self.word_dropout = word_dropout
         self.target_code = self.src_dict.get_unk()
-        self.reserved_codes = (self.src_dict.get_eos(),
-                               self.src_dict.get_bos(),
-                               self.src_dict.get_pad())
+        codes = [self.src_dict.get_eos(),
+                 self.src_dict.get_bos(),
+                 self.src_dict.get_pad()]
+        self.reserved_codes = tuple(code for code in codes if code is not None)
 
         # NLLLoss weight (downweight loss on pad)
         self.nll_weight = torch.ones(len(self.trg_dict))
@@ -350,6 +351,9 @@ class EncoderDecoder(nn.Module):
             project = nn.Linear(emb_dim, output_size)
             project.weight = self.trg_embeddings.weight
             if emb_dim != hid_dim:
+                # inp embeddings are (vocab x emb_dim)
+                # output embeddings are (hidden x vocab)
+                # if emb_dim != hidden, we insert a projection
                 logging.warn("When tying weights, output layer and " +
                              "embedding layer should have equal size. " +
                              "A projection layer will be insterted.")
@@ -357,8 +361,10 @@ class EncoderDecoder(nn.Module):
                 self.project = nn.Sequential(
                     project_tied, project, nn.LogSoftmax())
             else:
+                # emb_dim == hidden, no projection needed
                 self.project = nn.Sequential(project, nn.LogSoftmax())
         else:
+            # no tying
             self.project = nn.Sequential(
                 nn.Linear(hid_dim, output_size),
                 nn.LogSoftmax())
