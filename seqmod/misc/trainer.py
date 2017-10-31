@@ -5,6 +5,7 @@ import math
 import collections
 
 import numpy as np
+import torch.optim.lr_scheduler as ls
 
 from seqmod import utils as u
 from seqmod.misc.early_stopping import EarlyStoppingException
@@ -179,15 +180,9 @@ class Trainer(object):
         self.log("test_end", {"loss": loss.pack(labels=True)})
 
     # optimizer
-    def optimizer_step(self, val_loss=None):
+    def optimizer_step(self):
         "Runs an optimizing step"
         self.optimizer.step()
-
-        if self.scheduler is not None:
-            if val_loss is None:
-                self.log("info", "Omitting scheduler, because of missing loss")
-            else:
-                self.scheduler.step(val_loss)
 
     def validate_model(self, test=False, **kwargs):
         loss = self.loss.init()
@@ -308,6 +303,16 @@ class Trainer(object):
                     self.model.train()
                 if valid_loss is not None:  # merge after callback
                     valid_loss = sum(valid_loss.pack())
+
+                # scheduler after valid
+                if self.scheduler is not None:
+                    if isinstance(self.scheduler, ls.ReduceLROnPlateau):
+                        if val_loss is None:
+                            self.log("info", "Skipped scheduler: missing loss")
+                        else:
+                            self.scheduler.step(val_loss)
+                    else:
+                        self.scheduler.step()  # on new epoch
 
         except EarlyStoppingException as e:
             message, data = e.args
