@@ -51,7 +51,7 @@ def shards(data, size=25, test=False):
         if var.grad is not None:
             inputs.append(data[key]), grads.append(var.grad.data)
 
-    torch.autograd.backward(inputs, grads)
+    torch.autograd.backward(inputs, grads, retain_graph=True)
 
 
 class Encoder(nn.Module):
@@ -547,8 +547,8 @@ class EncoderDecoder(nn.Module):
 
         for shard in shards(shard_data, size=split, test=test):
             # shard is of shape:
-            #     {'out': Tensor(split x batch x hid_dim),
-            #      'trg': LongTensor(split x batch)}
+            #  {'out': Tensor(split x batch x hid_dim),
+            #   'trg': LongTensor(split x batch)}
             logprobs = self.project(shard['out'].view(-1, hid_dim))
             shard_loss = F.nll_loss(logprobs, shard['trg'].view(-1),
                                     weight=weight, size_average=False)
@@ -556,7 +556,7 @@ class EncoderDecoder(nn.Module):
 
             if not test:
                 # accumulate word gradient
-                loss.backward()
+                loss.backward(retain_graph=True)
 
         if not test:
             # accumulate cond gradient
