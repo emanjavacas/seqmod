@@ -492,7 +492,9 @@ class EncoderDecoder(nn.Module):
         cond_out = []
         if self.cond_dim is not None:
             # use last step as summary vector
-            enc_out = grad_reverse(enc_outs[-1])
+            # enc_out = grad_reverse(enc_outs[-1]) # keep this for experiments
+            # use average step as summary vector
+            enc_out = grad_reverse(enc_outs.mean(dim=0))
             for grl in self.grls:
                 cond_out.append(F.log_softmax(grl(enc_out)))
 
@@ -552,7 +554,6 @@ class EncoderDecoder(nn.Module):
         shard_data = {'out': dec_outs, 'trg': loss_trg}
 
         for shard in shards(shard_data, size=split, test=test):
-            # shard is of shape:
             #  {'out': Tensor(split x batch x hid_dim),
             #   'trg': LongTensor(split x batch)}
             logprobs = self.project(shard['out'].view(-1, hid_dim))
