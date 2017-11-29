@@ -39,8 +39,7 @@ class LossStatistics(object):
                     loss['format'] = ppl  # default to ppl
                 self.losses.append(loss)
 
-        self.history = []
-        self.examples = 0
+        self.history, self.examples = [], 0
 
     def init(self):
         """
@@ -52,7 +51,7 @@ class LossStatistics(object):
         """
         Reset history
         """
-        self.history = []
+        self.history, self.examples = [], 0
 
     def add(self, loss, num_examples):
         """
