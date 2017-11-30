@@ -193,7 +193,7 @@ if __name__ == '__main__':
 
             if args.gpu:
                 self.trainer.model.cuda()
-            (_, loss), _ = self.trainer.train_batches(batches, 10)
+            (_, loss), _ = self.trainer.train_batches(batches * n_iters, 10)
             self.trainer.model.cpu()
 
             return {'loss': loss, 'early_stop': self.early_stopping.stopped}

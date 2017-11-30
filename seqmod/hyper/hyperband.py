@@ -34,9 +34,10 @@ class Manager(object):
                        if not data.get('early_stop', False)]
 
     def prune_topk(self, k):
-        sorted_models = sorted(self.models,
-                               key=lambda m: m[1]['runs'][-1]['loss'])
-
+        get_loss = lambda m: m[1]['runs'][-1]['loss']
+        # filter out models that didn't finish (because e.g. error)
+        sorted_models = [m for m in self.models if get_loss(m) is not None]
+        sorted_models = sorted(sorted_models, key=get_loss)
         self.models = sorted_models[:k]
 
 
@@ -80,23 +81,24 @@ class Hyperband(object):
 
             for i in range(s + 1):
                 # Run each config `n_iters` & keep best (n_configs/eta) configs
-                n_configs = n * self.eta ** (-i)
-                n_iters = r * self.eta ** (i)
-                # report
-                print("\n{} configs x {:.1f} iters".format(n_configs, n_iters))
+                n_configs, n_iters = n*self.eta**(-i), int(r*self.eta**(i))
+
+                print("\n{} configs x {} iters".format(n_configs, n_iters))
+
                 # run each remaining config
                 for m, data in self.manager.models:
-                    self.counter += 1
-                    start_time = time()
-                    # report run
+
+                    self.counter, start_time = self.counter + 1, time()
+
                     msg = "\n{} | {} | lowest loss so far: {:.4f} (run {})\n"
                     print(msg.format(self.counter, ctime(),
                                      self.best_loss, self.best_counter))
+
                     # run
                     result = m(n_iters)
-                    # get loss
-                    loss = result['loss'] or np.inf
+
                     # keep track of the best result so far
+                    loss = result['loss'] or np.inf
                     if loss < self.best_loss:
                         self.best_loss = loss
                         self.best_counter = self.counter
@@ -107,8 +109,8 @@ class Hyperband(object):
                     result['seconds'] = int(round(time() - start_time))
                     result['iterations'] = n_iters
                     self.results.append({'params': data['params'], **result})
-                    # add result to model metadata
                     data['runs'].append(result)
+
                 # prune
                 self.manager.prune_early_stopped()
                 self.manager.prune_topk(int(n_configs / self.eta))
