@@ -4,7 +4,6 @@ import copy
 import math
 import collections
 
-import numpy as np
 import torch.optim.lr_scheduler as ls
 
 from seqmod import utils as u
@@ -200,7 +199,7 @@ class Trainer(object):
         "Get batch order for an undefined number of batches"
         batch_order = list(range(len(self.datasets['train'])))
         if shuffle:
-            batch_order = np.random.permutation(batch_order)
+            random.shuffle(batch_order)
 
         if self.last_batch_order is not None:
             batch_order = self.last_batch_order
@@ -208,7 +207,7 @@ class Trainer(object):
         while num_batches > len(batch_order):
             extra_order = list(range(len(self.datasets['train'])))
             if shuffle:
-                extra_order = np.random.permutation(extra_order)
+                random.shuffle(extra_order)
             batch_order += extra_order
 
         self.last_batch_order = batch_order[num_batches:]
@@ -219,7 +218,7 @@ class Trainer(object):
         "Get batch order for a single epoch"
         batch_order = list(range(len(self.datasets['train'])))
         if shuffle:
-            batch_order = np.random.permutation(batch_order)
+            random.shuffle(batch_order)
         return batch_order
 
     def run_inner_loop(self, epoch, checkpoint, batch_order, **kwargs):
