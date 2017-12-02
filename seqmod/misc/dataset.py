@@ -94,7 +94,8 @@ def get_splits(length, test, dev=None):
     splits = [split for split in [dev, test] if split]
     train = 1 - sum(splits)
     if train > 1 or train < 0:
-        raise ValueError(f"Illegal proportions test: {test}, dev: {dev}")
+        raise ValueError("Illegal proportions test: {}, dev: {}"
+                         .format(test, dev))
     return cumsum(int(length * i) for i in [train, dev, test] if i)
 
 
@@ -223,7 +224,8 @@ class Dict(object):
 
     def index(self, s):
         if s not in self.s2i and self.unk_token not in self.s2i:
-            raise ValueError(f"OOV [{s}, type: {type(s)}] with no unk code")
+            raise ValueError("OOV [{}, type: {}] with no unk code"
+                             .format(s, type(s)))
 
         return self.s2i.get(s, self.get_unk())
 
@@ -470,7 +472,8 @@ class PairedDataset(Dataset):
         # prepare src data
         self.data['src'] = src if fitted else self._fit(src, self.d['src'])
         if len(self.data['src']) < batch_size:
-            raise ValueError("not enough input examples")
+            raise ValueError("Not enough input examples: {}".format(
+                len(self.data['src'])))
 
         # prepare trg data
         if trg is None:         # autoregressive dataset
@@ -479,7 +482,10 @@ class PairedDataset(Dataset):
         else:
             self.data['trg'] = trg if fitted else self._fit(trg, self.d['trg'])
             if len(self.data['src']) != len(self.data['trg']):
-                raise ValueError("source and target must be equal length")
+                raise ValueError("Source and target must be equal length"
+                                 "Got src {} and trg {}".format(
+                                     len(self.data['src']),
+                                     len(self.data['trg'])))
 
         self.batch_size = batch_size
         self.gpu = gpu
@@ -494,12 +500,13 @@ class PairedDataset(Dataset):
         # multiple input dataset
         elif isinstance(data, tuple) or isinstance(dicts, tuple):
             assert isinstance(data, tuple) and isinstance(dicts, tuple), \
-                "both input sequences and Dict must be equal type"
+                "Input sequence is type {}, but dict is {}".format(
+                    type(data), type(dicts))
             assert all(len(data[i]) == len(data[i+1])
                        for i in range(len(data)-2)), \
-                "all input datasets must be equal size"
+                "All input datasets must be equal size"
             assert len(data) == len(dicts), \
-                "equal number of input sequences and Dicts needed"
+                "Equal number of input sequences and Dicts needed"
             fitted = (d.transform(subset) if d.use_vocab else subset
                       for subset, d in zip(data, dicts))
             return list(zip(*fitted))
@@ -524,7 +531,7 @@ class PairedDataset(Dataset):
         return self.num_batches
 
     def __getitem__(self, idx):
-        assert idx < self.num_batches, "%d >= %d" % (idx, self.num_batches)
+        assert idx < self.num_batches, "{} >= {}".format(idx, self.num_batches)
         b_from, b_to = idx * self.batch_size, (idx+1) * self.batch_size
         src = self._pack(self.data['src'][b_from: b_to], self.d['src'])
         trg = self._pack(self.data['trg'][b_from: b_to], self.d['trg'])
@@ -648,16 +655,17 @@ class BlockDataset(Dataset):
 
         # multiple input dataset
         if isinstance(examples, tuple) or isinstance(dicts, tuple):
-
             assert isinstance(dicts, tuple) and isinstance(examples, tuple), \
-                "multiple input needs multiple Dicts"
+                "Input sequence is type {}, but dict is {}".format(
+                    type(data), type(dicts))
             assert len(examples) == len(dicts), \
-                "equal number of input and Dicts needed"
+                "Equal number of input sequences and Dicts needed"
             assert all(len(examples[i]) == len(examples[i+1])
                        for i in range(len(examples)-2)), \
-                "all input examples must be equal size"
+                "All input examples must be equal size"
             if len(examples[0]) // batch_size == 0:
-                raise ValueError(f"Not enough data for batch [{batch_size}]")
+                raise ValueError("Not enough data for batch [{}]"
+                                 .format(batch_size))
 
             fitted = dicts.transform(examples) if dicts.use_vocab else examples
             fitted = ([i for seq in subset for i in seq] for subset in fitted)
@@ -666,7 +674,8 @@ class BlockDataset(Dataset):
         # single input dataset
         else:
             if len(examples) // batch_size == 0:
-                raise ValueError(f"Not enough data for batch [{batch_size}]")
+                raise ValueError("Not enough data for batch [{}]"
+                                 .format(batch_size))
             fitted = dicts.transform(examples) if dicts.use_vocab else examples
             return [i for seq in fitted for i in seq]
 
