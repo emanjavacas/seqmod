@@ -267,6 +267,7 @@ class Trainer(object):
         "General train loop for many runs"
 
         best_model, valid_loss, test_loss = None, None, None
+        start = time.time()
 
         # check run mode (training for epochs or number of batches)
         batch_first = epochs is None
@@ -275,8 +276,7 @@ class Trainer(object):
 
         try:
             for e in range(epochs):
-                start = time.time()
-
+                epoch_start = time.time()
                 # train
                 self.model.train()
 
@@ -291,7 +291,7 @@ class Trainer(object):
                 run_loss = self.run_inner_loop(
                     e, checkpoint, batch_order, **kwargs)
 
-                run_time = time.time() - start
+                run_time = time.time() - epoch_start
                 self.on_epoch_end(e, run_loss, run_loss.examples, run_time)
 
                 # valid
