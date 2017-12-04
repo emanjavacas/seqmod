@@ -288,6 +288,7 @@ class EncoderDecoder(nn.Module):
                  cond_dims=None):
         super(EncoderDecoder, self).__init__()
         self.cell = cell
+        self.emb_dim = emb_dim
         self.add_prev = add_prev
         self.src_dict = src_dict
         self.trg_dict = trg_dict or src_dict
@@ -437,13 +438,13 @@ class EncoderDecoder(nn.Module):
         if isinstance(weight, np.ndarray):
             weight = torch.from_numpy(weight)
         assert weight.size(1) == self.emb_dim, \
-            "Mismatched embedding dim %d for model with dim %d" % \
-            (weight.size(1), self.emb_dim)
+            "Mismatched embedding dim {} for model with dim {}".format(
+                (weight.size(1), self.emb_dim))
         target_words = {word: idx for idx, word in enumerate(words)}
         for idx, word in enumerate(self.src_dict.vocab):
             if word not in target_words:
                 if verbose:
-                    logging.warn("Couldn't find word [%s]" % word)
+                    logging.warn("Couldn't find word [{}]".format(word))
                 continue
             if target_embs == 'src':
                 self.src_embeddings.weight.data[idx, :].copy_(
@@ -453,13 +454,6 @@ class EncoderDecoder(nn.Module):
                     weight[target_words[word], :])
             else:
                 raise ValueError('target_embs must be `src` or `trg`')
-
-    def init_batch(self, src):
-        """
-        Constructs a first prev batch for initializing the decoder.
-        """
-        batch, bos = src.size(1), self.src_dict.get_bos()
-        return src.data.new(1, batch).fill_(bos)
 
     def freeze_submodule(self, module):
         for p in getattr(self, module).parameters():
@@ -548,7 +542,7 @@ class EncoderDecoder(nn.Module):
         if self.is_cuda():
             weight = self.nll_weight.cuda()
 
-        num_examples = trg.data.ne(pad).sum()
+        num_examples = trg.data.ne(pad).int().sum()
         loss = 0
         hid_dim = dec_outs.size(2)
         shard_data = {'out': dec_outs, 'trg': loss_trg}
@@ -627,7 +621,7 @@ class EncoderDecoder(nn.Module):
             # (batch) argmax over logprobs
             logprobs, prev = logprobs.max(1)
             # accumulate
-            scores += logprobs.data.cpu()
+            scores += logprobs.data
             hyps.append(prev.data)
             atts.append(att_weights.data)
             # update mask
@@ -640,7 +634,7 @@ class EncoderDecoder(nn.Module):
         hyps = torch.stack(hyps).transpose(0, 1).tolist()
         atts = torch.stack(atts).transpose(0, 1).tolist()
 
-        return scores, hyps, atts
+        return scores.cpu().tolist(), hyps, atts
 
     def translate_beam(self, src, max_decode_len=2, beam_width=5, conds=None):
         """
