@@ -62,4 +62,4 @@ if __name__ == '__main__':
         b = 10 ** steepness
         title = 'steepness=%d;inflection=%d' % (steepness, args.inflection)
         viz.line(np.array([generic_sigmoid(b=b, c=get_c(args.inflection, b))(i)
-                           for i in Y]), Y, opts={'title': })
+                           for i in Y]), Y, opts={'title': title})
