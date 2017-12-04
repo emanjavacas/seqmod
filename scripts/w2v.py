@@ -80,7 +80,7 @@ class Embedder(object):
         return self.fit(documents, **kwargs).transform(documents)
 
 
-def load_embeddings(vocab, flavor, suffix, directory):
+def load_embeddings(vocab, flavor, suffix, adir):
     """
     Load embeddings from a w2v model for model pretraining
     """
@@ -88,15 +88,14 @@ def load_embeddings(vocab, flavor, suffix, directory):
 
     if flavor == 'glove':
         embedder = {}
-        directory = os.path.expanduser(directory)
-        with open(os.path.join(directory, 'glove.%s.txt' % suffix), 'r') as f:
+        adir = os.path.expanduser(adir)
+        with open(os.path.join(adir, 'glove.{}.txt'.format(suffix)), 'r') as f:
             for l in f:
                 w, *vec = l.strip().split(' ')
                 size = len(vec)
                 embedder[w] = np.array(vec, dtype=np.float64)
     else:
-        embedder = Embedder(
-            flavor=flavor, suffix=suffix, directory=directory)
+        embedder = Embedder(flavor=flavor, suffix=suffix, directory=adir)
         embedder.load()
         size = embedder.size
 

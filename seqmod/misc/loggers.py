@@ -9,7 +9,7 @@ except ImportError:
     Visdom = None
 
 
-def skip_on_import_error(flag, verbose=True):
+def skip_on_import_error(flag, verbose=False):
     msg = 'Omitting call to [%s.%s]'
 
     def decorator(func):
