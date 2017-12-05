@@ -14,12 +14,9 @@ except:
 from seqmod.modules.lm import LM
 from seqmod import utils as u
 
-from seqmod.misc.trainer import Trainer
-from seqmod.misc.loggers import StdLogger, VisdomLogger
-from seqmod.misc.optimizer import Optimizer
-from seqmod.misc.dataset import Dict, BlockDataset
-from seqmod.misc.preprocess import text_processor
-from seqmod.misc.early_stopping import EarlyStopping
+from seqmod.misc import Trainer, StdLogger, VisdomLogger, Optimizer
+from seqmod.misc import Dict, BlockDataset, text_processor
+from seqmod.misc import EarlyStopping
 
 
 # Load data

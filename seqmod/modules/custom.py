@@ -527,6 +527,64 @@ class MaxOut(nn.Module):
         return out
 
 
+class Highway(torch.nn.Module):
+    """
+    Reference:
+    https://github.com/allenai/allennlp/blob/master/allennlp/modules/highway.py
+
+    A `Highway layer <https://arxiv.org/abs/1505.00387>`_ does a gated
+    combination of a linear transformation and a non-linear transformation
+    of its input. y = g * x + (1 - g) * f(A(x)), where A
+    is a linear transformation, `f` is an element-wise non-linearity,
+    and `g` is an element-wise gate, computed as sigmoid(B(x)).
+
+    Parameters
+    ----------
+
+    input_dim: int, The dimensionality of `x`.
+    num_layers: int, optional, The number of highway layers.
+    activation: str or class, 
+    """
+    def __init__(self, input_dim, num_layers=1, activation='ReLU', **kwargs):
+        self.input_dim = input_dim
+        super(Highway, self).__init__()
+
+        layers = []
+        for layer in range(num_layers):
+            if isinstance(activation, type):  # custom activation class
+                nonlinear = activation(**kwargs)
+            else:               # assume string
+                nonlinear = getattr(nn, activation)()
+
+            linear = nn.Linear(input_dim, input_dim * 2)
+            # We should bias the highway layer to just carry its input forward.
+            # We do that by setting the bias on B(x) to be positive, because
+            # that means `g` will be biased to be high, to we will carry the
+            # input forward.  The bias on `B(x)` is the second half of the bias
+            # vector in each Linear layer.
+            linear.bias[input_dim:].data.fill_(1)
+            linear.bias.custom = True
+
+            layers.append(linear)
+            layers.append(nonlinear)
+
+        self.layers = torch.nn.ModuleList(layers)
+
+    def forward(self, inputs):
+        current_input = inputs
+
+        for i in range(0, len(self.layers), 2):
+            layer, activation = self.layers[i], self.layers[i+1]
+            proj, linear = layer(current_input), current_input
+            nonlinear = activation(proj[:, 0:self.input_dim])
+            gate = F.sigmoid(proj[:, self.input_dim:(2 * self.input_dim)])
+
+            # apply gate
+            current_input = gate * linear + (1 - gate) * nonlinear
+
+        return current_input
+
+
 # Stateless modules
 def _word_dropout_mask(X, dropout_rate, reserved_codes=()):
     """
@@ -582,51 +640,3 @@ def grad_reverse(x):
     GRL must be placed between the feature extractor and the domain classifier
     """
     return GradReverse.apply(x)
-
-
-class Highway(torch.nn.Module):
-    """
-    Reference:
-    https://github.com/allenai/allennlp/blob/master/allennlp/modules/highway.py
-
-    A `Highway layer <https://arxiv.org/abs/1505.00387>`_ does a gated
-    combination of a linear transformation and a non-linear transformation
-    of its input. y = g * x + (1 - g) * f(A(x)), where A
-    is a linear transformation, `f` is an element-wise non-linearity,
-    and `g` is an element-wise gate, computed as sigmoid(B(x)).
-
-    Parameters
-    ----------
-
-    input_dim: int, The dimensionality of `x`.
-    num_layers: int, optional, The number of highway layers.
-    """
-    def __init__(self, input_dim, num_layers=1, act='relu'):
-        super(Highway, self).__init__()
-        self.input_dim = input_dim
-        self.layers = torch.nn.ModuleList([nn.Linear(input_dim, input_dim * 2)
-                                           for _ in range(num_layers)])
-        self.act = act
-        for layer in self.layers:
-            # We should bias the highway layer to just carry its input forward.
-            # We do that by setting the bias on B(x) to be positive, because
-            # that means `g` will be biased to be high, to we will carry the
-            # input forward.  The bias on `B(x)` is the second half of the bias
-            # vector in each Linear layer.
-            layer.bias[input_dim:].data.fill_(1)
-            layer.bias.custom = True
-
-    def forward(self, inputs):
-        current_input = inputs
-
-        for layer in self.layers:
-            proj, linear = layer(current_input), current_input
-            # NOTE: if you modify this, think about whether you should modify
-            # the initialization above, too.
-            nonlinear = getattr(F, self.act)(proj[:, 0:self.input_dim])
-            gate = F.sigmoid(proj[:, self.input_dim:(2 * self.input_dim)])
-
-            # apply gate
-            current_input = gate * linear + (1 - gate) * nonlinear
-
-        return current_input
