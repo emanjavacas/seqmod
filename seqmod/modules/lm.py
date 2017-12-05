@@ -10,7 +10,7 @@ from torch.autograd import Variable
 
 from seqmod import utils as u
 from seqmod.modules import custom
-from seqmod.modules.custom import word_dropout, MaxOut
+from seqmod.modules.custom import word_dropout, MaxOut, Highway
 from seqmod.misc.beam_search import Beam
 
 
@@ -29,7 +29,7 @@ def strip_post_eos(sents, eos):
     return out
 
 
-def read_batch(m, seed_texts, temperature=1., gpu=False, **kwargs):
+def read_batch(m, seed_texts, gpu=False, **kwargs):
     """
     Computes the hidden states for a bunch of seeds in iterative fashion.
     This is currently being done so because LM doesn't use padding and
@@ -47,18 +47,22 @@ def read_batch(m, seed_texts, temperature=1., gpu=False, **kwargs):
     hidden: torch.FloatTensor (num_layers x batch_size x hid_dim)
     """
     prev, hs, cs = [], [], []
+
     for seed_text in seed_texts:
+        # split last (which will be returned as first input for the generation)
         seed_text, prev_i = seed_text[:-1], seed_text[-1]
+        # accumulate first input to generation
         prev.append(prev_i)
+        # run the RNN
         inp = Variable(torch.LongTensor(seed_text).unsqueeze(1), volatile=True)
-        if gpu:
-            inp = inp.cuda()
-        _, hidden, _ = m(inp, **kwargs)
+        _, hidden, _ = m(inp.cuda() if gpu else inp, **kwargs)
+        # accumulate hidden states
         if m.cell.startswith('LSTM'):
             h, c = hidden
             hs.append(h), cs.append(c)
         else:
             hs.append(hidden)
+    # pack output
     prev = torch.LongTensor(prev).unsqueeze(0)
     if m.cell.startswith('LSTM'):
         return prev, (torch.cat(hs, 1), torch.cat(cs, 1))
@@ -119,33 +123,38 @@ class Decoder(object):
             was passed to the generation function.
         """
         hidden = None
-        if seed_texts is not None:
-            # read input seed batch
+
+        if seed_texts is not None:  # read input seed batch
             seed_texts = [[self.d.index(i) for i in s] for s in seed_texts]
+
+            # append <eos> and <bos> if necessary
             if bos and self.bos is not None:  # prepend bos to seeds
                 seed_texts = [[self.bos] + s for s in seed_texts]
             if eos and self.eos is not None:  # append eos to seeds
                 seed_texts = [s + [self.eos] for s in seed_texts]
-            prev_data, hidden = read_batch(
+
+            # read batch
+            prev, hidden = read_batch(
                 self.model, seed_texts, gpu=self.gpu, **kwargs)
-            if len(seed_texts) == 1:  # project over batch if only single seed
-                prev_data = prev_data.repeat(1, batch_size)
+
+              # extend to batch size if only single seed
+            if len(seed_texts) == 1:
+                prev = prev.repeat(1, batch_size)
                 if self.model.cell.startswith('LSTM'):
                     hidden = (hidden[0].repeat(1, batch_size, 1),
                               hidden[1].repeat(1, batch_size, 1))
                 else:
                     hidden = hidden.repeat(1, batch_size, 1)
-        elif self.eos is not None:
-            # initialize with <eos>
-            prev_data = torch.LongTensor([self.eos] * batch_size).unsqueeze(0)
-        else:
-            # random uniform sample from vocab
-            prev_data = (torch.rand(batch_size) * self.model.vocab).long()
-            prev_data = prev_data.unsqueeze(0)
+
+        elif self.eos is not None:  # initialize with <eos>
+            prev = torch.LongTensor([self.eos] * batch_size).unsqueeze(0)
+
+        else:  # random uniform sample from vocab
+            prev = torch.LongTensor(1, batch_size).random_(self.model.vocab)
+
         # wrap prev in variable
-        prev = Variable(prev_data, volatile=True)
-        if self.gpu:
-            prev = prev.cuda()
+        prev = Variable(prev.cuda() if self.gpu else prev, volatile=True)
+
         return prev, hidden
 
     def argmax(self, seed_texts=None, max_seq_len=25, batch_size=1,
@@ -186,10 +195,11 @@ class Decoder(object):
         beam = Beam(width, prev.squeeze().data[0], eos=eos)
 
         while beam.active and len(beam) < max_seq_len:
-            prev_data = beam.get_current_state().unsqueeze(0)
-            prev = Variable(prev_data, volatile=True)
+            prev = Variable(beam.get_current_state().unsqueeze(0),
+                            volatile=True)
             outs, hidden, _ = self.model(prev, hidden=hidden, **kwargs)
             beam.advance(outs.data)
+
             if self.model.cell.startswith('LSTM'):
                 hidden = (u.swap(hidden[0], 1, beam.get_source_beam()),
                           u.swap(hidden[1], 1, beam.get_source_beam()))
@@ -201,7 +211,7 @@ class Decoder(object):
         return scores, hyps
 
     def sample(self, temperature=1., seed_texts=None, max_seq_len=25,
-               batch_size=10, ignore_eos=False, bos=False, eos=False,
+               batch_size=1, ignore_eos=False, bos=False, eos=False,
                **kwargs):
         """
         Generate a sequence multinomially sampling from the output
@@ -224,8 +234,7 @@ class Decoder(object):
                 mask = mask * (prev.squeeze().data.cpu() != self.eos).long()
                 if mask.sum() == 0:
                     break
-                # 0-mask scores for finished batch examples
-                score[mask == 0] = 0
+                score[mask == 0] = 0  # 0-mask scores for finished examples
 
             scores += score
 
@@ -331,13 +340,14 @@ class DeepOut(nn.Module):
 
         super(DeepOut, self).__init__()
         self.layers, in_dim = [], self.in_dim
+
         for idx, out_dim in enumerate(layers):
             if activation == 'MaxOut':
                 layer = MaxOut(in_dim, out_dim, maxouts)
             else:
                 layer = nn.Sequential(
                     nn.Linear(in_dim, out_dim), getattr(nn, activation))
-            self.add_module('deepout_%d' % idx, layer)
+            self.add_module('deepout_{}'.format(idx), layer)
             self.layers.append(layer)
             in_dim = out_dim
 
@@ -428,17 +438,20 @@ class LM(nn.Module):
                 rnn_input_size += c['emb_dim']
             self.conds = nn.ModuleList(conds)
 
-        # Rnn
+        # RNN
         if cell.startswith('RHN'):
-            self.num_layers = 1
+            self.num_layers = 1  # RHN layers don't add to output dims
+
         if self.train_init:
             self.h_0 = nn.Parameter(torch.zeros(hid_dim * self.num_layers))
             if cell.startswith('LSTM'):
                 self.c_0 = nn.Parameter(torch.zeros(hid_dim * self.num_layers))
-        if hasattr(nn, cell):
+
+        if hasattr(nn, cell):   # custom cell
             cell = getattr(nn, cell)
-        else:                   # assume custom cell
+        else:                   # built-in cell
             cell = getattr(custom, cell)
+
         self.rnn = cell(
             rnn_input_size, self.hid_dim,
             num_layers=num_layers, bias=bias, dropout=dropout)
@@ -448,7 +461,7 @@ class LM(nn.Module):
             if self.conds is not None:
                 raise ValueError("Attention is not supported with conditions")
             if self.cell not in ('RNN', 'GRU'):
-                raise ValueError("currently only RNN, GRU supports attention")
+                raise ValueError("Currently only RNN, GRU supports attention")
             if att_dim is None:
                 raise ValueError("Need to specify att_dim")
             self.att_dim = att_dim
@@ -457,12 +470,11 @@ class LM(nn.Module):
 
         # (optional) deepout
         if self.add_deepout:
-            self.deepout = DeepOut(
+            self.deepout = Highway(
                 in_dim=self.hid_dim,
-                layers=tuple([self.hid_dim] * deepout_layers),
-                activation=deepout_act,
-                maxouts=maxouts,
-                dropout=self.dropout)
+                layers=deepout_layers,
+                activation=MaxOut,
+                maxouts=maxouts)
 
         # Output projection
         if self.tie_weights:
@@ -477,13 +489,14 @@ class LM(nn.Module):
         else:
             self.project = nn.Linear(self.hid_dim, self.vocab)
 
-    def parameters(self):
-        for p in super(LM, self).parameters():
-            if p.requires_grad is True:
-                yield p
+    def n_params(self, trainable=True):
+        cnt = 0
+        for p in self.parameters():
+            if trainable and not p.requires_grad:
+                continue
+            cnt += p.nelement()
 
-    def n_params(self):
-        return sum([p.nelement() for p in self.parameters()])
+        return cnt
 
     def freeze_submodule(self, module, flag=False):
         for p in getattr(self, module).parameters():
@@ -498,23 +511,25 @@ class LM(nn.Module):
 
     def init_hidden_for(self, inp):
         batch = inp.size(1)
+
         # trainable initial hidden state
         if hasattr(self, 'h_0'):
             h_0 = self.h_0.view(self.num_layers, self.hid_dim)
             h_0 = h_0.unsqueeze(1).repeat(1, batch, 1)
-            if hasattr(self, 'c_0'):
+
+            if hasattr(self, 'c_0'):  # trainable intial cell state
                 c_0 = self.c_0.view(self.num_layers, self.hid_dim)
                 c_0 = c_0.unsqueeze(1).repeat(1, batch, 1)
                 return h_0, c_0
             else:
                 return h_0
+
         # non-trainable intial hidden state
         size = (self.num_layers, batch, self.hid_dim)
-        h_0 = Variable(inp.data.new(*size).zero_(),
-                       requires_grad=False, volatile=not self.training)
+        h_0 = Variable(inp.data.new(*size).zero_(), volatile=not self.training)
         if self.cell.startswith('LSTM'):
             c_0 = Variable(inp.data.new(*size).zero_(),
-                           requires_grad=False, volatile=not self.training)
+                           volatile=not self.training)
             return h_0, c_0
         else:
             return h_0
@@ -536,31 +551,43 @@ class LM(nn.Module):
         weights: None or list of weights (batch_size x seq_len),
             It will only be not None if attention is provided.
         """
-        if hasattr(self, 'conds') and self.conds is not None and conds is None:
-            raise ValueError("Conditional model expects conditions as input")
+        # Embeddings
         inp = word_dropout(
             inp, self.target_code, p=self.word_dropout,
             reserved_codes=self.reserved_codes, training=self.training)
         emb = self.embeddings(inp)
-        if conds is not None:
+
+        # Conditions
+        if hasattr(self, 'conds') and self.conds is not None:
+            if conds is not None:
+                raise ValueError("Conditional model expects conds as input")
+
             conds = torch.cat(
                 [c_emb(inp_c) for c_emb, inp_c in zip(self.conds, conds)],
                 2)
             emb = torch.cat([emb, conds], 2)
+
         if self.has_dropout and not self.cell.startswith('RHN'):
             emb = F.dropout(emb, p=self.dropout, training=self.training)
+
+        # RNN
         hidden = hidden if hidden is not None else self.init_hidden_for(emb)
         outs, hidden = self.rnn(emb, hidden)
         if self.has_dropout:
             outs = F.dropout(outs, p=self.dropout, training=self.training)
+
+        # (optional attention)
         weights = None
         if self.add_attn:
             outs, weights = self.attn(outs, emb)
+
+        # Output projection
         seq_len, batch, hid_dim = outs.size()
         outs = outs.view(seq_len * batch, hid_dim)
         if self.add_deepout:
             outs = self.deepout(outs)
         outs = F.log_softmax(self.project(outs))
+
         return outs, hidden, weights
 
     def loss(self, batch_data, test=False):
@@ -569,17 +596,20 @@ class LM(nn.Module):
         if self.conds is not None:
             (source, *conds), (targets, *_) = source, targets
 
+        # get hidden from previous batch (if stored)
         hidden = self.hidden_state.get('hidden', None)
+        # run RNN
         output, hidden, _ = self(source, hidden=hidden, conds=conds)
-
+        # store hidden for next batch
         self.hidden_state['hidden'] = u.repackage_hidden(hidden)
+
+        # compute loss and backward
         loss = F.nll_loss(output, targets.view(-1), size_average=True)
-        num_examples = source.nelement()
 
         if not test:
             loss.backward()
 
-        return (loss.data[0], ), num_examples
+        return (loss.data[0], ), source.nelement()
 
     def generate(self, d, conds=None, seed_texts=None, max_seq_len=25,
                  gpu=False, method='sample', temperature=1., width=5,
@@ -630,29 +660,24 @@ class LM(nn.Module):
             if gpu:
                 conds = [c.cuda() for c in conds]
 
-        decoder = Decoder(self, d, gpu=gpu)
-        if method == 'argmax':
-            scores, hyps = decoder.argmax(
+        try:
+            decoder = getattr(Decoder(self, d, gpu=gpu), method)
+            scores, hyps = decoder(
                 seed_texts=seed_texts, max_seq_len=max_seq_len, conds=conds,
                 batch_size=batch_size, ignore_eos=ignore_eos, bos=bos, eos=eos,
-                **kwargs)
-        elif method == 'sample':
-            scores, hyps = decoder.sample(
-                temperature=temperature, seed_texts=seed_texts, conds=conds,
-                batch_size=batch_size, max_seq_len=max_seq_len,
-                ignore_eos=ignore_eos, bos=bos, eos=eos, **kwargs)
-        elif method == 'beam':
-            scores, hyps = decoder.beam(
-                width=width, seed_texts=seed_texts, max_seq_len=max_seq_len,
-                conds=conds, ignore_eos=ignore_eos, bos=bos, eos=eos, **kwargs)
-        else:
-            raise ValueError("Wrong decoding method: %s" % method)
+                # sample-only
+                temperature=temperature,
+                # beam-only
+                width=width, **kwargs)
+        except AttributeError:
+            raise ValueError("Wrong decoding method: {}".format(method))
 
         if not ignore_eos and d.get_eos() is not None:
             # strip content after <eos> for each batch
             hyps = strip_post_eos(hyps, d.get_eos())
 
         norm_scores = [s/len(hyps[idx]) for idx, s in enumerate(scores)]
+
         return norm_scores, hyps
 
     def predict_proba(self, inp, gpu=False, **kwargs):
