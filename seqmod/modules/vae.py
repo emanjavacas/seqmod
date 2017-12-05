@@ -282,14 +282,15 @@ class SequenceVAE(nn.Module):
         for shard in u.shards(shard_data, size=split, test=test):
             out, trg = shard['out'], shard['trg'].view(-1)
             shard_loss = F.nll_loss(
-                self.project(out), trg, weight=weight, size_average=False)
-            rec_loss += shard_loss / rec_examples
+                self.project(out), trg, weight=weight, size_average=False
+            ) / rec_examples       # normalize by number of words
+            rec_loss += shard_loss  # accumulate (for report)
 
             if not test:
-                rec_loss.backward(retain_graph=True)
+                shard_loss.backward(retain_graph=True)
 
         # Normalize by same number of elements as in reconstruction
-        kl_loss = KL_loss(mu, logvar) / rec_examples  # kl_examples
+        kl_loss = self.kl_weight * (KL_loss(mu, logvar) / rec_examples)
         if not test:
             kl_loss.backward()
 

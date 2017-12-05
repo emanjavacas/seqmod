@@ -515,12 +515,13 @@ class EncoderDecoder(nn.Module):
             # (split x batch)} -> (split * batch)
             trg = shard['trg'].view(-1)
             shard_loss = F.nll_loss(
-                self.project(out), trg, weight=weight, size_average=False)
-            loss += shard_loss / num_examples
+                self.project(out), trg, weight=weight, size_average=False
+            ) / num_examples
+            loss += shard_loss
 
             if not test:
                 # accumulate word gradient
-                loss.backward(retain_graph=True)
+                shard_loss.backward(retain_graph=True)
 
         if not test:
             # accumulate cond gradient
