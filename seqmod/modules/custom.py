@@ -543,10 +543,15 @@ class Highway(torch.nn.Module):
 
     input_dim: int, The dimensionality of `x`.
     num_layers: int, optional, The number of highway layers.
-    activation: str or class, 
+    activation: str or class, if string it should be an activation function
+        from torch.nn, otherwise it should be a class that will be instantiated
+        with kwargs for each layer.
+    dropout: float, dropout rate before the nonlinearity
     """
-    def __init__(self, input_dim, num_layers=1, activation='ReLU', **kwargs):
+    def __init__(self, input_dim, num_layers=1, activation='ReLU', dropout=0.0,
+                 **kwargs):
         self.input_dim = input_dim
+        self.dropout = dropout
         super(Highway, self).__init__()
 
         layers = []
@@ -576,6 +581,7 @@ class Highway(torch.nn.Module):
         for i in range(0, len(self.layers), 2):
             layer, activation = self.layers[i], self.layers[i+1]
             proj, linear = layer(current_input), current_input
+            proj = F.dropout(proj, p=self.dropout, training=self.training)
             nonlinear = activation(proj[:, 0:self.input_dim])
             gate = F.sigmoid(proj[:, self.input_dim:(2 * self.input_dim)])
 
