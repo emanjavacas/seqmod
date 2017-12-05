@@ -87,8 +87,7 @@ def load_from_lines(path, batch_size, max_size=1000000, min_freq=5,
     ).splits(shuffle=shuffle, **kwargs)
 
 
-def load_penn(path, batch_size, max_size=1000000, min_freq=1,
-              gpu=False, shuffle=True):
+def load_split_data(path, batch_size, max_size, min_freq, gpu):
     train_data = load_lines(os.path.join(path, 'train.txt'))
     valid_data = load_lines(os.path.join(path, 'valid.txt'))
     test_data = load_lines(os.path.join(path, 'test.txt'))
@@ -119,7 +118,7 @@ if __name__ == '__main__':
     parser.add_argument('--project_init', action='store_true')
     parser.add_argument('--dropout', default=0.1, type=float)
     parser.add_argument('--word_dropout', default=0.0, type=float)
-    parser.add_argument('--dont_add_z', action='store_false')
+    parser.add_argument('--dont_add_z', action='store_true')
     parser.add_argument('--load_embeddings', action='store_true')
     parser.add_argument('--flavor', default=None)
     parser.add_argument('--suffix', default=None)
@@ -136,9 +135,10 @@ if __name__ == '__main__':
     parser.add_argument('--batch_size', type=int, default=100)
     parser.add_argument('--gpu', action='store_true')
     parser.add_argument('--outputfile', default=None)
-    parser.add_argument('--checkpoints', default=100, type=int)
+    parser.add_argument('--checkpoints', default=50, type=int)
     # dataset
-    parser.add_argument('--source', default='penn', help='One of penn, twisty')
+    parser.add_argument('--source', default='wikitext-2',
+                        help='Directory with split data')
     parser.add_argument('--dev', default=0.1, type=float)
     parser.add_argument('--test', default=0.2, type=float)
     parser.add_argument('--max_tweets', default=0, type=int)
@@ -150,14 +150,9 @@ if __name__ == '__main__':
     parser.add_argument('--cache_data', action='store_true')
     args = parser.parse_args()
 
-    SOURCES = ('penn', 'twisty')
-
     print("Loading data...")
-    prefix = '{level}.{min_len}.{min_freq}.{concat}.{max_size}'.format(**vars(args))
-    if args.source in SOURCES:
-        prefix += '.{}'.format(args.source)
-    else:
-        prefix += '.{}'.format(os.path.basename(os.path.dirname(args.source)))
+    prefix = '{source}.{level}.{min_len}.{min_freq}.{concat}.{max_size}' \
+             .format(**vars(args))
 
     # preprocess
     if not args.cache_data or not os.path.isfile('data/{}_train.pt'.format(prefix)):
@@ -170,15 +165,10 @@ if __name__ == '__main__':
                 min_freq=args.min_freq, max_size=args.max_size,
                 gpu=args.gpu, dev=args.dev, test=args.test,
             max_tweets=None if args.max_tweets == 0 else args.max_tweets)
-        elif args.source == 'penn':
-            train, test, valid = load_penn(
-                "~/corpora/penn", args.batch_size,
-                min_freq=args.min_freq, max_size=args.max_size, gpu=args.gpu)
-        else:                   # any other dataset
-            train, test, valid = load_from_lines(
-                args.source_path, args.batch_size,
-                min_freq=args.min_freq, max_size=args.max_size,
-                gpu=args.gpu, dev=args.dev, test=args.text)
+        else:
+            train, test, valid = load_split_data(
+                os.path.join('~/corpora', args.source), args.batch_size,
+                args.max_size, args.min_freq, args.gpu)
         # save
         if args.cache_data:
             train.to_disk('data/{}_train.pt'.format(prefix))

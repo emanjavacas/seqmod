@@ -58,7 +58,7 @@ if __name__ == '__main__':
     parser.add_argument('--emb_dim', default=200, type=int)
     parser.add_argument('--hid_dim', default=200, type=int)
     parser.add_argument('--att_dim', default=0, type=int)
-    parser.add_argument('--dropout', default=0.3, type=float)
+    parser.add_argument('--dropout', default=0.2, type=float)
     parser.add_argument('--word_dropout', default=0.0, type=float)
     parser.add_argument('--tie_weights', action='store_true')
     parser.add_argument('--deepout_layers', default=0, type=int)
@@ -77,9 +77,9 @@ if __name__ == '__main__':
     parser.add_argument('--dev_split', default=0.1, type=float)
     parser.add_argument('--test_split', default=0.1, type=float)
     # training
-    parser.add_argument('--epochs', default=10, type=int)
+    parser.add_argument('--epochs', default=40, type=int)
     parser.add_argument('--batch_size', default=20, type=int)
-    parser.add_argument('--bptt', default=20, type=int)
+    parser.add_argument('--bptt', default=35, type=int)
     parser.add_argument('--gpu', action='store_true')
     # - optimizer
     parser.add_argument('--optim', default='Adam', type=str)
@@ -94,8 +94,8 @@ if __name__ == '__main__':
     parser.add_argument('--decoding_method', default='sample')
     parser.add_argument('--max_seq_len', default=25, type=int)
     parser.add_argument('--temperature', default=1, type=float)
-    parser.add_argument('--checkpoint', default=200, type=int)
-    parser.add_argument('--hooks_per_epoch', default=5, type=int)
+    parser.add_argument('--checkpoint', default=100, type=int)
+    parser.add_argument('--hooks_per_epoch', default=1, type=int)
     parser.add_argument('--log_checkpoints', action='store_true')
     parser.add_argument('--visdom', action='store_true')
     parser.add_argument('--visdom_host', default='localhost')
@@ -138,7 +138,7 @@ if __name__ == '__main__':
                     evaluation=True)
             else:
                 train, valid = train.splits(dev=None, test=args.dev_split)
-        # do split, assume input is single file or dir with txt files
+        # split, assume input is single file or dir with txt files
         else:
             data = load_lines(args.path, processor=proc)
             d.fit(data)
@@ -147,8 +147,8 @@ if __name__ == '__main__':
             ).splits(test=args.test_split, dev=args.dev_split)
             del data
 
-    print(' * vocabulary size. %d' % len(d))
-    print(' * number of train batches. %d' % len(train))
+    print(' * vocabulary size. {}'.format(len(d)))
+    print(' * number of train batches. {}'.format(len(train)))
 
     print('Building model...')
     m = LM(len(d), args.emb_dim, args.hid_dim,
@@ -158,13 +158,13 @@ if __name__ == '__main__':
            deepout_act=args.deepout_act, maxouts=args.maxouts,
            word_dropout=args.word_dropout, target_code=d.get_unk())
 
-    u.initialize_model(m)
+    u.initialize_model(m, rnn={'type': 'orthogonal', 'args': {'gain': 1.0}})
 
     if args.gpu:
         m.cuda()
 
     print(m)
-    print('* number of parameters: %d' % m.n_params())
+    print('* number of parameters: {}'.format(m.n_params()))
 
     optim = Optimizer(
         m.parameters(), args.optim, lr=args.lr, max_norm=args.max_norm,
