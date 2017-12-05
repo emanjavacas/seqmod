@@ -18,7 +18,7 @@ def generic_sigmoid(a=1, b=1, c=1):
     return lambda x: a / (1 + b * math.exp(-x * c))
 
 
-def kl_sigmoid_annealing_schedule(inflection, steepness=2):
+def kl_sigmoid_annealing_schedule(inflection, steepness=3):
     b = 10 ** steepness
     return generic_sigmoid(b=b, c=math.log(b) / inflection)
 
@@ -33,8 +33,7 @@ def KL_loss(mu, logvar):
     https://arxiv.org/abs/1312.6114
     0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
     """
-    element = mu.pow(2).add_(logvar.exp()).mul_(-1).add_(1).add_(logvar)
-    return torch.sum(element).mul_(-0.5)
+    return -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
 
 
 class EncoderVAE(Encoder):
@@ -86,7 +85,7 @@ class DecoderVAE(nn.Module):
 
         # add highway projection
         if self.add_z:
-            self.z_proj = Highway(z_dim, num_layers=2)  # add option
+            self.z_proj = Highway(z_dim, num_layers=1)  # add option
 
         # rnn
         stacked = StackedLSTM if self.cell == 'LSTM' else StackedGRU
@@ -94,17 +93,17 @@ class DecoderVAE(nn.Module):
             self.num_layers, in_dim, self.hid_dim, dropout=dropout)
 
     def init_hidden_for(self, z):
-        batch = z.size(0)
-
         if self.project_init:
-            h_0 = self.hid2z_proj(z)
-            h_0 = h_0.view(batch, self.num_layers, self.hid_dim).transpose(0, 1)
-        else:                 # rearrange z to match hidden cell shape
-            h_0 = z.view(self.num_layers, batch, self.hid_dim)
+            z = self.hid2z_proj(z)
+
+        batch_size = z.size(0)
+
+        # rearrange z to match hidden cell shape
+        h_0 = z.view(batch_size, self.num_layers, self.hid_dim).transpose(0, 1)
 
         if self.cell.startswith('LSTM'):
             # compute memory cell
-            c_0 = z.data.new(self.num_layers, batch, self.hid_dim)
+            c_0 = z.data.new(self.num_layers, batch_size, self.hid_dim)
             c_0 = Variable(nn.init.xavier_uniform(c_0))
             return h_0, c_0
         else:
@@ -178,11 +177,11 @@ class SequenceVAE(nn.Module):
                              "embedding layer should have equal size. "
                              "A projection layer will be insterted.")
                 tied_projection = nn.Linear(hid_dim, emb_dim)
-                self.out_proj = nn.Sequential(tied_projection, projection)
+                self.proj = nn.Sequential(tied_projection, projection)
             else:
-                self.out_proj = projection
+                self.proj = projection
         else:
-            self.out_proj = nn.Linear(hid_dim, vocab_size)
+            self.proj = nn.Linear(hid_dim, vocab_size)
 
     def is_cuda(self):
         return next(self.parameters()).is_cuda
@@ -218,9 +217,9 @@ class SequenceVAE(nn.Module):
         Returns: dec_logs (seq_len * batch x vocab_size)
         """
         seq_len, batch, hid_dim = dec_outs.size()
-        dec_outs = self.out_proj(dec_outs.view(batch * seq_len, hid_dim))
-        dec_logs = F.log_softmax(dec_outs)
-        return dec_logs
+        dec_outs = dec_outs.view(batch * seq_len, hid_dim)
+
+        return F.log_softmax(self.proj(dec_outs))
 
     def forward(self, src, trg, labels=None):
         """
@@ -317,8 +316,8 @@ class SequenceVAE(nn.Module):
         mask = mu.data.new(batch_size).long() + 1
 
         hidden = self.decoder.init_hidden_for(z)
-        prev_data = mu.data.new(batch_size).zero_().long() + bos
-        prev = Variable(prev_data, volatile=True)
+        prev = mu.data.new(batch_size).zero_().long() + bos
+        prev = Variable(prev, volatile=True)
 
         for _ in range(max_len):
             prev_emb = self.embeddings(prev).squeeze(0)
@@ -331,7 +330,6 @@ class SequenceVAE(nn.Module):
             prev = pred
 
             mask = mask * (pred.squeeze().data[0] != eos)
-
             if mask.int().sum() == 0:
                 break
 
