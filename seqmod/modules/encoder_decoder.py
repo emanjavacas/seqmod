@@ -37,9 +37,9 @@ class Encoder(nn.Module):
     def init_hidden_for(self, inp):
         batch = inp.size(1)
         size = (self.num_dirs * self.num_layers, batch, self.hid_dim)
-        h_0 = Variable(inp.data.new(*size).zero_(), requires_grad=False)
+        h_0 = Variable(inp.data.new(*size).zero_())
         if self.cell.startswith('LSTM'):
-            c_0 = Variable(inp.data.new(*size).zero_(), requires_grad=False)
+            c_0 = Variable(inp.data.new(*size).zero_())
             return h_0, c_0
         else:
             return h_0
@@ -137,11 +137,11 @@ class Decoder(nn.Module):
         if self.cell.startswith('LSTM'):
             h_0, _ = enc_hidden
             c_0 = h_0.data.new(*h_0.size()).zero_()
-            c_0 = Variable(c_0, requires_grad=False)
+            c_0 = Variable(c_0, volatile=not self.training)
             return h_0, c_0
+
         else:
-            h_0 = enc_hidden
-            return h_0
+            return enc_hidden
 
     def init_output_for(self, dec_hidden):
         """
@@ -164,7 +164,7 @@ class Decoder(nn.Module):
         if self.cell.startswith('LSTM'):
             dec_hidden = dec_hidden[0]
         data = dec_hidden.data.new(dec_hidden.size(1), self.hid_dim).zero_()
-        return Variable(data, requires_grad=False)
+        return Variable(data)
 
     def forward(self, prev, hidden, enc_outs, conds=None,
                 prev_out=None, enc_att=None, mask=None):
@@ -504,17 +504,18 @@ class EncoderDecoder(nn.Module):
         if self.is_cuda():
             weight = self.nll_weight.cuda()
 
+        shard_data = {'out': dec_outs, 'trg': loss_trg}
         num_examples = trg.data.ne(pad).int().sum()
         loss = 0
-        hid_dim = dec_outs.size(2)
-        shard_data = {'out': dec_outs, 'trg': loss_trg}
 
-        for shard in shards(shard_data, size=split, test=test):
-            #  {'out': Tensor(split x batch x hid_dim),
-            #   'trg': LongTensor(split x batch)}
-            logprobs = self.project(shard['out'].view(-1, hid_dim))
-            shard_loss = F.nll_loss(logprobs, shard['trg'].view(-1),
-                                    weight=weight, size_average=False)
+        for shard in u.shards(shard_data, size=split, test=test):
+            # (split x batch x hid_dim) -> (split * batch x hid_dim)
+            split, batch_size, _ = shard['out'].size()
+            out = shard['out'].view(split * batch_size, -1)
+            # (split x batch)} -> (split * batch)
+            trg = shard['trg'].view(-1)
+            shard_loss = F.nll_loss(
+                self.project(out), trg, weight=weight, size_average=False)
             loss += shard_loss / num_examples
 
             if not test:

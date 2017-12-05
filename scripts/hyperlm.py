@@ -51,7 +51,7 @@ def load_from_file(path):
     elif path.endswith('.pt'):
         data = torch.load(path)
     else:
-        raise ValueError('Unknown input format [%s]' % path)
+        raise ValueError('Unknown input format [{}]'.format(path))
     return data
 
 
@@ -140,8 +140,8 @@ if __name__ == '__main__':
             ).splits(test=args.test_split, dev=args.dev_split)
             del data
 
-    print(' * vocabulary size. %d' % len(d))
-    print(' * number of train batches. %d' % len(train))
+    print(' * vocabulary size. {}'.format(len(d)))
+    print(' * number of train batches. {}'.format(len(train)))
 
     # prepare hyperband functions
     sampler = make_sampler({

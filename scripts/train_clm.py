@@ -142,9 +142,9 @@ if __name__ == '__main__':
 
     # conditional structure
     conds = []
-    print(' * vocabulary size. %d' % len(lang_d))
+    print(' * vocabulary size. {}'.format(len(lang_d)))
     for idx, subd in enumerate(conds_d):
-        print(' * condition [%d] with cardinality %d' % (idx, len(subd)))
+        print(' * condition [{}] with cardinality {}'.format(idx, len(subd)))
         conds.append({'varnum': len(subd), 'emb_dim': args.cond_emb_dim})
 
     if args.load_model:
@@ -163,7 +163,7 @@ if __name__ == '__main__':
         u.initialize_model(m)
 
     print(m)
-    print(' * n parameters. %d' % m.n_params())
+    print(' * n parameters. {}'.format(m.n_params()))
 
     if args.gpu:
         m.cuda()

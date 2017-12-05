@@ -43,7 +43,7 @@ def translate(model, target, gpu, beam=False):
 def make_encdec_hook(target, gpu, beam=True):
 
     def hook(trainer, epoch, batch_num, checkpoint):
-        trainer.log("info", "Translating %s" % target)
+        trainer.log("info", "Translating {}".format(target))
         scores, hyps, atts = translate(trainer.model, target, gpu, beam=beam)
         hyps = [u.format_hyp(score, hyp, num + 1, trainer.model.trg_dict)
                 for num, (score, hyp) in enumerate(zip(scores, hyps))]
@@ -140,9 +140,9 @@ if __name__ == '__main__':
             batch_size=args.batch_size, gpu=args.gpu
         ).splits(dev=args.dev, test=None, sort_by='src')
 
-    print(' * vocabulary size. %d' % len(src_dict))
-    print(' * number of train batches. %d' % len(train))
-    print(' * maximum batch size. %d' % batch_size)
+    print(' * vocabulary size. {}'.format(len(src_dict)))
+    print(' * number of train batches. {}'.format(len(train)))
+    print(' * maximum batch size. {}'.format(batch_size))
 
     print('Building model...')
 
@@ -167,7 +167,7 @@ if __name__ == '__main__':
 
     print(model)
     print()
-    print('* number of parameters: %d' % model.n_params())
+    print('* number of parameters: {}'.format(model.n_params()))
 
     if args.gpu:
         model.cuda(), criterion.cuda()

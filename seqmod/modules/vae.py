@@ -207,7 +207,7 @@ class SequenceVAE(nn.Module):
             self.embeddings.weight = weight
 
         else:
-            raise ValueError("Unknown weight type [%s]" % type(weight))
+            raise ValueError("Unknown weight type [{}]".format(type(weight)))
 
     def project(self, dec_outs):
         """
