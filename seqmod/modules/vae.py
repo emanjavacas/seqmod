@@ -251,11 +251,11 @@ class SequenceVAE(nn.Module):
             dec_out, hidden = self.decoder(emb_t.squeeze(0), hidden, z=z)
             dec_outs.append(dec_out)
 
-        dec_outs = self.project(torch.stack(dec_outs))
+        dec_outs = torch.stack(dec_outs)
 
         return dec_outs, mu, logvar
 
-    def loss(self, batch_data, test=False):
+    def loss(self, batch_data, test=False, split=25):
         """
         Compute loss, eventually backpropagate and return losses and batch size
         for speed monitoring
@@ -266,26 +266,36 @@ class SequenceVAE(nn.Module):
         # remove <eos> from decoder targets dealing with different <pad> sizes
         dec_trg = Variable(u.map_index(src[:-1].data, eos, pad))
         # remove <bos> from loss targets
-        loss_trg = src[1:].view(-1)
+        loss_trg = src[1:]
         # preds (batch * seq_len x vocab)
-        preds, mu, logvar = self(src, dec_trg)
+        dec_outs, mu, logvar = self(src, dec_trg)
 
         # compute loss
         weight = self.nll_weight
         if next(self.parameters()).is_cuda:
             weight = weight.cuda()
 
-        rec_examples, kl_examples = src.data.ne(pad).int().sum(), src.size(1)
-        log_loss = F.nll_loss(
-            preds, loss_trg, size_average=False, weight=weight) / rec_examples
+        shard_data = {'out': dec_outs, 'trg': loss_trg}
+        rec_examples = src.data.ne(pad).int().sum()
+        rec_loss = 0
+
+        for shard in u.shards(shard_data, size=split, test=test):
+            out, trg = shard['out'], shard['trg'].view(-1)
+            shard_loss = F.nll_loss(
+                self.project(out), trg, weight=weight, size_average=False)
+            rec_loss += shard_loss / rec_examples
+
+            if not test:
+                rec_loss.backward(retain_graph=True)
+
+        # Normalize by same number of elements as in reconstruction
         kl_loss = KL_loss(mu, logvar) / rec_examples  # kl_examples
-
         if not test:
-            (log_loss + self.kl_weight * kl_loss).backward()
+            kl_loss.backward()
 
-        return (log_loss.data[0], kl_loss.data[0]), rec_examples
+        return (rec_loss.data[0], kl_loss.data[0]), rec_examples
 
-    def generate(self, inp=None, z_params=None, beam_width=5,
+    def generate(self, inp=None, z_params=None, beam_width=5, method='sample',
                  max_inp_len=2, max_len=20, **kwargs):
         """
         inp: None or (seq_len x batch_size). Input sequences to be encoded.
