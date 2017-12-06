@@ -11,6 +11,7 @@ from torch.autograd import Variable
 
 import seqmod.utils as u
 from seqmod.modules.custom import word_dropout, StackedLSTM, StackedGRU, Highway
+from seqmod.misc import Beam
 from seqmod.modules.encoder_decoder import Encoder
 
 
@@ -137,6 +138,7 @@ class SequenceVAE(nn.Module):
         self.hid_dim, self.num_layers = hid_dim, num_layers
         self.add_z = add_z
         self.src_dict = src_dict
+        self.cell = cell
         vocab_size = len(src_dict)
         super(SequenceVAE, self).__init__()
 
@@ -296,7 +298,7 @@ class SequenceVAE(nn.Module):
 
         return (rec_loss.data[0], kl_loss.data[0]), rec_examples
 
-    def generate(self, inp=None, z_params=None, beam_width=5, method='sample',
+    def generate(self, inp=None, z_params=None, beam_width=5, method='beam',
                  max_inp_len=2, max_len=20, **kwargs):
         """
         inp: None or (seq_len x batch_size). Input sequences to be encoded.
@@ -309,26 +311,65 @@ class SequenceVAE(nn.Module):
         if inp is None and z_params is None:
             raise ValueError("At least one of (inp, z_params) must be given")
 
-        eos, bos = self.src_dict.get_eos(), self.src_dict.get_bos()
-
         # Encoder
         if z_params is None:
             mu, logvar = self.encoder(self.embeddings(inp))
-            max_len, batch_size = len(inp) * max_inp_len, inp.size(1)
+            max_len = len(inp) * max_inp_len
         else:
             mu, logvar = z_params
-            max_len, batch_size = max_len, mu.size(0)
 
         # Sample from the hidden code
         z = self.encoder.reparametrize(mu, logvar)
 
-        # Decoder
-        scores, preds = 0, []
-        mask = mu.data.new(batch_size).long() + 1
+        if method == 'argmax':
+            return self.argmax(z, max_len)
 
+        elif method == 'beam':
+            return self.beam(z, max_len, beam_width)
+
+    def beam(self, z, max_len, width):
+        # local variables
+        eos, bos = self.src_dict.get_eos(), self.src_dict.get_bos()
+        batch_size = z.size(0)
+        # output variables
+        scores, preds = [], []
+
+        for idx in range(batch_size):
+            batch_z = z[idx].unsqueeze(0).repeat(width, 1)
+            hidden = self.decoder.init_hidden_for(batch_z)
+            beam = Beam(width, bos, eos=eos, gpu=self.is_cuda())
+
+            while beam.active and len(beam) < max_len:
+                # advance beam
+                prev = Variable(beam.get_current_state().unsqueeze(0),
+                                volatile=True)
+                dec_out, hidden = self.decoder(
+                    self.embeddings(prev).squeeze(0), hidden, z=batch_z)
+                logprobs = self.project(dec_out.unsqueeze(0))
+                beam.advance(logprobs.data)
+
+                # repackage according to source beam
+                source_beam = beam.get_source_beam()
+                if self.cell.startswith('LSTM'):
+                    hidden = (u.swap(hidden[0], 1, source_beam),
+                                    u.swap(hidden[1], 1, source_beam))
+                else:
+                    hidden = u.swap(hidden, 1, source_beam)
+
+            batch_scores, batch_preds = beam.decode(n=1)
+            scores.append(batch_scores[0]), preds.append(batch_preds[0])
+
+        return scores, preds
+
+    def argmax(self, z, max_len):
+        # local variables
+        eos, bos = self.src_dict.get_eos(), self.src_dict.get_bos()
+        batch = z.size(0)
+        # output variables
+        scores, preds, mask = 0, [], z.data.new(batch).long() + 1
+        # model inputs
         hidden = self.decoder.init_hidden_for(z)
-        prev = mu.data.new(batch_size).zero_().long() + bos
-        prev = Variable(prev, volatile=True)
+        prev = Variable(z.data.new(batch).zero_().long() + bos, volatile=True)
 
         for _ in range(max_len):
             prev_emb = self.embeddings(prev).squeeze(0)
