@@ -77,7 +77,7 @@ class EarlyStopping(pqueue):
         to wait until finishing training.
     reset_patience: bool, default True
     """
-    def __init__(self, maxsize, patience=None, reset_patience=True):
+    def __init__(self, maxsize, patience=None, reset_patience=False):
         self.patience, self.fails = patience or maxsize, 0
         self.reset_patience = reset_patience
         self.stopped = False
