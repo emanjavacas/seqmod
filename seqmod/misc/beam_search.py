@@ -111,4 +111,6 @@ class Beam(object):
         assert n <= self.width, "Beam has capacity [%d]" % self.width
         scores, beam_ids = torch.sort(self.scores, dim=0, descending=True)
         best_scores, best_beam_ids = scores[:n], beam_ids[:n]
-        return best_scores, [self.get_hypothesis(b) for b in best_beam_ids]
+        best_scores = best_scores.tolist()
+        best_hyps = [self.get_hypothesis(b) for b in best_beam_ids]
+        return best_scores, best_hyps

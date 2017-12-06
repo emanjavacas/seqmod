@@ -11,7 +11,7 @@ from seqmod.misc import StdLogger, VisdomLogger, Optimizer
 from seqmod.misc import text_processor, PairedDataset, Dict
 from seqmod.misc import Trainer, EarlyStopping
 from seqmod.modules.vae import SequenceVAE, kl_sigmoid_annealing_schedule
-from seqmod.loaders import load_twisty, load_dataset
+from seqmod.loaders import load_twisty, load_split_data
 
 from w2v import load_embeddings
 
@@ -32,7 +32,7 @@ def decode_report(trainer, src, z_params, n=5, keep=2):
     for idx, (src, z_params) in enumerate(zip(src, z_params)):
         # src: (1 x seq_len); z_params = (mu, logvar): ((keep x z_dim), ...)
         scores, hyps = trainer.model.generate(z_params=z_params)
-        
+
         # build report
         report = '{}\nSource: '.format(idx)
         report += ' '.join(d.vocab[c] for c in src.squeeze().data.tolist())
@@ -63,47 +63,20 @@ def make_generate_hook(n=5, keep=2):
     return hook
 
 
-def load_lines(path, processor=text_processor()):
-    lines = []
-    with open(os.path.expanduser(path)) as f:
-        for line in f:
-            line = line.strip()
-            if processor is not None:
-                line = processor(line)
-            if line:
-                lines.append(line)
-    return lines
-
-
-def load_from_lines(path, batch_size, max_size=1000000, min_freq=5,
-                    gpu=False, shuffle=True, **kwargs):
-    lines = load_lines(path)
-
-    ldict = Dict(pad_token=u.PAD, eos_token=u.EOS, bos_token=u.BOS,
-                 max_size=max_size, min_freq=min_freq).fit(lines)
-
-    return PairedDataset(
-        lines, None, {'src': ldict}, batch_size, gpu=gpu
-    ).splits(shuffle=shuffle, **kwargs)
-
-
-def load_split_data(path, batch_size, max_size, min_freq, gpu):
-    train_data = load_lines(os.path.join(path, 'train.txt'))
-    valid_data = load_lines(os.path.join(path, 'valid.txt'))
-    test_data = load_lines(os.path.join(path, 'test.txt'))
-
-    d = Dict(pad_token=u.PAD, eos_token=u.EOS, bos_token=u.BOS,
-             max_size=max_size, min_freq=min_freq)
-    d.fit(train_data, valid_data)
-
-    train = PairedDataset(
-        train_data, None, {'src': d}, batch_size, gpu=gpu)
-    valid = PairedDataset(
-        valid_data, None, {'src': d}, batch_size, gpu=gpu, evaluation=True)
-    test = PairedDataset(
-        test_data, None, {'src': d}, batch_size, gpu=gpu, evaluation=True)
-
-    return train.sort_(), valid.sort_(), test.sort_()
+def load_twisty_dataset(src, trg, batch_size, max_size=100000, min_freq=5,
+                        gpu=False, shuffle=True, **kwargs):
+    """
+    Wrapper function for twisty with sensible, overwritable defaults
+    """
+    tweets_dict = Dict(pad_token=u.PAD, eos_token=u.EOS,
+                       bos_token=u.BOS, max_size=max_size, min_freq=min_freq)
+    labels_dict = Dict(sequential=False, force_unk=False)
+    tweets_dict.fit(src)
+    labels_dict.fit(trg)
+    d = {'src': tweets_dict, 'trg': labels_dict}
+    splits = PairedDataset(src, trg, d, batch_size, gpu=gpu).splits(
+        shuffle=shuffle, **kwargs)
+    return splits
 
 
 if __name__ == '__main__':
@@ -143,6 +116,7 @@ if __name__ == '__main__':
     parser.add_argument('--test', default=0.2, type=float)
     parser.add_argument('--max_tweets', default=0, type=int)
     parser.add_argument('--min_len', default=0, type=int)
+    parser.add_argument('--max_len', default=200, type=int)
     parser.add_argument('--min_freq', default=5, type=int)
     parser.add_argument('--max_size', default=50000, type=int)
     parser.add_argument('--level', default='token')
@@ -160,15 +134,15 @@ if __name__ == '__main__':
             src, trg = load_twisty(
                 min_len=args.min_len, concat=args.concat,
                 processor=text_processor(lower=False, level=args.level))
-            train, test, valid = load_dataset(
+            train, test, valid = load_twisty_dataset(
                 src, trg, args.batch_size,
                 min_freq=args.min_freq, max_size=args.max_size,
                 gpu=args.gpu, dev=args.dev, test=args.test,
-            max_tweets=None if args.max_tweets == 0 else args.max_tweets)
+                max_tweets=None if args.max_tweets == 0 else args.max_tweets)
         else:
             train, test, valid = load_split_data(
                 os.path.join('~/corpora', args.source), args.batch_size,
-                args.max_size, args.min_freq, args.gpu)
+                args.max_size, args.min_freq, args.max_len, args.gpu)
         # save
         if args.cache_data:
             train.to_disk('data/{}_train.pt'.format(prefix))
@@ -208,7 +182,7 @@ if __name__ == '__main__':
             train.d['src'].vocab,
             args.flavor,
             args.suffix,
-            '~/data/word_embeddings')
+            '/home/corpora/word_embeddings/')
         model.init_embeddings(weight)
 
     if args.gpu:

@@ -654,12 +654,13 @@ class EncoderDecoder(nn.Module):
             beam.advance(logprobs.data)
 
             # repackage according to source beam
-            dec_out = u.swap(dec_out, 0, beam.get_source_beam())
+            source_beam = beam.get_source_beam()
+            dec_out = u.swap(dec_out, 0, source_beam)
             if self.cell.startswith('LSTM'):
-                dec_hidden = (u.swap(dec_hidden[0], 1, beam.get_source_beam()),
-                              u.swap(dec_hidden[1], 1, beam.get_source_beam()))
+                dec_hidden = (u.swap(dec_hidden[0], 1, source_beam),
+                              u.swap(dec_hidden[1], 1, source_beam))
             else:
-                dec_hidden = u.swap(dec_hidden, 1, beam.get_source_beam())
+                dec_hidden = u.swap(dec_hidden, 1, source_beam)
 
         scores, hyps = beam.decode(n=beam_width)
 

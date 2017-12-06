@@ -598,7 +598,7 @@ def _word_dropout_mask(X, dropout_rate, reserved_codes=()):
     bernoulli distribution with mean equal to dropout.
     """
     probs = X.new(*X.size()).zero_().float() + dropout_rate
-    # zero reserved_codes
+    # zero reserved_codes (avoid dropping reserved symbols)
     probs[sum((X == x) for x in reserved_codes)] = 0
     return probs.bernoulli_().byte()
 
@@ -612,7 +612,7 @@ def word_dropout(inp, target_code, p=0.0, training=True,
 
     Parameters:
     -----------
-    - inp: torch.Tensor
+    - inp: torch.LongTensor
     - target_code: int, code to use as replacement for dropped timesteps
     - dropout: float, dropout rate
     - reserved_codes: tuple of ints, ints in the input that should never

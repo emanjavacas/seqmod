@@ -27,7 +27,7 @@ from seqmod.misc.dataset import PairedDataset, Dict
 import dummy as d
 
 
-def translate(model, target, gpu, beam=False):
+def translate(model, target, gpu, beam=True):
     target = torch.LongTensor(
         list(model.src_dict.transform([target])))
     batch = Variable(target.t(), volatile=True)

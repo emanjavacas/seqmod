@@ -3,7 +3,46 @@ import os
 import re
 import json
 
-from seqmod.misc.dataset import Dict, PairedDataset, default_sort_key
+from seqmod.misc import Dict, PairedDataset, text_processor
+from seqmod import utils as u
+
+
+def load_lines(path, max_len=None, processor=text_processor()):
+    """Auxiliary function for sentence-per-line data"""
+    lines = []
+
+    with open(os.path.expanduser(path)) as f:
+        for line in f:
+            line = line.strip()
+            if processor is not None:
+                line = processor(line)
+            if not line or (max_len is not None and len(line) > max_len):
+                continue
+            lines.append(line)
+
+    return lines
+
+
+def load_split_data(path, batch_size, max_size, min_freq, max_len, gpu):
+    """
+    Load corpus that is already splitted in 'train.txt', 'valid.txt', 'test.txt'
+    """
+    train_data = load_lines(os.path.join(path, 'train.txt'), max_len=max_len)
+    valid_data = load_lines(os.path.join(path, 'valid.txt'), max_len=max_len)
+    test_data = load_lines(os.path.join(path, 'test.txt'), max_len=max_len)
+
+    d = Dict(pad_token=u.PAD, eos_token=u.EOS, bos_token=u.BOS,
+             max_size=max_size, min_freq=min_freq, force_unk=True)
+    d.fit(train_data, valid_data)
+
+    train = PairedDataset(
+        train_data, None, {'src': d}, batch_size, gpu=gpu)
+    valid = PairedDataset(
+        valid_data, None, {'src': d}, batch_size, gpu=gpu, evaluation=True)
+    test = PairedDataset(
+        test_data, None, {'src': d}, batch_size, gpu=gpu, evaluation=True)
+
+    return train.sort_(), valid.sort_(), test.sort_()
 
 
 # Twisty
@@ -48,23 +87,6 @@ def load_twisty(path='/home/corpora/TwiSty/twisty-EN',
             break
 
     return src, trg
-
-
-# Dataset
-def load_dataset(src, trg, batch_size, max_size=100000, min_freq=5,
-                 gpu=False, shuffle=True, sort_key=default_sort_key, **kwargs):
-    """
-    Wrapper function for dataset with sensible, overwritable defaults
-    """
-    tweets_dict = Dict(pad_token='<pad>', eos_token='<eos>',
-                       bos_token='<bos>', max_size=max_size, min_freq=min_freq)
-    labels_dict = Dict(sequential=False, force_unk=False)
-    tweets_dict.fit(src)
-    labels_dict.fit(trg)
-    d = {'src': tweets_dict, 'trg': labels_dict}
-    splits = PairedDataset(src, trg, d, batch_size, gpu=gpu).splits(
-        shuffle=shuffle, **kwargs)
-    return splits
 
 
 # Penn3
