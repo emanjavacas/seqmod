@@ -56,38 +56,44 @@ class EarlyStoppingException(Exception):
 
 
 class EarlyStopping(pqueue):
-    """
-    Queue-based EarlyStopping that will cache previous versions of the models.
+    """Queue-based EarlyStopping that caches previous versions of the models.
+
     Early stopping takes place if perplexity increases a number of times
     higher than `patience` over the lowest recorded one without resulting in
     the buffer being freed. On buffer freeing, the number of fails is reset but
     the lowest recorded value is kept. The last behaviour can be tuned by
     passing reset_patience equal to False.
 
-    Parameters:
-    -----------
+    Parameters
+    ----------
+    maxsize: int, buffer size
+        Only consider so many previous checkpoints before raising the
+        Exception, buffer will be freed after `maxsize` checkpoints are
+        introduced. After freeing the buffer the previously best checkpoint is
+        kept in the buffer to allow for comparisons with checkpoints that are
+        far in the past. The number of failed attempts will however be freed
+        alongside the buffer.
 
-    maxsize: int, buffer size: only consider so many previous checkpoints
-        before raising the Exception, buffer will be freed after `maxsize`
-        checkpoints are introduced. After freeing the buffer the previously
-        best checkpoint is kept in the buffer to allow for comparisons with
-        checkpoints that are far in the past. The number of failed attempts
-        will however be freed alongside the buffer.
-    patience: int (optional, default to maxsize), number of failed attempts
-        to wait until finishing training.
+    patience: int (optional, default to maxsize)
+        Number of failed attempts to wait until finishing training.
+
     reset_patience: bool, default True
+
     """
-    def __init__(self, maxsize, patience=None, reset_patience=False):
+
+    def __init__(self, maxsize, patience=None, reset_patience=True):
+        """Set params."""
         self.patience, self.fails = patience or maxsize, 0
         self.reset_patience = reset_patience
         self.stopped = False
 
-        if maxsize < self.patience:
+        if self.patience >= maxsize:
             raise ValueError("patience must be smaller than maxsize")
 
         super(EarlyStopping, self).__init__(maxsize, heapmax=True)
 
     def add_checkpoint(self, checkpoint, model=None):
+        """Add loss to queue and stop if patience is exceeded."""
         self.push(model, checkpoint)
         smallest, model = self.get_min()
         if checkpoint > smallest:
