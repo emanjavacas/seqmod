@@ -138,7 +138,7 @@ if __name__ == '__main__':
         train, valid = PairedDataset(
             src, trg, {'src': src_dict, 'trg': src_dict},
             batch_size=args.batch_size, gpu=args.gpu
-        ).splits(dev=args.dev, test=None, sort_by='src')
+        ).splits(dev=args.dev, test=None, sort=False)
 
     print(' * vocabulary size. {}'.format(len(src_dict)))
     print(' * number of train batches. {}'.format(len(train)))
