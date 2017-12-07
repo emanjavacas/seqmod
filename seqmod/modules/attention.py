@@ -5,10 +5,17 @@ import torch.nn.functional as F
 
 
 def DotScorer(dec_out, enc_outs, **kwargs):
+    """
+    Score for query decoder state and the ith encoder state is given
+    by their dot product.
+    """
     return torch.bmm(enc_outs.transpose(0, 1), dec_out.unsqueeze(2)).squeeze(2)
 
 
 class GeneralScorer(nn.Module):
+    """
+    Inserts a linear projection to the query state before the dot product
+    """
     def __init__(self, dim):
         super(GeneralScorer, self).__init__()
 
@@ -19,6 +26,13 @@ class GeneralScorer(nn.Module):
 
 
 class BahdanauScorer(nn.Module):
+    """
+    Projects both query decoder state and encoder states to an attention space.
+    The scores are compute by a dot product with a learnable parameter v_a after
+    transforming the sum of query decoder state and encoder state with a tanh.
+
+    `score(a_i_j) = a_v \dot tanh(W_s @ h_s_j + W_t @ h_t_i)`
+    """
     def __init__(self, hid_dim, att_dim):
         super(BahdanauScorer, self).__init__()
         # params
@@ -26,6 +40,7 @@ class BahdanauScorer(nn.Module):
         self.W_t = nn.Linear(hid_dim, att_dim, bias=True)
         self.v_a = nn.Parameter(torch.Tensor(att_dim, 1))
         self.v_a.data.uniform_(-0.05, 0.05)
+        self.v_a.custom = True  # don't overwrite initialization
 
     def project_enc_outs(self, enc_outs):
         """
