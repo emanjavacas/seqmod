@@ -10,7 +10,7 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 
 from seqmod.modules.custom import word_dropout, grad_reverse
-from seqmod.modules.custom import StackedLSTM, StackedGRU, MaxOut, MLP
+from seqmod.modules.custom import StackedLSTM, StackedGRU, MLP, Highway
 from seqmod.modules import attention as attn
 from seqmod.misc.beam_search import Beam
 from seqmod import utils as u
@@ -82,24 +82,25 @@ class Decoder(nn.Module):
     Parameters:
     -----------
 
-    - add_prev: bool, whether to append last hidden state.
+    - input_feed: bool, whether to concatenate last attentional vector
+        to current rnn input. (See Luong et al. 2015)
     """
     def __init__(self, emb_dim, hid_dim, num_layers, cell,
-                 att_dim, att_type='Bahdanau', maxout=2, dropout=0.0,
-                 add_prev=False, cond_dim=None):
+                 att_dim, att_type='general', dropout=0.0,
+                 input_feed=False, cond_dim=None):
         self.num_layers = num_layers
         self.hid_dim = hid_dim
+        self.att_type = att_type
         self.cell = cell
-        self.add_prev = add_prev
+        self.input_feed = input_feed
         self.dropout = dropout
         super(Decoder, self).__init__()
 
-        in_dim = emb_dim if not add_prev else hid_dim + emb_dim
+        in_dim = emb_dim if not input_feed else hid_dim + emb_dim
 
         # handle conditions
         if cond_dim is not None:
             in_dim += cond_dim
-            # TODO: implement FactorCell
 
         # rnn layers
         stacked = StackedLSTM if cell == 'LSTM' else StackedGRU
@@ -107,102 +108,64 @@ class Decoder(nn.Module):
             self.num_layers, in_dim, hid_dim, dropout=dropout)
 
         # attention network
-        self.att_type = att_type
-
-        if att_type == 'Bahdanau':
-            self.attn = attn.BahdanauAttention(att_dim, hid_dim)
-        elif att_type == 'Global':
-            if att_dim != hid_dim:
-                raise ValueError(
-                    "Global attention requires same size Encoder and Decoder")
-            self.attn = attn.GlobalAttention(hid_dim)
-        else:
-            raise ValueError("Unknown attention network [%s]" % att_type)
-
-        # maxout
-        self.has_maxout = bool(maxout)
-        if self.has_maxout:
-            self.maxout = MaxOut(att_dim + emb_dim, att_dim, maxout)
+        self.attn = attn.Attention(hid_dim, att_dim, scorer=att_type)
 
     def init_hidden_for(self, enc_hidden):
         """
         Creates a variable at decoding step 0 to be fed as init hidden step.
-
-        Returns (h_0, c_0):
-        -------------------
-
-        - h_0: torch.Tensor (num_layers x batch x hid_dim)
-        - c_0: torch.Tensor (num_layers x batch x hid_dim)
+        Returns: torch.Tensor(num_layers x batch x hid_dim)
         """
         if self.cell.startswith('LSTM'):
             h_0, _ = enc_hidden
             c_0 = h_0.data.new(*h_0.size()).zero_()
             c_0 = Variable(c_0, volatile=not self.training)
             return h_0, c_0
-
         else:
             return enc_hidden
 
-    def init_output_for(self, dec_hidden):
+    def init_output_for(self, hidden):
         """
         Creates a variable to be concatenated with previous target
         embedding as input for the first rnn step. This is used
-        for the first decoding step when using the add_prev flag.
+        for the first decoding step when using the input_feed flag.
 
-        Parameters:
-        -----------
-
-        - hidden: tuple (h_0, c_0)
-        - h_0: torch.Tensor (num_layers x batch x hid_dim)
-        - c_0: torch.Tensor (num_layers x batch x hid_dim)
-
-        Returns:
-        --------
-
-        torch.Tensor (batch x hid_dim)
+        Returns: torch.Tensor(batch x hid_dim)
         """
         if self.cell.startswith('LSTM'):
-            dec_hidden = dec_hidden[0]
-        data = dec_hidden.data.new(dec_hidden.size(1), self.hid_dim).zero_()
-        return Variable(data)
+            hidden = hidden[0]
 
-    def forward(self, prev, hidden, enc_outs, conds=None,
-                prev_out=None, enc_att=None, mask=None):
+        _, batch, hid_dim = hidden.size()
+
+        return Variable(hidden.data.new(batch, hid_dim).zero_(),
+                        volatile=not self.training)
+
+    def forward(self, inp, hidden, enc_outs, enc_att=None, prev_out=None,
+                mask=None, conds=None):
         """
         Parameters:
         -----------
 
-        prev: torch.Tensor (batch x emb_dim),
-            Previously decoded output.
-        hidden: Used to seed the initial hidden state of the decoder.
+        - inp: torch.Tensor (batch x emb_dim), Previously decoded output.
+        - hidden: Used to seed the initial hidden state of the decoder.
             h_t: (num_layers x batch x hid_dim)
             c_t: (num_layers x batch x hid_dim)
-        enc_outs: torch.Tensor (seq_len x batch x hid_dim),
+        - enc_outs: torch.Tensor (seq_len x batch x hid_dim),
             Output of the encoder at the last layer for all encoding steps.
-        prev_out: torch.Tensor (batch x hid_dim), previous hidden output
+        - prev_out: torch.Tensor (batch x hid_dim), previous context vector,
+            (required for input feeding)
         """
-        if self.add_prev:
-            # include last out as input for the prediction of the next item
-            if not isinstance(prev_out, Variable):
-                prev_out = self.init_output_for(hidden)
-            prev = torch.cat([prev, prev_out], 1)
+        if self.input_feed:
+            inp = torch.cat([inp, prev_out], 1)
 
-        # handle conditions
         if conds is not None:
-            prev = torch.cat([prev, conds], 1)
+            inp = torch.cat([inp, conds], 1)
 
-        # step
-        out, hidden = self.rnn_step(prev, hidden)
+        out, hidden = self.rnn_step(inp, hidden)
 
-        # attention (batch x hid_dim), att_weight (batch x seq_len)
-        out, att_weight = self.attn(out, enc_outs, enc_att=enc_att, mask=mask)
+        # out (batch x hid_dim), weight (batch x seq_len)
+        out, weight = self.attn(out, enc_outs, enc_att=enc_att, mask=mask)
 
-        # deep output
-        if self.has_maxout:
-            out = F.dropout(out, p=self.dropout, training=self.training)
-            out = self.maxout(torch.cat([out, prev], 1))
-
-        return out, hidden, att_weight
+        return out, hidden, weight
 
 
 class EncoderDecoder(nn.Module):
@@ -212,24 +175,25 @@ class EncoderDecoder(nn.Module):
     Parameters:
     -----------
 
-    - num_layers: int,
-        Number of layers for both the encoder and the decoder.
-    - emb_dim: int, embedding dimension
-    - hid_dim: int, Hidden state size for the encoder and the decoder
+    - num_layers: int, Number of layers for both the encoder and the decoder.
+    - emb_dim: int, Embedding dimension.
+    - hid_dim: int, Hidden state size for the encoder and the decoder.
     - att_dim: int, Hidden state for the attention network.
-        Note that it has to be equal to the encoder/decoder hidden
-        size when using GlobalAttention.
     - src_dict: Dict, A fitted Dict used to encode the data into integers.
     - trg_dict: Dict, Same as src_dict in case of bilingual training.
     - cell: string, Cell type to use. One of (LSTM, GRU).
     - att_type: string, Attention mechanism to use. One of (Global, Bahdanau).
     - dropout: float
     - word_dropout: float
-    - bidi: bool, Whether to use bidirectional.
-    - add_prev: bool,
-        Whether to feed back the last decoder state as input to
-        the decoder for the next step together with the last
-        predicted word embedding.
+    - deepout_layers: int, Whether to use a highway layer before the output
+        projection in the decoder.
+    - deepout_act: str, Non-linear activation in the deepout layer if given.
+    - bidi: bool, Whether to use bidirectional encoder.
+    - input_feed: bool,
+        Whether to feed back the previous context as input to the decoder
+        for the next step together with the last predicted word embedding.
+    - tie_weights: bool, Whether to tie embedding input and output weights.
+        It wouldn't make much sense in bilingual settings.
     """
     def __init__(self,
                  num_layers,
@@ -242,16 +206,17 @@ class EncoderDecoder(nn.Module):
                  att_type='Global',
                  dropout=0.0,
                  word_dropout=0.0,
-                 maxout=0,
+                 deepout_layers=0,
+                 deepout_act='ReLU',
                  bidi=True,
-                 add_prev=False,
+                 input_feed=False,
                  tie_weights=False,
                  cond_vocabs=None,
                  cond_dims=None):
         super(EncoderDecoder, self).__init__()
         self.cell = cell
         self.emb_dim = emb_dim
-        self.add_prev = add_prev
+        self.input_feed = input_feed
         self.src_dict = src_dict
         self.trg_dict = trg_dict or src_dict
         src_vocab_size = len(self.src_dict)
@@ -302,11 +267,18 @@ class EncoderDecoder(nn.Module):
                 # (add GRL)
                 self.grls.append(MLP(hid_dim, hid_dim, cond_vocab))
 
-        # (add rnn)
+        # (rnn)
         self.decoder = Decoder(
             emb_dim, hid_dim, num_layers, cell, att_dim,
-            dropout=dropout, maxout=maxout, add_prev=add_prev,
+            dropout=dropout, input_feed=input_feed,
             att_type=att_type, cond_dim=self.cond_dim)
+
+        # Deepout (optional)
+        self.has_deepout = False
+        if deepout_layers > 0:
+            self.has_deepout = True
+            self.deepout = Highway(
+                hid_dim, num_layers=deepout_layers, activation=deepout_act)
 
         # Output projection
         output_size = trg_vocab_size if self.bilingual else src_vocab_size

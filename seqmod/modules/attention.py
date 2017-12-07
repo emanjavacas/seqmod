@@ -1,109 +1,89 @@
 
-import math
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-import seqmod.utils as u
+
+def DotScorer(dec_out, enc_outs, **kwargs):
+    return torch.bmm(enc_outs.transpose(0, 1), dec_out.unsqueeze(2)).squeeze(2)
 
 
-class GlobalAttention(nn.Module):
+class GeneralScorer(nn.Module):
     def __init__(self, dim):
-        super(GlobalAttention, self).__init__()
-        self.linear_in = nn.Linear(dim, dim, bias=False)
-        self.linear_out = nn.Linear(dim * 2, dim, bias=False)
+        super(GeneralScorer, self).__init__()
 
-    def forward(self, dec_out, enc_outs, mask=None, **kwargs):
-        """
-        Parameters:
-        -----------
-        dec_out: (batch x hid_dim)
+        self.W_a = nn.Linear(dim, dim, bias=False)
 
-        enc_outs: (seq_len x batch x hid_dim (== att_dim))
-        """
-        # (batch x att x 1)
-        dec_att = self.linear_in(dec_out).unsqueeze(2)
-        # (batch x seq_len x att_dim) * (batch x att x 1) -> (batch x seq_len)
-        weights = torch.bmm(enc_outs.transpose(0, 1), dec_att).squeeze(2)
-        weights = F.softmax(weights)
-        if mask is not None:
-            weights.data.masked_fill_(mask, -math.inf)
-        # (batch x 1 x seq_len) * (batch x seq_len x att) -> (batch x att)
-        weighted = weights.unsqueeze(1).bmm(
-            enc_outs.transpose(0, 1)
-        ).squeeze(1)
-        # (batch x att_dim * 2)
-        combined = torch.cat([weighted, dec_out], 1)
-        output = F.tanh(self.linear_out(combined))
-        return output, weights
+    def forward(self, dec_out, enc_outs, **kwargs):
+        return DotScorer(self.W_a(dec_out), enc_outs)
 
 
-class BahdanauAttention(nn.Module):
-    def __init__(self, att_dim, hid_dim):
-        super(BahdanauAttention, self).__init__()
-        self.att_dim = att_dim
-        self.enc2att = nn.Linear(hid_dim, att_dim, bias=False)
-        self.dec2att = nn.Linear(hid_dim, att_dim, bias=False)
-        self.att_v = nn.Parameter(torch.Tensor(att_dim, 1))
-        self.att_v.data.uniform_(-0.05, 0.05)
+class BahdanauScorer(nn.Module):
+    def __init__(self, hid_dim, att_dim):
+        super(BahdanauScorer, self).__init__()
+        # params
+        self.W_s = nn.Linear(hid_dim, att_dim, bias=False)
+        self.W_t = nn.Linear(hid_dim, att_dim, bias=True)
+        self.v_a = nn.Parameter(torch.Tensor(att_dim, 1))
+        self.v_a.data.uniform_(-0.05, 0.05)
 
     def project_enc_outs(self, enc_outs):
         """
         mapping: (seq_len x batch x hid_dim) -> (seq_len x batch x att_dim)
 
-        Parameters:
-        -----------
-        enc_outs: torch.Tensor (seq_len x batch x hid_dim),
-            output of encoder over seq_len input symbols
-
         Returns:
         --------
-        enc_att: torch.Tensor (seq_len x batch x att_dim),
+        torch.Tensor (seq_len x batch x att_dim),
             Projection of encoder output onto attention space
         """
-        return torch.stack([self.enc2att(i) for i in enc_outs])
+        seq_len, batch, hid_dim = enc_outs.size()
+        return self.W_s(enc_outs.view(-1, hid_dim)).view(seq_len, batch, -1)
 
-    def forward(self, dec_out, enc_outs, enc_att=None, mask=None, **kwargs):
-        """
-        Parameters:
-        -----------
-        dec_out: torch.Tensor (batch x hid_dim)
-            Output of decoder at current step
-
-        enc_outs: torch.Tensor (seq_len x batch x hid_dim)
-            Output of encoder over the entire sequence
-
-        enc_att: see self.project_enc_outs(self, enc_outs)
-
-        Returns: contexts, weights
-        --------
-        context: torch.Tensor (batch x hid_dim)
-            Matrix of context vectors, which are then combined in the
-            computation of the model output at the present timestep
-
-        weights: torch.Tensor (batch x seq_len)
-            Attention weights in range [0, 1] for each input term
-        """
+    def forward(self, dec_out, enc_outs, enc_att=None):
         if enc_att is None:
+            # (seq_len x batch x att dim)
             enc_att = self.project_enc_outs(enc_outs)
-        # enc_outputs * weights
-        # weights: softmax(E) (seq_len x batch)
-        # E: att_v (att_dim x 1) * tanh(dec_att + enc_att) -> (seq_len x batch)
-        # tanh(dec_out_att + enc_output_att) -> (seq_len x batch x att_dim)
-        seq_len, batch, hid_dim = enc_att.size()
-        # project current decoder output onto attention (batch_size x att_dim)
-        dec_att = self.dec2att(dec_out)
-        # elemwise addition of dec_out over enc_att
-        # dec_enc_att: (batch x seq_len x att_dim)
-        dec_enc_att = F.tanh(enc_att + dec_att[None, :, :])
-        # dec_enc_att (seq_len x batch x att_dim) * att_v (att_dim x 1)
-        #   -> weights (batch x seq_len)
-        weights = F.softmax(
-            (dec_enc_att.transpose(0, 1) @ self.att_v[None, :, :]).squeeze(2))
+        # (batch x att_dim)
+        dec_att = self.W_t(dec_out)
+        # (batch x seq_len x att_dim)
+        dec_enc_att = F.tanh(enc_att + dec_att[None,:,:])
+        # (batch x seq_len x att_dim) * (1 x att_dim x 1) -> (batch x seq_len)
+        return (dec_enc_att.transpose(0, 1) @ self.v_a[None,:,:]).squeeze(2)
+
+
+class Attention(nn.Module):
+    def __init__(self, hid_dim, att_dim, scorer='general'):
+        super(Attention, self).__init__()
+
+        if hid_dim != att_dim and scorer != 'bahdanau':
+            raise ValueError("Global attention requires attention size "
+                             "equal to Encoder/Decoder hidden size")
+
+        # Scorer
+        if scorer.lower() == 'dot':
+            self.scorer = DotScorer
+        elif scorer.lower() == 'general':
+            self.scorer = GeneralScorer(hid_dim)
+        elif scorer.lower() == 'bahdanau':
+            self.scorer = BahdanauScorer(hid_dim, att_dim)
+        else:
+            raise ValueError(
+                "scorer must be one of ('dot', 'general', 'bahdanau') "
+                "got {}".format(scorer))
+
+        # Output layer (Luong 15. eq (5))
+        self.linear_out = nn.Linear(
+            hid_dim * 2, hid_dim, bias=scorer.lower() == 'bahdanau')
+
+    def forward(self, dec_out, enc_outs, enc_att=None, mask=None):
+        # weights ()
+        weights = F.softmax(self.scorer(dec_out, enc_outs, enc_att=enc_att))
+        # apply mask if given
         if mask is not None:
-            weights.masked_fill_(mask, -math.inf)
-        # enc_outs: (seq_len x batch x hid_dim) * weights (batch x seq_len)
-        #   -> context: (batch x hid_dim)
+            weights.data.masked_fill_(mask, -float('inf'))
+        # (eq 7)
         context = weights.unsqueeze(1).bmm(enc_outs.transpose(0, 1)).squeeze(1)
+        # (eq 5) linear out combining context and hidden
+        context = F.tanh(self.linear_out(torch.cat([context, dec_out], 1)))
+
         return context, weights
