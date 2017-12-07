@@ -66,7 +66,7 @@ class EncoderVAE(Encoder):
 
 class DecoderVAE(nn.Module):
     def __init__(self, z_dim, emb_dim, hid_dim, num_layers=1, cell='LSTM',
-                 dropout=0.0, maxout=0, add_z=False, project_init=False):
+                 dropout=0.0, add_z=False, project_init=False):
         in_dim = emb_dim if not add_z else z_dim + emb_dim
         self.z_dim = z_dim
         self.emb_dim = emb_dim

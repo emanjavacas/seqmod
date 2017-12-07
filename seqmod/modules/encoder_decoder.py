@@ -23,11 +23,17 @@ class Encoder(nn.Module):
     """
     def __init__(self, in_dim, hid_dim, num_layers, cell,
                  dropout=0.0, bidi=True):
-        self.in_dim, self.cell = in_dim, cell
-        self.bidi, self.num_dirs = bidi, 2 if bidi else 1
+        self.in_dim = in_dim
+        self.cell = cell
+        self.bidi = bidi
+        self.num_dirs = 2 if bidi else 1
+
         if hid_dim % self.num_dirs != 0:
             raise ValueError("Hidden dimension must be even for BiRNNs")
-        self.hid_dim, self.num_layers = hid_dim // self.num_dirs, num_layers
+
+        self.hid_dim = hid_dim // self.num_dirs
+        self.num_layers = num_layers
+
         super(Encoder, self).__init__()
         self.rnn = getattr(nn, cell)(self.in_dim, self.hid_dim,
                                      num_layers=self.num_layers,
@@ -35,9 +41,11 @@ class Encoder(nn.Module):
                                      bidirectional=self.bidi)
 
     def init_hidden_for(self, inp):
-        batch = inp.size(1)
-        size = (self.num_dirs * self.num_layers, batch, self.hid_dim)
-        h_0 = Variable(inp.data.new(*size).zero_())
+        batch_size = inp.size(1)
+        size = (self.num_dirs * self.num_layers, batch_size, self.hid_dim)
+
+        h_0 = Variable(inp.data.new(*size).zero_(), volatile=not self.training)
+
         if self.cell.startswith('LSTM'):
             c_0 = Variable(inp.data.new(*size).zero_())
             return h_0, c_0
@@ -50,7 +58,6 @@ class Encoder(nn.Module):
         -----------
 
         - inp: torch.Tensor (seq_len x batch x emb_dim)
-
         - hidden: tuple (h_0, c_0)
             h_0: ((num_layers * num_dirs) x batch x hid_dim)
             n_0: ((num_layers * num_dirs) x batch x hid_dim)
@@ -62,8 +69,11 @@ class Encoder(nn.Module):
         - h_t: (num_layers x batch x hidden_size * num_directions)
         - c_t: (num_layers x batch x hidden_size * num_directions)
         """
-        hidden = hidden if hidden is not None else self.init_hidden_for(inp)
+        if hidden is None:
+            hidden = self.init_hidden_for(inp)
+
         outs, hidden = self.rnn(inp, hidden)
+
         if self.bidi:
             # BiRNN encoder outputs (num_layers * 2 x batch x hid_dim)
             # but decoder expects   (num_layers x batch x hid_dim * 2)
@@ -72,6 +82,7 @@ class Encoder(nn.Module):
                           u.repackage_bidi(hidden[1]))
             else:
                 hidden = u.repackage_bidi(hidden)
+
         return outs, hidden
 
 
@@ -250,7 +261,7 @@ class EncoderDecoder(nn.Module):
             cell=cell, bidi=bidi, dropout=dropout)
 
         # Decoder
-        # (handle conditions)
+        # (conditions)
         self.cond_dim, self.cond_embs, self.grls = None, None, None
 
         if cond_dims is not None:
@@ -289,12 +300,11 @@ class EncoderDecoder(nn.Module):
                 # inp embeddings are (vocab x emb_dim)
                 # output embeddings are (hidden x vocab)
                 # if emb_dim != hidden, we insert a projection
-                logging.warn("When tying weights, output layer and " +
-                             "embedding layer should have equal size. " +
+                logging.warn("When tying weights, output layer and "
+                             "embedding layer should have equal size. "
                              "A projection layer will be insterted.")
-                project_tied = nn.Linear(hid_dim, emb_dim)
                 self.project = nn.Sequential(
-                    project_tied, project, nn.LogSoftmax())
+                    nn.Linear(hid_dim, emb_dim), project, nn.LogSoftmax())
             else:
                 # emb_dim == hidden, no projection needed
                 self.project = nn.Sequential(project, nn.LogSoftmax())
@@ -352,22 +362,14 @@ class EncoderDecoder(nn.Module):
             self.state_dict(), model.state_dict(), merge_map)
         self.load_state_dict(state_dict)
 
-    def init_embedding(self, model,
-                       source_module='src_embeddings',
-                       target_module='embeddings'):
-        state_dict = u.merge_states(
-            model.state_dict(), self.state_dict(),
-            {target_module: source_module})
-        self.load_state_dict(state_dict)
-
     def load_embeddings(self, weight, words, target_embs='src', verbose=False):
         """
         Load embeddings from a weight matrix with words `words` as rows.
 
         Parameters
         -----------
-        weight: (vocab x emb_dim)
-        words: list of words corresponding to each row in `weight`
+        - weight: (vocab x emb_dim)
+        - words: list of words corresponding to each row in `weight`
         """
         if isinstance(weight, np.ndarray):
             weight = torch.from_numpy(weight)
@@ -390,6 +392,9 @@ class EncoderDecoder(nn.Module):
                 raise ValueError('target_embs must be `src` or `trg`')
 
     def freeze_submodule(self, module):
+        """
+        Makes a submodule untrainable
+        """
         for p in getattr(self, module).parameters():
             p.requires_grad = False
 
@@ -400,9 +405,11 @@ class EncoderDecoder(nn.Module):
         inp: torch.Tensor (seq_len x batch), Train data for a single batch.
         trg: torch.Tensor (seq_len x batch), Target output for a single batch.
 
-        Returns: outs, att_weights
+        Returns: outs, conds
         --------
-        dec_outs: torch.Tensor (seq_len x batch x hid_dim)
+        outs: torch.Tensor (seq_len x batch x hid_dim)
+        weights: tuple or None with as many entries as conditions in the model.
+            Each entry is of size (batch x n_classes)
         """
         if self.cond_dim is not None:
             if conds is None:
@@ -411,12 +418,13 @@ class EncoderDecoder(nn.Module):
             # (batch_size x total emb dim)
             conds = torch.cat(conds, 1)
 
-        # encoder
+        # Encoder
         inp = word_dropout(
             inp, self.target_code, reserved_codes=self.reserved_codes,
             p=self.word_dropout, training=self.training)
 
         enc_outs, enc_hidden = self.encoder(self.src_embeddings(inp))
+
         cond_out = []
         if self.cond_dim is not None:
             # use last step as summary vector
@@ -426,20 +434,22 @@ class EncoderDecoder(nn.Module):
             for grl in self.grls:
                 cond_out.append(F.log_softmax(grl(enc_out)))
 
-        # decoder
+        # Decoder
         dec_hidden = self.decoder.init_hidden_for(enc_hidden)
         dec_outs, dec_out, enc_att = [], None, None
 
-        if self.decoder.att_type == 'Bahdanau':
+        if self.decoder.att_type.lower() == 'bahdanau':
             # cache encoder att projection for bahdanau
-            enc_att = self.decoder.attn.project_enc_outs(enc_outs)
+            enc_att = self.decoder.attn.scorer.project_enc_outs(enc_outs)
 
-        for prev in trg:
+        # inp_mask = 
+
+        for prev in trg:  # TODO: implement alternative to teacher forcing
             # (seq_len x batch x emb_dim)
             prev_emb = self.trg_embeddings(prev)
             # (batch x emb_dim)
             prev_emb = prev_emb.squeeze(0)
-            dec_out, dec_hidden, att_weight = self.decoder(
+            dec_out, dec_hidden, weight = self.decoder(
                 prev_emb, dec_hidden, enc_outs, enc_att=enc_att,
                 prev_out=dec_out, conds=conds)
             dec_outs.append(dec_out)
@@ -539,8 +549,8 @@ class EncoderDecoder(nn.Module):
 
         dec_hidden = self.decoder.init_hidden_for(enc_hidden)
         dec_out, enc_att = None, None
-        if self.decoder.att_type == 'Bahdanau':
-            enc_att = self.decoder.attn.project_enc_outs(enc_outs)
+        if self.decoder.att_type.lower() == 'bahdanau':
+            enc_att = self.decoder.attn.scorer.project_enc_outs(enc_outs)
 
         prev = src.data.new([bos]).expand(batch_size)
         prev = Variable(prev, volatile=True)
@@ -607,8 +617,8 @@ class EncoderDecoder(nn.Module):
 
         dec_hidden = self.decoder.init_hidden_for(enc_hidden)
         dec_out, enc_att = None, None
-        if self.decoder.att_type == 'Bahdanau':
-            enc_att = self.decoder.attn.project_enc_outs(enc_outs)
+        if self.decoder.att_type.lower() == 'bahdanau':
+            enc_att = self.decoder.attn.scorer.project_enc_outs(enc_outs)
 
         beam = Beam(beam_width, bos, eos=eos, gpu=gpu)
 

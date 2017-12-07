@@ -96,8 +96,8 @@ if __name__ == '__main__':
     parser.add_argument('--emb_dim', default=24, type=int)
     parser.add_argument('--hid_dim', default=64, type=int)
     parser.add_argument('--att_dim', default=64, type=int)
-    parser.add_argument('--att_type', default='Global', type=str)
-    parser.add_argument('--maxout', default=0, type=int)
+    parser.add_argument('--att_type', default='general', type=str)
+    parser.add_argument('--deepout', default=0, type=int)
     parser.add_argument('--tie_weights', action='store_true')
     # training
     parser.add_argument('--epochs', default=5, type=int)
@@ -150,7 +150,7 @@ if __name__ == '__main__':
         args.layers, args.emb_dim, args.hid_dim,
         args.att_dim, src_dict, att_type=args.att_type, dropout=args.dropout,
         word_dropout=args.word_dropout,
-        bidi=True, cell=args.cell, maxout=args.maxout,
+        bidi=True, cell=args.cell, deepout_layers=args.deepout,
         tie_weights=args.tie_weights)
 
     # model.freeze_submodule('encoder')
