@@ -444,7 +444,7 @@ class EncoderDecoder(nn.Module):
             # cache encoder att projection for bahdanau
             enc_att = self.decoder.attn.scorer.project_enc_outs(enc_outs)
 
-        # inp_mask = 
+        inp_mask = inp != self.src_dict.get_pad()
 
         for prev in trg:  # TODO: implement alternative to teacher forcing
             # (seq_len x batch x emb_dim)
@@ -453,7 +453,7 @@ class EncoderDecoder(nn.Module):
             prev_emb = prev_emb.squeeze(0)
             dec_out, dec_hidden, weight = self.decoder(
                 prev_emb, dec_hidden, enc_outs, enc_att=enc_att,
-                prev_out=dec_out, conds=conds)
+                prev_out=dec_out, conds=conds, mask=inp_mask)
             dec_outs.append(dec_out)
 
         return torch.stack(dec_outs), tuple(cond_out)
@@ -557,13 +557,14 @@ class EncoderDecoder(nn.Module):
         prev = src.data.new([bos]).expand(batch_size)
         prev = Variable(prev, volatile=True)
         mask = src.data.new(batch_size).zero_().float() + 1
+        inp_mask = src != self.src_dict.get_pad()
 
         for _ in range(len(src) * max_decode_len):
             prev = prev.unsqueeze(1)  # add seq_len dim
             prev_emb = self.trg_embeddings(prev).squeeze(0)
             dec_out, dec_hidden, att_weights = self.decoder(
                 prev_emb, dec_hidden, enc_outs, prev_out=dec_out,
-                enc_att=enc_att)
+                enc_att=enc_att, mask=inp_mask)
             # (batch x vocab_size)
             logprobs = self.project(dec_out)
             # (batch) argmax over logprobs
@@ -621,6 +622,7 @@ class EncoderDecoder(nn.Module):
         dec_out, enc_att = None, None
         if self.decoder.att_type.lower() == 'bahdanau':
             enc_att = self.decoder.attn.scorer.project_enc_outs(enc_outs)
+        inp_mask = (src != self.src_dict.get_pad()).repeat(1, beam_width)
 
         beam = Beam(beam_width, bos, eos=eos, gpu=gpu)
 

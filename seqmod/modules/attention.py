@@ -76,11 +76,21 @@ class Attention(nn.Module):
             hid_dim * 2, hid_dim, bias=scorer.lower() == 'bahdanau')
 
     def forward(self, dec_out, enc_outs, enc_att=None, mask=None):
-        # weights ()
+        """
+        Parameters:
+        -----------
+
+        - dec_out: torch.Tensor(batch_size x hid_dim)
+        - enc_outs: torch.Tensor(seq_len x batch_size x hid_dim)
+        - enc_att: (optional), torch.Tensor(seq_len x batch_size x att_dim)
+        - mask: (optional), torch.ByteTensor(seq_len x batch_size)
+        """
+        # weights (seq_len x batch)
         weights = F.softmax(self.scorer(dec_out, enc_outs, enc_att=enc_att))
         # apply mask if given
         if mask is not None:
-            weights.data.masked_fill_(mask, -float('inf'))
+            weights = weights * mask.transpose(0, 1).float()
+            # weights.masked_fill_(mask, 0)
         # (eq 7)
         context = weights.unsqueeze(1).bmm(enc_outs.transpose(0, 1)).squeeze(1)
         # (eq 5) linear out combining context and hidden
