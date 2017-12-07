@@ -373,25 +373,30 @@ class EncoderDecoder(nn.Module):
         - weight: (vocab x emb_dim)
         - words: list of words corresponding to each row in `weight`
         """
+        # wrap in tensor
+        if isinstance(weight, list):
+            weight = torch.Tensor(weight).float()
         if isinstance(weight, np.ndarray):
-            weight = torch.from_numpy(weight)
+            weight = torch.from_numpy(weight).float()
+        # check embedding size
         assert weight.size(1) == self.emb_dim, \
             "Mismatched embedding dim {} for model with dim {}".format(
                 (weight.size(1), self.emb_dim))
-        target_words = {word: idx for idx, word in enumerate(words)}
-        for idx, word in enumerate(self.src_dict.vocab):
-            if word not in target_words:
-                if verbose:
-                    logging.warn("Couldn't find word [{}]".format(word))
-                continue
-            if target_embs == 'src':
-                self.src_embeddings.weight.data[idx, :].copy_(
-                    weight[target_words[word], :])
-            elif target_embs == 'trg':
-                self.trg_embeddings.weight.data[idx, :].copy_(
-                    weight[target_words[word], :])
-            else:
-                raise ValueError('target_embs must be `src` or `trg`')
+
+        target_module = getattr(self, '{}_embeddings'.format(target_embs))
+        target_dict = getattr(self, '{}_dict'.format(target_embs))
+
+        src_idxs, trg_idxs = [], []
+        for trg_idx, word in enumerate(words):
+            try:
+                src_idxs.append(target_dict.s2i[word])
+                trg_idxs.append(trg_idx)
+            except KeyError:
+                pass
+
+        trg_idxs = torch.LongTensor(trg_idxs)
+        src_idxs = torch.LongTensor(src_idxs)
+        target_module.weight.data[src_idxs] = weight[trg_idxs]
 
     def freeze_submodule(self, module):
         """
