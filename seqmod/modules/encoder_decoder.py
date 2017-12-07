@@ -166,6 +166,8 @@ class Decoder(nn.Module):
             (required for input feeding)
         """
         if self.input_feed:
+            if prev_out is None:
+                prev_out = self.init_output_for(hidden)
             inp = torch.cat([inp, prev_out], 1)
 
         if conds is not None:
