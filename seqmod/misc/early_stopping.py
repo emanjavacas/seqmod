@@ -83,7 +83,7 @@ class EarlyStopping(pqueue):
 
     def __init__(self, maxsize, patience=None, reset_patience=True):
         """Set params."""
-        self.patience, self.fails = patience or maxsize, 0
+        self.patience, self.fails = patience or maxsize - 1, 0
         self.reset_patience = reset_patience
         self.stopped = False
 
