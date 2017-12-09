@@ -22,32 +22,41 @@ class Encoder(nn.Module):
     of the input using an RNN.
     """
     def __init__(self, in_dim, hid_dim, num_layers, cell,
-                 dropout=0.0, bidi=True):
+                 train_init=False, dropout=0.0, bidi=True):
         self.in_dim = in_dim
         self.cell = cell
         self.bidi = bidi
+        self.train_init = train_init
+        self.num_layers = num_layers
         self.num_dirs = 2 if bidi else 1
+        self.hid_dim = hid_dim // self.num_dirs
 
         if hid_dim % self.num_dirs != 0:
             raise ValueError("Hidden dimension must be even for BiRNNs")
 
-        self.hid_dim = hid_dim // self.num_dirs
-        self.num_layers = num_layers
-
         super(Encoder, self).__init__()
         self.rnn = getattr(nn, cell)(self.in_dim, self.hid_dim,
                                      num_layers=self.num_layers,
-                                     dropout=dropout,
-                                     bidirectional=self.bidi)
+                                     dropout=dropout, bidirectional=self.bidi)
 
-    def init_hidden_for(self, inp):
-        batch_size = inp.size(1)
+        if self.train_init:
+            self.h_0 = nn.Parameter(
+                torch.Tensor(self.num_layers, 1, self.hid_dim).zero_())
+
+    def init_hidden_for(self, enc_outs):
+        batch_size = enc_outs.size(1)
         size = (self.num_dirs * self.num_layers, batch_size, self.hid_dim)
 
-        h_0 = Variable(inp.data.new(*size).zero_(), volatile=not self.training)
+        if self.train_init:
+            h_0 = self.h_0.repeat(1, batch_size, 1)
+        else:
+            h_0 = enc_outs.data.new(*size).zero_()
+            h_0 = Variable(h_0, volatile=not self.training)
 
         if self.cell.startswith('LSTM'):
-            c_0 = Variable(inp.data.new(*size).zero_())
+            # compute memory cell
+            c_0 = enc_outs.data.new(*size).zero_()
+            c_0 = Variable(c_0, volatile=not self.training)
             return h_0, c_0
         else:
             return h_0
