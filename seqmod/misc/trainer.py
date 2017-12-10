@@ -5,7 +5,8 @@ import copy
 import math
 import collections
 
-import torch.optim.lr_scheduler as ls
+from torch.optim import lr_scheduler
+from torch.nn.utils import clip_grad_norm
 
 from seqmod import utils as u
 from seqmod.misc.early_stopping import EarlyStoppingException
@@ -86,7 +87,7 @@ class LossStatistics(object):
 class Trainer(object):
     def __init__(self, model, datasets, optimizer, scheduler=None,
                  early_stopping=None, test_name='test', valid_name='valid',
-                 losses=('loss',), verbose=True):
+                 max_norm=None, losses=('loss',), verbose=True):
         """
         Parameter:
         ----------
@@ -105,6 +106,7 @@ class Trainer(object):
         self.scheduler = scheduler
         self.early_stopping = early_stopping
         self.loss = LossStatistics(*losses)
+        self.max_norm = max_norm
         # config
         self.verbose = verbose
         # containers
@@ -144,11 +146,10 @@ class Trainer(object):
         for hook in self.hooks:
             num_checkpoints = batch_num // checkpoint  # checkpoints in epoch
             if hook['hooks_per_epoch'] is not None:
-                execute_every = max(
-                    1, batches // (checkpoint * hook['hooks_per_epoch']))
+                rep = max(1, batches // (checkpoint * hook['hooks_per_epoch']))
             else:
-                execute_every = 1
-            if execute_every > 0 and num_checkpoints % execute_every == 0:
+                rep = 1
+            if rep > 0 and num_checkpoints % rep == 0:
                 hook['hook'](self, epoch, batch_num, num_checkpoints)
 
     # callbacks
@@ -181,7 +182,32 @@ class Trainer(object):
     # optimizer
     def optimizer_step(self):
         "Runs an optimizing step"
+        if self.max_norm is not None:
+            clip_grad_norm(self.model.parameters(), self.max_norm)
         self.optimizer.step()
+
+    def scheduler_step(self, epoch, valid_loss):
+        "Updates learning rate with provided scheduler after epoch validation"
+        if self.scheduler is None:
+            return
+
+        old_lrs = [p['lr'] for p in self.optimizer.param_groups]
+
+        if isinstance(self.scheduler, lr_scheduler.ReduceLROnPlateau):
+            if valid_loss is None:
+                self.log("info", "Skipped scheduler: missing loss")
+            else:
+                self.scheduler.step(valid_loss)
+        else:
+            self.scheduler.step()  # on new epoch
+
+        if hasattr(self.scheduler, 'verbose') and self.scheduler.verbose:
+            new_lrs = [p['lr'] for p in self.optimizer.param_groups]
+            update = 'Updated lr: '
+            for old, new in zip(old_lrs, new_lrs):
+                update += '{} -> {}; '.format(old, new)
+
+            self.log("info", update)
 
     def validate_model(self, test=False, **kwargs):
         loss = self.loss.init()
@@ -300,18 +326,12 @@ class Trainer(object):
                     valid_loss = self.validate_model(**kwargs)
                     self.on_validation_end(e, valid_loss)
                     self.model.train()
+
                 if valid_loss is not None:  # merge after callback
                     valid_loss = sum(valid_loss.pack())
 
                 # scheduler after valid
-                if self.scheduler is not None:
-                    if isinstance(self.scheduler, ls.ReduceLROnPlateau):
-                        if val_loss is None:
-                            self.log("info", "Skipped scheduler: missing loss")
-                        else:
-                            self.scheduler.step(val_loss)
-                    else:
-                        self.scheduler.step()  # on new epoch
+                self.scheduler_step(e, valid_loss)
 
         except EarlyStoppingException as e:
             message, data = e.args
