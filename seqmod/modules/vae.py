@@ -25,7 +25,7 @@ def kl_sigmoid_annealing_schedule(inflection, steepness=3):
 
 
 def kl_linear_annealing_schedule(max_steps):
-    return lambda x: x / max_steps   # TODO: return interpolation
+    return lambda x: x / max_steps
 
 
 # KL-divergence loss
@@ -38,13 +38,26 @@ def KL_loss(mu, logvar):
 
 
 class EncoderVAE(Encoder):
-    def __init__(self, z_dim, *args, **kwargs):
+    def __init__(self, z_dim, *args, summary='mean', **kwargs):
         super(EncoderVAE, self).__init__(*args, **kwargs)
         # dimension of the hidden output of the encoder
-        self.enc_dim = self.hid_dim * self.num_dirs * 2  # concat with average
+        self.summary = summary
         self.z_dim = z_dim
-        self.Q_mu = nn.Linear(self.enc_dim, self.z_dim)
-        self.Q_logvar = nn.Linear(self.enc_dim, self.z_dim)
+        summaries = ('attention', 'mean', 'mean-concat', 'last')
+        enc_dim = self.hid_dim * self.num_dirs
+
+        if self.summary.lower() not in summaries:
+            raise ValueError('summary must be one of {}'.format(summaries))
+
+        if self.summary == 'mean-concat':
+            enc_dim *= 2
+
+        elif self.summary == 'attention':
+            # concatenation of input embedding and hidden activation
+            self.attention = nn.Linear(self.in_dim + enc_dim, enc_dim)
+
+        self.Q_mu = nn.Linear(enc_dim, self.z_dim)
+        self.Q_logvar = nn.Linear(enc_dim, self.z_dim)
 
     def reparametrize(self, mu, logvar):
         """
@@ -59,15 +72,36 @@ class EncoderVAE(Encoder):
 
     def forward(self, inp, hidden=None, **kwargs):
         out, _ = super(EncoderVAE, self).forward(inp, hidden, **kwargs)
-        context = torch.cat([out[:-1].mean(0), out[-1]], 1)
+
+        if self.summary == 'last':
+            context = out[-1]
+
+        if self.summary == 'mean':
+            context = out.mean(0)
+
+        elif self.summary == 'mean-concat':
+            context = torch.cat([out[:-1].mean(0), out[-1]], 1)
+
+        elif self.summary == 'attention':
+            seq_len, batch_size, _ = inp.size()
+            # combine across feature dimension and project to hid_dim
+            weights = self.attention(
+                torch.cat(
+                    [inp.view(-1, self.in_dim),
+                     out.view(-1, self.hid_dim * self.num_dirs)], 1))
+            # apply softmax over the seq_len dimension
+            weights = F.softmax(weights.view(seq_len, batch_size, -1), 0)
+            # weighted sum of encoder outputs (feature-wise)
+            context = (weights * out).sum(0)
+
         mu, logvar = self.Q_mu(context), self.Q_logvar(context)
+
         return mu, logvar
 
 
 class DecoderVAE(nn.Module):
     def __init__(self, z_dim, emb_dim, hid_dim, num_layers=1, cell='LSTM',
-                 dropout=0.0, add_z=False, project_init=False):
-        in_dim = emb_dim if not add_z else z_dim + emb_dim
+                 dropout=0.0, add_z=False, train_init=False):
         self.z_dim = z_dim
         self.emb_dim = emb_dim
         self.hid_dim = hid_dim
@@ -75,37 +109,37 @@ class DecoderVAE(nn.Module):
         self.num_layers = num_layers
         self.dropout = dropout
         self.add_z = add_z
-        self.project_init = project_init
-        assert project_init or (num_layers * hid_dim == z_dim), \
-            "Cannot interpret z as initial hidden state. Use project_init."
+        self.train_init = train_init
         super(DecoderVAE, self).__init__()
 
-        # project_init
-        if self.project_init:
-            self.hid2z_proj = nn.Linear(z_dim, self.hid_dim * self.num_layers)
+        # train initial
+        if self.train_init:
+            self.h_0 = nn.Parameter(
+                torch.Tensor(self.num_layers, 1, self.hid_dim).zero_())
 
         # add highway projection
         if self.add_z:
             self.z_proj = Highway(z_dim, num_layers=1)  # add option
 
         # rnn
+        in_dim = emb_dim if not add_z else z_dim + emb_dim
         stacked = StackedLSTM if self.cell == 'LSTM' else StackedGRU
         self.rnn_step = stacked(
             self.num_layers, in_dim, self.hid_dim, dropout=dropout)
 
     def init_hidden_for(self, z):
-        if self.project_init:
-            z = self.hid2z_proj(z)
-
         batch_size = z.size(0)
+        size = (self.num_layers, batch_size, self.hid_dim)
 
-        # rearrange z to match hidden cell shape
-        h_0 = z.view(batch_size, self.num_layers, self.hid_dim).transpose(0, 1)
+        if self.train_init:
+            h_0 = self.h_0.repeat(1, batch_size, 1)
+        else:
+            h_0 = z.data.new(*size).zero_()
+            h_0 = Variable(h_0, volatile=not self.training)
 
         if self.cell.startswith('LSTM'):
-            # compute memory cell
-            c_0 = z.data.new(self.num_layers, batch_size, self.hid_dim)
-            c_0 = Variable(nn.init.xavier_uniform(c_0))
+            c_0 = z.data.new(*size).zero_()
+            c_0 = Variable(c_0, volatile=not self.training)
             return h_0, c_0
         else:
             return h_0
@@ -122,18 +156,18 @@ class DecoderVAE(nn.Module):
         """
         if self.add_z:
             assert z is not None, "z must be given when add_z is set to True"
-            inp = torch.cat([prev, self.z_proj(z)], 1)
-        else:
-            inp = prev
-        out, hidden = self.rnn_step(inp, hidden)
-        out = F.dropout(out, p=self.dropout, training=self.training)
+            prev = torch.cat([prev, self.z_proj(z)], 1)
+
+        out, hidden = self.rnn_step(prev, hidden)
+
         return out, hidden
 
 
 class SequenceVAE(nn.Module):
     def __init__(self, emb_dim, hid_dim, z_dim, src_dict, num_layers=1,
                  cell='LSTM', bidi=True, dropout=0.0, word_dropout=0.0,
-                 project_init=False, add_z=False, tie_weights=False,
+                 train_init=False, add_z=False, tie_weights=False,
+                 summary='mean-concat',
                  kl_schedule=kl_sigmoid_annealing_schedule(inflection=5000)):
         self.hid_dim, self.num_layers = hid_dim, num_layers
         self.add_z = add_z
@@ -145,7 +179,6 @@ class SequenceVAE(nn.Module):
         # Training stuff
         self.nll_weight = torch.ones(vocab_size)
         self.nll_weight[self.src_dict.get_pad()] = 0
-
         self.kl_weight = 0.0
         self.kl_schedule = kl_schedule
 
@@ -163,12 +196,12 @@ class SequenceVAE(nn.Module):
         # Encoder
         self.encoder = EncoderVAE(
             z_dim, emb_dim, hid_dim, num_layers,
-            cell=cell, bidi=bidi, dropout=dropout)
+            summary=summary, cell=cell, bidi=bidi, dropout=dropout)
 
         # Decoder
         self.decoder = DecoderVAE(
             z_dim, emb_dim, hid_dim, num_layers=num_layers, cell=cell,
-            project_init=project_init, add_z=add_z, dropout=dropout)
+            train_init=train_init, add_z=add_z, dropout=dropout)
 
         # Projection
         if tie_weights:
@@ -248,6 +281,7 @@ class SequenceVAE(nn.Module):
         trg = word_dropout(
             trg, self.target_code, p=self.word_dropout,
             reserved_codes=self.reserved_codes, training=self.training)
+
         for emb_t in self.embeddings(trg).chunk(trg.size(0)):
             # rnn
             dec_out, hidden = self.decoder(emb_t.squeeze(0), hidden, z=z)
@@ -352,7 +386,7 @@ class SequenceVAE(nn.Module):
                 source_beam = beam.get_source_beam()
                 if self.cell.startswith('LSTM'):
                     hidden = (u.swap(hidden[0], 1, source_beam),
-                                    u.swap(hidden[1], 1, source_beam))
+                              u.swap(hidden[1], 1, source_beam))
                 else:
                     hidden = u.swap(hidden, 1, source_beam)
 
