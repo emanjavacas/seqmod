@@ -2,14 +2,11 @@
 import os
 
 import torch
-import torch.nn as nn
+from torch import optim
 
 from seqmod.modules.lm import LM
 from seqmod.misc.dataset import BlockDataset, Dict, CompressionTable
-from seqmod.misc.optimizer import Optimizer
-from seqmod.misc.early_stopping import EarlyStopping
-from seqmod.misc.trainer import Trainer
-from seqmod.misc.loggers import StdLogger
+from seqmod.misc import EarlyStopping, Trainer, StdLogger
 import seqmod.utils as u
 
 
@@ -168,10 +165,7 @@ if __name__ == '__main__':
     if args.gpu:
         m.cuda()
 
-    optim = Optimizer(
-        m.parameters(), args.optim, lr=args.lr, max_norm=args.max_norm,
-        lr_decay=args.lr_decay, start_decay_at=args.start_decay_at,
-        decay_every=args.decay_every)
+    optimizer = getattr(optim, args.optim)(m.parameters(), lr=args.lr)
     early_stopping = EarlyStopping(max(args.patience, 10), args.patience)
 
     # hook
@@ -183,7 +177,7 @@ if __name__ == '__main__':
     # trainer
     trainer = Trainer(
         m, {'train': train, 'valid': valid, 'test': test},
-        optim, early_stopping=early_stopping)
+        optimizer, early_stopping=early_stopping, max_norm=args.max_norm)
     trainer.add_loggers(std_logger)
     trainer.add_hook(check_hook, hooks_per_epoch=args.hooks_per_epoch)
 

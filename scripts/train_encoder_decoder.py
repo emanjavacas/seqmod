@@ -13,16 +13,15 @@ except:
 import numpy as np; np.random.seed(1001)
 
 from torch import nn
+from torch import optim
 from torch.autograd import Variable
 
 from seqmod.modules.encoder_decoder import EncoderDecoder
 from seqmod import utils as u
 
-from seqmod.misc.optimizer import Optimizer
 from seqmod.misc.early_stopping import EarlyStopping
-from seqmod.misc.trainer import Trainer
-from seqmod.misc.loggers import StdLogger, VisdomLogger
-from seqmod.misc.dataset import PairedDataset, Dict
+from seqmod.misc import Trainer, StdLogger, VisdomLogger
+from seqmod.misc import PairedDataset, Dict
 
 import dummy as d
 
@@ -160,8 +159,7 @@ if __name__ == '__main__':
     u.initialize_model(
         model, rnn={'type': 'orthogonal', 'args': {'gain': 1.0}})
 
-    optimizer = Optimizer(
-        model.parameters(), args.optim, lr=args.lr, max_norm=args.max_norm)
+    optimizer = getattr(optim, args.optim)(model.parameters(), lr=args.lr)
 
     criterion = make_criterion(len(src_dict), src_dict.get_pad())
 
@@ -175,7 +173,7 @@ if __name__ == '__main__':
     early_stopping = EarlyStopping(max(10, args.patience), args.patience)
     trainer = Trainer(
         model, {'train': train, 'valid': valid}, optimizer,
-        early_stopping=early_stopping)
+        early_stopping=early_stopping, max_norm=args.max_norm)
     trainer.add_loggers(StdLogger())
     trainer.add_loggers(VisdomLogger(env='encdec'))
 

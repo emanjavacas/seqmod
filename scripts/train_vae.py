@@ -4,10 +4,11 @@ import random
 import argparse
 
 import torch
+from torch import optim
 from torch.autograd import Variable
 
 from seqmod import utils as u
-from seqmod.misc import StdLogger, VisdomLogger, Optimizer
+from seqmod.misc import StdLogger, VisdomLogger
 from seqmod.misc import text_processor, PairedDataset, Dict
 from seqmod.misc import Trainer, EarlyStopping
 from seqmod.modules.vae import SequenceVAE, kl_sigmoid_annealing_schedule
@@ -190,15 +191,10 @@ if __name__ == '__main__':
     if args.gpu:
         model.cuda()
 
-    def on_lr_update(old_lr, new_lr):
-        trainer.log("info", "Resetting lr [{} -> {}]".format(old_lr, new_lr))
-
-    optimizer = Optimizer(
-        model.parameters(), args.optim, lr=args.lr,
-        max_norm=args.max_norm, weight_decay=args.weight_decay,
-        # SGD-only
-        start_decay_at=args.start_decay_at, lr_decay=args.lr_decay,
-        on_lr_update=on_lr_update)
+    optimizer = getattr(optim, args.optim)(model.parameters(), lr=args.lr)
+    # halve every epoch
+    scheduler = optim.lr_scheduler.StepLR(optimizer, 1, gamma=0.5)
+    scheduler.verbose = True
 
     class VAETrainer(Trainer):
         def on_batch_end(self, epoch, batch, loss):
@@ -212,7 +208,8 @@ if __name__ == '__main__':
 
     trainer = VAETrainer(
         model, {'train': train, 'valid': valid, 'test': test}, optimizer,
-        losses=losses, early_stopping=EarlyStopping(5, patience=args.patience))
+        losses=losses, early_stopping=EarlyStopping(5, patience=args.patience),
+        max_norm=args.max_norm, scheduler=scheduler)
     trainer.add_hook(make_generate_hook(), hooks_per_epoch=1)
     trainer.add_hook(kl_weight_hook, hooks_per_epoch=2)
     trainer.add_loggers(

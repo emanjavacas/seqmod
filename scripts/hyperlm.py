@@ -12,17 +12,15 @@ except:
     warnings.warn('no NVIDIA driver found')
     torch.manual_seed(1001)
 
+from torch import optim
+
 from seqmod.hyper import Hyperband
 from seqmod.hyper.utils import make_sampler
 
 from seqmod.modules.lm import LM
 from seqmod import utils as u
-from seqmod.misc.trainer import Trainer
-from seqmod.misc.loggers import StdLogger
-from seqmod.misc.optimizer import Optimizer
-from seqmod.misc.dataset import Dict, BlockDataset
-from seqmod.misc.preprocess import text_processor
-from seqmod.misc.early_stopping import EarlyStopping
+from seqmod.misc import Trainer, StdLogger, Dict, BlockDataset
+from seqmod.misc import text_processor, EarlyStopping
 
 
 # Load data
@@ -169,8 +167,7 @@ if __name__ == '__main__':
                    word_dropout=params['word_dropout'])
             u.initialize_model(m)
 
-            optim = Optimizer(
-                m.parameters(), args.optim, lr=args.lr, max_norm=args.max_norm)
+            optimizer = getattr(optim, args.optim)(m.parameters(), lr=args.lr)
 
             self.early_stopping = EarlyStopping(
                 5, patience=3, reset_patience=False)
@@ -180,7 +177,8 @@ if __name__ == '__main__':
                 self.early_stopping.add_checkpoint(sum(valid_loss.pack()))
 
             trainer = Trainer(
-                m, {"train": train, "test": test, "valid": valid}, optim)
+                m, {"train": train, "test": test, "valid": valid}, optimizer,
+                max_norm=args.max_norm)
             trainer.add_hook(early_stop_hook, hooks_per_epoch=5)
             trainer.add_loggers(StdLogger())
 

@@ -11,10 +11,12 @@ except:
     warnings.warn('no NVIDIA driver found')
     torch.manual_seed(1001)
 
+from torch import optim
+
 from seqmod.modules.lm import LM
 from seqmod import utils as u
 
-from seqmod.misc import Trainer, StdLogger, VisdomLogger, Optimizer
+from seqmod.misc import Trainer, StdLogger, VisdomLogger
 from seqmod.misc import Dict, BlockDataset, text_processor
 from seqmod.misc import EarlyStopping
 
@@ -166,13 +168,12 @@ if __name__ == '__main__':
     print(m)
     print('* number of parameters: {}'.format(m.n_params()))
 
-    optim = Optimizer(
-        m.parameters(), args.optim, lr=args.lr, max_norm=args.max_norm,
-        lr_decay=args.lr_decay, start_decay_at=args.start_decay_at,
-        decay_every=args.decay_every)
+    optimizer = getattr(optim, args.optim)(m.parameters(), lr=args.lr)
 
     # create trainer
-    trainer = Trainer(m, {"train": train, "test": test, "valid": valid}, optim)
+    trainer = Trainer(
+        m, {"train": train, "test": test, "valid": valid}, optimizer,
+        max_norm=args.max_norm)
 
     # hooks
     early_stopping = None
