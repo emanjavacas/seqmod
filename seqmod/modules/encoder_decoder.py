@@ -239,6 +239,7 @@ class EncoderDecoder(nn.Module):
                  input_feed=False,
                  train_init=False,
                  tie_weights=False,
+                 scheduled_rate=1.,
                  cond_vocabs=None,
                  cond_dims=None):
         super(EncoderDecoder, self).__init__()
@@ -259,9 +260,10 @@ class EncoderDecoder(nn.Module):
                  self.src_dict.get_pad()]
         self.reserved_codes = tuple(code for code in codes if code is not None)
 
-        # NLLLoss weight (downweight loss on pad)
+        # NLLLoss weight (downweight loss on pad) & schedule
         self.nll_weight = torch.ones(len(self.trg_dict))
         self.nll_weight[self.trg_dict.get_pad()] = 0
+        self.scheduled_rate = scheduled_rate
 
         # Embedding layer(s)
         self.src_embeddings = nn.Embedding(
@@ -420,7 +422,45 @@ class EncoderDecoder(nn.Module):
         for p in getattr(self, module).parameters():
             p.requires_grad = False
 
-    def forward(self, inp, trg, conds=None):
+    def get_scheduled_step(self, prev, dec_out):
+        """
+        Resample n inputs to next iteration from the model itself. N is itself
+        sampled from a bernoulli independently for each example in the batch
+        with weights equal to the model's variable self.scheduled_rate.
+
+        Parameters:
+        -----------
+
+        - prev: torch.LongTensor(batch_size)
+        - dec_out: torch.Tensor(batch_size x hid_dim)
+
+        Returns: partially resampled input
+        --------
+        - prev: torch.LongTensor(batch_size)
+        """
+        if self.scheduled_rate == 1:
+            return prev
+
+        # wrap in volatile variables and compute model output
+        prev = Variable(prev, volatile=True)
+        dec_out = Variable(dec_out, volatile=True)
+        _, prev_ = self.project(dec_out).max(1)  # (batch x hid_dim) -> (batch)
+
+        # sample from the model output
+        param = torch.zeros_like(prev).float() + self.scheduled_rate
+        index = (torch.bernoulli(param) == 0)
+
+        # assign sampled outputs if any got sampled
+        if index.nonzero().dim() == 0:
+            return prev.data
+
+        index = index.nonzero().squeeze(1)
+        # agreement = prev[index] == prev_[index]
+        prev[index] = prev_[index]
+
+        return prev.data
+
+    def forward(self, inp, trg, conds=None, use_schedule=False):
         """
         Parameters:
         -----------
@@ -466,11 +506,14 @@ class EncoderDecoder(nn.Module):
 
         inp_mask = inp != self.src_dict.get_pad()
 
-        for prev in trg:  # TODO: implement alternative to teacher forcing
-            # (seq_len x batch x emb_dim)
-            prev_emb = self.trg_embeddings(prev)
+        for step, prev in enumerate(trg):
+            # schedule
+            if use_schedule and step > 0:  # avoid first step
+                prev = self.get_scheduled_step(prev.data, dec_out.data)
+                prev = Variable(prev, volatile=not self.training)
+
             # (batch x emb_dim)
-            prev_emb = prev_emb.squeeze(0)
+            prev_emb = self.trg_embeddings(prev).squeeze(0)
             dec_out, dec_hidden, weight = self.decoder(
                 prev_emb, dec_hidden, enc_outs, enc_att=enc_att,
                 prev_out=dec_out, conds=conds, mask=inp_mask)
@@ -478,7 +521,7 @@ class EncoderDecoder(nn.Module):
 
         return torch.stack(dec_outs), tuple(cond_out)
 
-    def loss(self, batch_data, test=False, split=25):
+    def loss(self, batch_data, test=False, split=25, use_schedule=False):
         """
         Return batch-averaged loss and examples processed for speed monitoring
         """
@@ -490,12 +533,14 @@ class EncoderDecoder(nn.Module):
             (src, *src_conds), (trg, *trg_conds) = src, trg
 
         # remove <eos> from decoder targets substituting them with <pad>
-        dec_trg = Variable(u.map_index(trg[:-1].data, eos, pad))
+        # dec_trg = Variable(u.map_index(trg[:-1].data, eos, pad))
+        dec_trg = trg[:-1]
         # remove <bos> from loss targets
         loss_trg = trg[1:]
 
         # compute model output
-        dec_outs, cond_outs = self(src, dec_trg, conds=src_conds)
+        dec_outs, cond_outs = self(
+            src, dec_trg, conds=src_conds, use_schedule=use_schedule)
 
         # compute cond loss
         cond_loss = []
@@ -518,9 +563,9 @@ class EncoderDecoder(nn.Module):
             out = shard['out'].view(split * batch_size, -1)
             # (split x batch)} -> (split * batch)
             trg = shard['trg'].view(-1)
-            shard_loss = F.nll_loss(
-                self.project(out), trg, weight=weight, size_average=False
-            ) / num_examples
+            shard_loss = F.nll_loss(self.project(out), trg, weight=weight,
+                                    size_average=False)
+            shard_loss /= num_examples
             loss += shard_loss
 
             if not test:

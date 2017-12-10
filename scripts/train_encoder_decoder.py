@@ -181,4 +181,4 @@ if __name__ == '__main__':
     trainer.add_hook(hook, hooks_per_epoch=args.hooks_per_epoch)
 
     (model, valid_loss), test_loss = trainer.train(
-        args.epochs, args.checkpoint, shuffle=True)
+        args.epochs, args.checkpoint, shuffle=True, use_schedule=True)
