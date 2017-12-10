@@ -209,14 +209,30 @@ class Trainer(object):
 
             self.log("info", update)
 
-    def validate_model(self, test=False, **kwargs):
-        loss = self.loss.init()
+    def validate_model(self, test=False, model=None, **kwargs):
+        """
+        Run validation over the test or the validation set.
+
+        Parameters:
+        -----------
+
+        - test: bool (optional), whether to use the test set instead of the
+            validation set. If no test set was provided to Trainer an
+            exception is raised.
+        - model: nn.Module (optional), whether to use a different model 
+            (e.g. best model resulting from early stopping)
+        - kwargs: extra arguments passed to model.loss
+        """
+        if self.test_name not in self.datasets:
+            raise ValueError("Can not validate on test set, "
+                             "no test set available.")
+
         dataset = self.datasets[self.test_name if test else self.valid_name]
+        model, loss = model or self.model, self.loss.init()
 
         for batch_num in range(len(dataset)):
             batch = dataset[batch_num]
-            batch_loss, batch_examples = self.model.loss(
-                batch, test=True, **kwargs)
+            batch_loss, batch_examples = model.loss(batch, test=True, **kwargs)
             loss.add(u.unwrap_variables(batch_loss), batch_examples)
             del batch_loss
 
@@ -341,13 +357,14 @@ class Trainer(object):
         except KeyboardInterrupt:
             self.log("info", "Training interrupted")
 
-        self.log("info", f"Trained for [{time.time() - start:.3f} sec]")
+        self.log("info", "Trained for [{:.3f} secs]".format(time.time()-start))
 
         # test
         if run_test and self.test_name in self.datasets:
             self.model.eval()
             self.on_test_begin(self.batch_run)
-            test_loss = self.validate_model(test=True, **kwargs)
+            test_loss = self.validate_model(
+                test=True, model=best_model or self.model, **kwargs)
             self.on_test_end(test_loss)
             test_loss = sum(test_loss.pack())
 
