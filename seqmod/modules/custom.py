@@ -625,7 +625,7 @@ def word_dropout(inp, target_code, p=0.0, training=True,
     mask = _word_dropout_mask(
         inp.data, dropout_rate=p, reserved_codes=reserved_codes)
 
-    return inp.masked_fill(mask, target_code)
+    return inp.masked_fill(torch.autograd.Variable(mask), target_code)
 
 
 # gracefully taken from:

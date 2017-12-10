@@ -100,8 +100,9 @@ class Attention(nn.Module):
         - enc_att: (optional), torch.Tensor(seq_len x batch_size x att_dim)
         - mask: (optional), torch.ByteTensor(seq_len x batch_size)
         """
-        # weights (seq_len x batch)
-        weights = F.softmax(self.scorer(dec_out, enc_outs, enc_att=enc_att))
+        # weights (batch x seq_len)
+        weights = F.softmax(
+            self.scorer(dec_out, enc_outs, enc_att=enc_att), dim=1)
         # apply mask if given
         if mask is not None:
             weights = weights * mask.transpose(0, 1).float()

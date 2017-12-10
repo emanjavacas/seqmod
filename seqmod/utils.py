@@ -135,7 +135,7 @@ def swap(x, dim, perm):
     """
     if isinstance(perm, list):
         perm = torch.LongTensor(perm)
-    return x.index_select(dim, perm)
+    return x.index_select(dim, torch.autograd.Variable(perm))
 
 
 def map_index(t, source_idx, target_idx):

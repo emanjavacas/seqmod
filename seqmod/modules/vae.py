@@ -254,7 +254,7 @@ class SequenceVAE(nn.Module):
         seq_len, batch, hid_dim = dec_outs.size()
         dec_outs = dec_outs.view(batch * seq_len, hid_dim)
 
-        return F.log_softmax(self.proj(dec_outs))
+        return F.log_softmax(self.proj(dec_outs), 1)
 
     def forward(self, src, trg, labels=None):
         """

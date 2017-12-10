@@ -288,7 +288,7 @@ class Attention(nn.Module):
         # att: (seq_len x batch_size x att_dim)
         att = F.tanh(emb_att + hid_att[None, :, :])
         # weights: (batch_size x seq_len)
-        weights = F.softmax((att.t() @ self.att_v[:, None]).squeeze(2))
+        weights = F.softmax((att.t() @ self.att_v[:, None], 1).squeeze(2))
         # context: (batch_size x emb_dim)
         context = weights.unsqueeze(1).bmm(emb.t()).squeeze(1)
         return context, weights
@@ -586,7 +586,7 @@ class LM(nn.Module):
         outs = outs.view(seq_len * batch, hid_dim)
         if self.add_deepout:
             outs = self.deepout(outs)
-        outs = F.log_softmax(self.project(outs))
+        outs = F.log_softmax(self.project(outs), 1)
 
         return outs, hidden, weights
 

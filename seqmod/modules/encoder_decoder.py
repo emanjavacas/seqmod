@@ -448,7 +448,7 @@ class EncoderDecoder(nn.Module):
             # use average step as summary vector
             enc_out = grad_reverse(enc_outs.mean(dim=0))
             for grl in self.grls:
-                cond_out.append(F.log_softmax(grl(enc_out)))
+                cond_out.append(F.log_softmax(grl(enc_out), 1))
 
         # Decoder
         dec_hidden = self.decoder.init_hidden_for(enc_hidden)
