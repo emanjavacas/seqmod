@@ -88,16 +88,17 @@ if __name__ == '__main__':
     parser.add_argument('--z_dim', default=150, type=int)
     parser.add_argument('--cell', default='LSTM')
     parser.add_argument('--tie_weights', action='store_true')
-    parser.add_argument('--project_init', action='store_true')
     parser.add_argument('--dropout', default=0.1, type=float)
     parser.add_argument('--word_dropout', default=0.0, type=float)
+    parser.add_argument('--train_init', action='store_true')
+    parser.add_argument('--summary', default='attention')
     parser.add_argument('--dont_add_z', action='store_true')
     parser.add_argument('--load_embeddings', action='store_true')
     parser.add_argument('--flavor', default=None)
     parser.add_argument('--suffix', default=None)
     # training
     parser.add_argument('--optim', default='RMSprop')
-    parser.add_argument('--lr', default=0.01, type=float)
+    parser.add_argument('--lr', default=0.005, type=float)
     parser.add_argument('--max_norm', default=5., type=float)
     parser.add_argument('--weight_decay', default=0, type=float)
     parser.add_argument('--lr_decay', default=0.85, type=float)
@@ -110,7 +111,7 @@ if __name__ == '__main__':
     parser.add_argument('--outputfile', default=None)
     parser.add_argument('--checkpoints', default=50, type=int)
     # dataset
-    parser.add_argument('--source', default='wikitext-2',
+    parser.add_argument('--source', default='enwiki8',
                         help='Directory with split data')
     parser.add_argument('--dev', default=0.1, type=float)
     parser.add_argument('--test', default=0.2, type=float)
@@ -168,7 +169,8 @@ if __name__ == '__main__':
         args.emb_dim, args.hid_dim, args.z_dim, train.d['src'],
         num_layers=args.num_layers, cell=args.cell, dropout=args.dropout,
         add_z=not args.dont_add_z, word_dropout=args.word_dropout,
-        tie_weights=args.tie_weights, project_init=args.project_init,
+        tie_weights=args.tie_weights, train_init=args.train_init,
+        summary=args.summary,
         kl_schedule=kl_sigmoid_annealing_schedule(inflection=args.inflection))
     print(model)
 
