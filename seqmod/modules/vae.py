@@ -11,17 +11,12 @@ from torch.autograd import Variable
 
 import seqmod.utils as u
 from seqmod.modules.custom import word_dropout, StackedLSTM, StackedGRU, Highway
-from seqmod.misc import Beam
+from seqmod.misc import Beam, inflection_sigmoid
 from seqmod.modules.encoder_decoder import Encoder
 
 
-def generic_sigmoid(a=1, b=1, c=1):
-    return lambda x: a / (1 + b * math.exp(-x * c))
-
-
 def kl_sigmoid_annealing_schedule(inflection, steepness=3):
-    b = 10 ** steepness
-    return generic_sigmoid(b=b, c=math.log(b) / inflection)
+    return inflection_sigmoid(inflection, steepness)
 
 
 def kl_linear_annealing_schedule(max_steps):
