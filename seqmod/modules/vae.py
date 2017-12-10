@@ -100,8 +100,9 @@ class EncoderVAE(Encoder):
 
 
 class DecoderVAE(nn.Module):
-    def __init__(self, z_dim, emb_dim, hid_dim, num_layers=1, cell='LSTM',
-                 dropout=0.0, add_z=False, train_init=False):
+    def __init__(self, z_dim, emb_dim, hid_dim, num_layers=1,
+                 cell='LSTM', dropout=0.0, add_z=False,
+                 train_init=False, train_init_add_jitter=True):
         self.z_dim = z_dim
         self.emb_dim = emb_dim
         self.hid_dim = hid_dim
@@ -110,6 +111,7 @@ class DecoderVAE(nn.Module):
         self.dropout = dropout
         self.add_z = add_z
         self.train_init = train_init
+        self.train_init_add_jitter = train_init_add_jitter
         super(DecoderVAE, self).__init__()
 
         # train initial
@@ -136,6 +138,10 @@ class DecoderVAE(nn.Module):
         else:
             h_0 = z.data.new(*size).zero_()
             h_0 = Variable(h_0, volatile=not self.training)
+
+        if self.train_init_add_jitter:
+            std = 0.3           # TODO: dehardcode
+            h_0 = h_0 + torch.normal(torch.zeros_like(h_0), std)
 
         if self.cell.startswith('LSTM'):
             c_0 = z.data.new(*size).zero_()

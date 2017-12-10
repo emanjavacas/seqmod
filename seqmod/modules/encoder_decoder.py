@@ -22,11 +22,13 @@ class Encoder(nn.Module):
     of the input using an RNN.
     """
     def __init__(self, in_dim, hid_dim, num_layers, cell,
-                 train_init=False, dropout=0.0, bidi=True):
+                 train_init=False, add_init_jitter=True,
+                 dropout=0.0, bidi=True):
         self.in_dim = in_dim
         self.cell = cell
         self.bidi = bidi
         self.train_init = train_init
+        self.add_init_jitter = add_init_jitter
         self.num_layers = num_layers
         self.num_dirs = 2 if bidi else 1
         self.hid_dim = hid_dim // self.num_dirs
@@ -40,8 +42,8 @@ class Encoder(nn.Module):
                                      dropout=dropout, bidirectional=self.bidi)
 
         if self.train_init:
-            self.h_0 = nn.Parameter(
-                torch.Tensor(self.num_layers, 1, self.hid_dim).zero_())
+            train_init_size = self.num_layers * self.num_dirs, 1, self.hid_dim
+            self.h_0 = nn.Parameter(torch.Tensor(*train_init_size).zero_())
 
     def init_hidden_for(self, enc_outs):
         batch_size = enc_outs.size(1)
@@ -52,6 +54,9 @@ class Encoder(nn.Module):
         else:
             h_0 = enc_outs.data.new(*size).zero_()
             h_0 = Variable(h_0, volatile=not self.training)
+
+        if self.add_init_jitter:
+            h_0 = h_0 + torch.normal(torch.zeros_like(h_0), 0.3)
 
         if self.cell.startswith('LSTM'):
             # compute memory cell
