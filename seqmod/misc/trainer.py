@@ -223,7 +223,7 @@ class Trainer(object):
             (e.g. best model resulting from early stopping)
         - kwargs: extra arguments passed to model.loss
         """
-        if self.test_name not in self.datasets:
+        if test and self.test_name not in self.datasets:
             raise ValueError("Can not validate on test set, "
                              "no test set available.")
 
