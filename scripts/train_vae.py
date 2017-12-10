@@ -193,7 +193,7 @@ if __name__ == '__main__':
 
     optimizer = getattr(optim, args.optim)(model.parameters(), lr=args.lr)
     # halve every epoch
-    scheduler = optim.lr_scheduler.StepLR(optimizer, 1, gamma=0.5)
+    scheduler = optim.lr_scheduler.StepLR(optimizer, 1, gamma=0.25)
     scheduler.verbose = True
 
     class VAETrainer(Trainer):

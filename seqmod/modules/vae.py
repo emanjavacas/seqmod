@@ -121,7 +121,7 @@ class DecoderVAE(nn.Module):
 
         # add highway projection
         if self.add_z:
-            self.z_proj = Highway(z_dim, num_layers=1)  # add option
+            self.z_proj = Highway(z_dim, num_layers=2)  # add option
 
         # rnn
         in_dim = emb_dim if not add_z else z_dim + emb_dim

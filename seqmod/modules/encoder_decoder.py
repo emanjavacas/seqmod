@@ -237,6 +237,7 @@ class EncoderDecoder(nn.Module):
                  deepout_act='ReLU',
                  bidi=True,
                  input_feed=False,
+                 train_init=False,
                  tie_weights=False,
                  cond_vocabs=None,
                  cond_dims=None):
@@ -274,7 +275,7 @@ class EncoderDecoder(nn.Module):
         # Encoder
         self.encoder = Encoder(
             emb_dim, hid_dim, num_layers,
-            cell=cell, bidi=bidi, dropout=dropout)
+            cell=cell, bidi=bidi, dropout=dropout, train_init=train_init)
 
         # Decoder
         # (conditions)
