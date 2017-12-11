@@ -11,7 +11,7 @@ from torch.autograd import Variable
 
 import seqmod.utils as u
 from seqmod.modules.custom import word_dropout, StackedLSTM, StackedGRU, Highway
-from seqmod.misc import Beam, inflection_sigmoid
+from seqmod.misc import Beam, inflection_sigmoid, linear
 from seqmod.modules.encoder_decoder import Encoder
 
 
@@ -20,7 +20,7 @@ def kl_sigmoid_annealing_schedule(inflection, steepness=3):
 
 
 def kl_linear_annealing_schedule(max_steps):
-    return lambda x: x / max_steps
+    return linear(max_steps)
 
 
 # KL-divergence loss
