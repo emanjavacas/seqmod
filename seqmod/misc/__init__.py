@@ -4,6 +4,6 @@ from seqmod.misc.early_stopping import EarlyStopping, EarlyStoppingException
 from seqmod.misc.loggers import StdLogger, VisdomLogger, TensorboardLogger
 from seqmod.misc.preprocess import text_processor
 from seqmod.misc.trainer import Trainer
-from seqmod.misc.schedules import inflection_sigmoid, inverse_sigmoid
+from seqmod.misc.schedules import inflection_sigmoid
 from seqmod.misc.schedules import linear, inverse_linear
 from seqmod.misc.schedules import exponential, inverse_exponential
