@@ -19,9 +19,8 @@ from torch.autograd import Variable
 from seqmod.modules.encoder_decoder import EncoderDecoder
 from seqmod import utils as u
 
-from seqmod.misc.early_stopping import EarlyStopping
-from seqmod.misc import Trainer, StdLogger, VisdomLogger
-from seqmod.misc import PairedDataset, Dict
+from seqmod.misc import EarlyStopping, Trainer, StdLogger, VisdomLogger
+from seqmod.misc import PairedDataset, Dict, inflection_sigmoid
 
 import dummy as d
 
@@ -66,6 +65,21 @@ def make_att_hook(target, gpu, beam=False):
                      "hyp": hyp.split(),
                      "epoch": epoch,
                      "batch_num": batch_num})
+
+    return hook
+
+
+def make_schedule_hook(scheduler, verbose=True):
+
+    def hook(trainer, epoch, batch, checkpoint):
+        batches = len(trainer.datasets['train'])
+        old_rate = trainer.model.scheduled_rate
+        new_rate = scheduler(epoch * batches + batch)
+        trainer.model.scheduled_rate = new_rate
+
+        if verbose:
+            tmpl = "Updated scheduled rate from {:.3f} to {:.3f}"
+            trainer.log("info", tmpl.format(old_rate, new_rate))
 
     return hook
 
@@ -179,6 +193,9 @@ if __name__ == '__main__':
 
     hook = make_encdec_hook(args.target, args.gpu, beam=args.beam)
     trainer.add_hook(hook, hooks_per_epoch=args.hooks_per_epoch)
+    hook = make_schedule_hook(
+        inflection_sigmoid(len(train) * 2, 1.75, inverse=True))
+    trainer.add_hook(hook, hooks_per_epoch=1000)
 
     (model, valid_loss), test_loss = trainer.train(
         args.epochs, args.checkpoint, shuffle=True, use_schedule=True)
