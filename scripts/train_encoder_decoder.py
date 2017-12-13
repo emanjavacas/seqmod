@@ -175,7 +175,7 @@ if __name__ == '__main__':
         model, {'train': train, 'valid': valid}, optimizer,
         early_stopping=early_stopping, max_norm=args.max_norm)
     trainer.add_loggers(StdLogger())
-    trainer.add_loggers(VisdomLogger(env='encdec'))
+    # trainer.add_loggers(VisdomLogger(env='encdec'))
     trainer.add_loggers(TensorboardLogger(comment='encdec'))
 
     hook = make_encdec_hook(args.target, args.gpu, beam=args.beam)
