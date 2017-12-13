@@ -20,7 +20,7 @@ from seqmod.modules.encoder_decoder import EncoderDecoder
 from seqmod import utils as u
 
 from seqmod.misc.early_stopping import EarlyStopping
-from seqmod.misc import Trainer, StdLogger, VisdomLogger
+from seqmod.misc import Trainer, StdLogger, VisdomLogger, TensorboardLogger
 from seqmod.misc import PairedDataset, Dict
 
 import dummy as d
@@ -176,6 +176,7 @@ if __name__ == '__main__':
         early_stopping=early_stopping, max_norm=args.max_norm)
     trainer.add_loggers(StdLogger())
     trainer.add_loggers(VisdomLogger(env='encdec'))
+    trainer.add_loggers(TensorboardLogger(comment='encdec'))
 
     hook = make_encdec_hook(args.target, args.gpu, beam=args.beam)
     trainer.add_hook(hook, hooks_per_epoch=args.hooks_per_epoch)
