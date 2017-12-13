@@ -166,9 +166,12 @@ class Trainer(object):
                                "examples": examples,
                                "duration": duration})
 
+    def on_validation_begin(self, epoch):
+        self.log("validation_begin", {"epoch": epoch})
+
     def on_validation_end(self, epoch, loss):
-        self.log("validation_end", {"epoch": epoch,
-                                    "loss": loss.pack(labels=True)})
+        packed = loss.pack(labels=True)
+        self.log("validation_end", {"epoch": epoch, "loss": packed})
         if self.early_stopping is not None:
             self.early_stopping.add_checkpoint(
                 sum(loss.pack()), copy.deepcopy(self.model))
@@ -219,7 +222,7 @@ class Trainer(object):
         - test: bool (optional), whether to use the test set instead of the
             validation set. If no test set was provided to Trainer an
             exception is raised.
-        - model: nn.Module (optional), whether to use a different model 
+        - model: nn.Module (optional), whether to use a different model
             (e.g. best model resulting from early stopping)
         - kwargs: extra arguments passed to model.loss
         """
