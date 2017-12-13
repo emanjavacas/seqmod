@@ -81,7 +81,7 @@ class StdLogger(Logger):
 
     @staticmethod
     def loss_str(loss, phase):
-        return "; ".join([phase + " {}: {:.g}".format(k, v)
+        return "; ".join([phase + " {}: {:g}".format(k, v)
                           for (k, v) in loss.items()])
 
     def epoch_begin(self, payload):
@@ -226,9 +226,6 @@ class TensorboardLogger(Logger):
         else:
             self.writer = SummaryWriter(log_dir=log_dir, comment=comment)
 
-        super(TensorboardLogger, self).__init__(
-            log_dir=log_dir, comment=comment)
-
         self.tag = tag
         self.log_checkpoints = log_checkpoints
 
@@ -244,7 +241,8 @@ class TensorboardLogger(Logger):
         self.writer.add_scalars(self.tag, losses, epoch)
 
     @skip_on_import_error(SummaryWriter)
-    def epoch_end(self, epoch, loss, examples, duration, valid_loss=None):
+    def epoch_end(self, payload):
+        epoch, loss = payload['epoch'] + 1, payload['loss']
         if self.log_checkpoints:
             return
 
@@ -252,6 +250,7 @@ class TensorboardLogger(Logger):
         self.writer.add_scalars(self.tag, losses, epoch)
 
     @skip_on_import_error(SummaryWriter)
-    def validation_end(self, epoch, loss):
+    def validation_end(self, payload):
+        epoch, loss = payload['epoch'] + 1, payload['loss']
         losses = {'valid/{}'.format(key): val for key, val in loss.items()}
-        self.writer.add_scalars(self.tag, losses, epoch + 1)
+        self.writer.add_scalars(self.tag, losses, epoch)
