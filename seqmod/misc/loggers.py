@@ -214,3 +214,44 @@ class VisdomLogger(Logger):
             opts={'rownames': payload["hyp"],
                   'columnnames': payload["target"],
                   'title': title})
+
+
+class TensorboardLogger(Logger):
+    def __init__(self, log_dir=None, comment='',
+                 tag='training', log_checkpoints=True):
+        if SummaryWriter is None:
+            warnings.warn("Couldn't import tensorboardX: "
+                          "`pip install tensorboardX`; "
+                          "`pip install tensorflow")
+        else:
+            self.writer = SummaryWriter(log_dir=log_dir, comment=comment)
+
+        super(TensorboardLogger, self).__init__(
+            log_dir=log_dir, comment=comment)
+
+        self.tag = tag
+        self.log_checkpoints = log_checkpoints
+
+    @skip_on_import_error(SummaryWriter)
+    def checkpoint(self, payload):
+        if not self.log_checkpoints:
+            return
+
+        epoch, batch = payload['epoch'], payload['batch']
+        total_batches, loss = payload['total_batches'], payload['loss']
+        epoch = epoch + batch / total_batches
+        losses = {'train/{}'.format(key): val for key, val in loss.items()}
+        self.writer.add_scalars(self.tag, losses, epoch)
+
+    @skip_on_import_error(SummaryWriter)
+    def epoch_end(self, epoch, loss, examples, duration, valid_loss=None):
+        if self.log_checkpoints:
+            return
+
+        losses = {'train/{}'.format(key): val for key, val in loss.items()}
+        self.writer.add_scalars(self.tag, losses, epoch)
+
+    @skip_on_import_error(SummaryWriter)
+    def validation_end(self, epoch, loss):
+        losses = {'valid/{}'.format(key): val for key, val in loss.items()}
+        self.writer.add_scalars(self.tag, losses, epoch + 1)
