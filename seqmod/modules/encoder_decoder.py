@@ -168,8 +168,9 @@ class Decoder(nn.Module):
 
         _, batch, hid_dim = hidden.size()
 
-        return Variable(hidden.data.new(batch, hid_dim).zero_(),
-                        volatile=not self.training)
+        output = torch.normal(hidden.data.new(batch, hid_dim).zero_(), 0.3)
+
+        return Variable(output, volatile=not self.training)
 
     def forward(self, inp, hidden, enc_outs, enc_att=None, prev_out=None,
                 mask=None, conds=None):
