@@ -197,5 +197,5 @@ if __name__ == '__main__':
         args.epochs, args.checkpoint)
 
     if args.save:
-        args = vars(args)       # make dictionary args
-        u.save_checkpoint(args.save_path, best_model, d, args, ppl=test_loss)
+        u.save_checkpoint(
+            args.save_path, best_model, d, vars(args), ppl=test_loss)

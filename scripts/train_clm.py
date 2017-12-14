@@ -185,5 +185,5 @@ if __name__ == '__main__':
         args.epochs, args.checkpoint)
 
     if args.save:
-        u.save_checkpoint(args.model_path, best_model, d, vars(args),
-                          ppl=test_ppl)
+        u.save_checkpoint(
+            args.model_path, best_model, d, vars(args), ppl=test_ppl)

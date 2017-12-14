@@ -245,7 +245,7 @@ class EncoderDecoder(nn.Module):
                  src_dict,
                  trg_dict=None,
                  cell='LSTM',
-                 att_type='Global',
+                 att_type='general',
                  dropout=0.0,
                  word_dropout=0.0,
                  deepout_layers=0,
@@ -393,6 +393,9 @@ class EncoderDecoder(nn.Module):
         self.load_state_dict(state_dict)
 
     def init_decoder(self, model, target_module='rnn', layers=(0,)):
+        """
+        Use a Language Model to initalize the decoder
+        """
         assert isinstance(model.rnn, type(self.decoder.rnn_step))
         target_rnn = getattr(model, target_module).state_dict().keys()
         source_rnn = self.decoder.rnn_step.state_dict().keys()
@@ -627,19 +630,18 @@ class EncoderDecoder(nn.Module):
         # output variables
         scores, hyps, atts = 0, [], []
 
-        # Encode
+        # Encoder
         emb = self.src_embeddings(src)
         enc_outs, enc_hidden = self.encoder(emb)
 
-        # Decode
-        # (handler conditions)
+        # Conditions (optional)
         if self.cond_dim is not None:
             if conds is None:
                 raise ValueError("Conditional decoder needs conds")
             conds = [emb(cond) for cond, emb in zip(conds, self.cond_embs)]
-            # (batch_size x total emb dim)
-            conds = torch.cat(conds, 1)
+            conds = torch.cat(conds, 1)  # (batch_size x total emb dim)
 
+        # Decoder
         dec_hidden = self.decoder.init_hidden_for(enc_hidden)
         dec_out, enc_att = None, None
         if self.decoder.att_type.lower() == 'bahdanau':
@@ -685,7 +687,7 @@ class EncoderDecoder(nn.Module):
         bos = self.src_dict.get_bos()
         gpu = src.is_cuda
 
-        # Encode
+        # Encoder
         emb = self.src_embeddings(src)
         enc_outs, enc_hidden = self.encoder(emb)
         enc_outs = enc_outs.repeat(1, beam_width, 1)
@@ -695,16 +697,15 @@ class EncoderDecoder(nn.Module):
         else:
             enc_hidden = enc_hidden.repeat(1, beam_width, 1)
 
-        # Decode
-        # (handler conditions)
+        # Conditions (optional)
         if self.cond_dim is not None:
             if conds is None:
                 raise ValueError("Conditional decoder needs conds")
             conds = [emb(cond) for cond, emb in zip(conds, self.cond_embs)]
-            # (batch_size x total emb dim)
-            conds = torch.cat(conds, 1)
+            conds = torch.cat(conds, 1)  # (batch_size x total emb dim)
             conds = conds.repeat(beam_width, 1)
 
+        # Decoder
         dec_hidden = self.decoder.init_hidden_for(enc_hidden)
         dec_out, enc_att = None, None
         if self.decoder.att_type.lower() == 'bahdanau':
@@ -722,8 +723,7 @@ class EncoderDecoder(nn.Module):
             dec_out, dec_hidden, att_weights = self.decoder(
                 prev_emb, dec_hidden, enc_outs, prev_out=dec_out,
                 enc_att=enc_att, conds=conds)
-            # (width x vocab_size)
-            logprobs = self.project(dec_out)
+            logprobs = self.project(dec_out)  # (width x vocab_size)
             beam.advance(logprobs.data)
 
             # repackage according to source beam

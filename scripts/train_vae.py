@@ -192,8 +192,8 @@ if __name__ == '__main__':
         model.cuda()
 
     optimizer = getattr(optim, args.optim)(model.parameters(), lr=args.lr)
-    # halve every epoch
-    scheduler = optim.lr_scheduler.StepLR(optimizer, 1, gamma=0.25)
+    # reduce rate by gamma every n epochs
+    scheduler = optim.lr_scheduler.StepLR(optimizer, 1, gamma=0.75)
     scheduler.verbose = True
 
     class VAETrainer(Trainer):

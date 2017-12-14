@@ -197,7 +197,7 @@ if __name__ == '__main__':
     trainer.add_hook(hook, hooks_per_epoch=args.hooks_per_epoch)
     hook = make_schedule_hook(
         inflection_sigmoid(len(train) * 2, 1.75, inverse=True))
-    trainer.add_hook(hook, hooks_per_epoch=1000)
+    # trainer.add_hook(hook, hooks_per_epoch=1000)
 
     (model, valid_loss), test_loss = trainer.train(
         args.epochs, args.checkpoint, shuffle=True, use_schedule=True)
