@@ -73,13 +73,12 @@ def save_checkpoint(parent, model, d, args, ppl=None, suffix=None):
     Save model together with dictionary and training input arguments.
     If target parent path doesn't exist it will be created.
     """
-    dirpath = datetime.now().strftime("%Y_%m_%d-%H_%M_%S")
-
+    dirpath = model.__class__.__name__
+    dirpath += datetime.now().strftime("%Y_%m_%d-%H_%M_%S")
     if ppl is not None:
         dirpath += '-{:.3f}'.format(ppl)
     if suffix is not None:
         dirpath += '-{}'.format(suffix)
-
     dirpath = os.path.join(parent, dirpath)
 
     if not os.path.isdir(dirpath):
