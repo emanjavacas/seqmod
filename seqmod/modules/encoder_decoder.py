@@ -472,19 +472,6 @@ class EncoderDecoder(nn.Module):
         --------
         - prev: torch.LongTensor(batch_size)
         """
-        # sample_mask = torch.bernoulli(
-        #     torch.zeros_like(prev).float() + self.scheduled_rate) == 0
-
-        # # return if no sampling is necessary
-        # if sample_mask.nonzero().dim() == 0:
-        #     return prev
-
-        # sampled = self.project(Variable(dec_out, volatile=True)).max(1)[1].data
-        # sample_mask = sample_mask.nonzero().squeeze(1)
-        # prev[sample_mask] = sampled[sample_mask]
-
-        # return prev
-
         keep_mask = torch.bernoulli(
             torch.zeros_like(prev).float() + self.scheduled_rate) == 1
 
@@ -551,11 +538,8 @@ class EncoderDecoder(nn.Module):
         for step, prev in enumerate(trg):
             # schedule
             if use_schedule and step > 0 and self.scheduled_rate < 1.0:
-                prev_s = self.get_scheduled_step(prev.data, dec_out.data)
-                prev_s = Variable(prev_s, volatile=not self.training)
-                # agreement = (prev.data == prev_s.data).nonzero().nelement()
-                # print(agreement)
-                prev = prev_s
+                prev = self.get_scheduled_step(prev.data, dec_out.data)
+                prev = Variable(prev, volatile=not self.training)
 
             # (batch x emb_dim)
             prev_emb = self.trg_embeddings(prev).squeeze(0)
