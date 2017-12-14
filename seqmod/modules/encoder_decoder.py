@@ -472,27 +472,35 @@ class EncoderDecoder(nn.Module):
         --------
         - prev: torch.LongTensor(batch_size)
         """
-        if self.scheduled_rate == 1:
+        # sample_mask = torch.bernoulli(
+        #     torch.zeros_like(prev).float() + self.scheduled_rate) == 0
+
+        # # return if no sampling is necessary
+        # if sample_mask.nonzero().dim() == 0:
+        #     return prev
+
+        # sampled = self.project(Variable(dec_out, volatile=True)).max(1)[1].data
+        # sample_mask = sample_mask.nonzero().squeeze(1)
+        # prev[sample_mask] = sampled[sample_mask]
+
+        # return prev
+
+        keep_mask = torch.bernoulli(
+            torch.zeros_like(prev).float() + self.scheduled_rate) == 1
+
+        # return if no sampling is necessary
+        if len(keep_mask.nonzero()) == len(prev):
             return prev
 
-        # wrap in volatile variables and compute model output
-        prev = Variable(prev, volatile=True)
-        dec_out = Variable(dec_out, volatile=True)
-        _, prev_ = self.project(dec_out).max(1)  # (batch x hid_dim) -> (batch)
+        sampled = self.project(Variable(dec_out, volatile=True)).max(1)[1].data
 
-        # sample from the model output
-        param = torch.zeros_like(prev).float() + self.scheduled_rate
-        index = (torch.bernoulli(param) == 0)
+        if keep_mask.nonzero().dim() == 0:  # return all sampled
+            return sampled
 
-        # assign sampled outputs if any got sampled
-        if index.nonzero().dim() == 0:
-            return prev.data
+        keep_mask = keep_mask.nonzero().squeeze(1)
+        sampled[keep_mask] = prev[keep_mask]
 
-        index = index.nonzero().squeeze(1)
-        # agreement = prev[index] == prev_[index]
-        prev[index] = prev_[index]
-
-        return prev.data
+        return sampled
 
     def forward(self, inp, trg, conds=None, use_schedule=False):
         """
@@ -542,9 +550,12 @@ class EncoderDecoder(nn.Module):
 
         for step, prev in enumerate(trg):
             # schedule
-            if use_schedule and step > 0:  # avoid first step
-                prev = self.get_scheduled_step(prev.data, dec_out.data)
-                prev = Variable(prev, volatile=not self.training)
+            if use_schedule and step > 0 and self.scheduled_rate < 1.0:
+                prev_s = self.get_scheduled_step(prev.data, dec_out.data)
+                prev_s = Variable(prev_s, volatile=not self.training)
+                # agreement = (prev.data == prev_s.data).nonzero().nelement()
+                # print(agreement)
+                prev = prev_s
 
             # (batch x emb_dim)
             prev_emb = self.trg_embeddings(prev).squeeze(0)
