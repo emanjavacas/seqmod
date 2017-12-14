@@ -111,14 +111,17 @@ class Decoder(nn.Module):
         to current rnn input. (See Luong et al. 2015)
     """
     def __init__(self, emb_dim, hid_dim, num_layers, cell,
-                 att_dim, att_type='general', dropout=0.0,
+                 att_dim=None, att_type='general', dropout=0.0,
                  input_feed=False, cond_dim=None):
-        self.num_layers = num_layers
         self.hid_dim = hid_dim
-        self.att_type = att_type
+        self.emb_dim = emb_dim
+        self.num_layers = num_layers
         self.cell = cell
-        self.input_feed = input_feed
+        self.att_dim = att_dim or hid_dim
+        self.att_type = att_type
         self.dropout = dropout
+        self.cond_dim = cond_dim
+        self.input_feed = input_feed
         super(Decoder, self).__init__()
 
         in_dim = emb_dim if not input_feed else hid_dim + emb_dim
@@ -130,10 +133,14 @@ class Decoder(nn.Module):
         # rnn layers
         stacked = StackedLSTM if cell == 'LSTM' else StackedGRU
         self.rnn_step = stacked(
-            self.num_layers, in_dim, hid_dim, dropout=dropout)
+            self.num_layers, in_dim, self.hid_dim, dropout=self.dropout)
 
-        # attention network
-        self.attn = attn.Attention(hid_dim, att_dim, scorer=att_type)
+        # attention network (optional)
+        if self.att_type and self.att_type.lower() != 'none':
+            self.attn = attn.Attention(
+                self.hid_dim, self.att_dim, scorer=self.att_type)
+
+        self.has_attention = hasattr(self, 'attn')
 
     def init_hidden_for(self, enc_hidden):
         """
@@ -178,7 +185,15 @@ class Decoder(nn.Module):
             Output of the encoder at the last layer for all encoding steps.
         - prev_out: torch.Tensor (batch x hid_dim), previous context vector,
             (required for input feeding)
+
+        Returns:
+        --------
+        - out: torch.Tensor(batch x hid_dim)
+        - hidden: torch.Tensor(num_layers x batch_size x hid_dim)
+        - weight (optional): torch.Tensor(batch x seq_len)
         """
+        weight = None
+
         if self.input_feed:
             if prev_out is None:
                 prev_out = self.init_output_for(hidden)
@@ -189,15 +204,15 @@ class Decoder(nn.Module):
 
         out, hidden = self.rnn_step(inp, hidden)
 
-        # out (batch x hid_dim), weight (batch x seq_len)
-        out, weight = self.attn(out, enc_outs, enc_att=enc_att, mask=mask)
+        if self.has_attention:
+            out, weight = self.attn(out, enc_outs, enc_att=enc_att, mask=mask)
 
         return out, hidden, weight
 
 
 class EncoderDecoder(nn.Module):
     """
-    Vanilla configurable encoder-decoder architecture
+    Configurable encoder-decoder architecture
 
     Parameters:
     -----------
@@ -630,14 +645,11 @@ class EncoderDecoder(nn.Module):
             dec_out, dec_hidden, att_weights = self.decoder(
                 prev_emb, dec_hidden, enc_outs, prev_out=dec_out,
                 enc_att=enc_att, mask=inp_mask)
-            # (batch x vocab_size)
-            logprobs = self.project(dec_out)
-            # (batch) argmax over logprobs
-            logprobs, prev = logprobs.max(1)
+            logprobs = self.project(dec_out)  # (batch x vocab_size)
+            logprobs, prev = logprobs.max(1)  # (batch) argmax over logprobs
             # accumulate
             scores += logprobs.data
             hyps.append(prev.data)
-            atts.append(att_weights.data)
             # update mask
             mask = mask * (prev.data != eos).float()
 
@@ -646,9 +658,8 @@ class EncoderDecoder(nn.Module):
                 break
 
         hyps = torch.stack(hyps).transpose(0, 1).tolist()
-        atts = torch.stack(atts).transpose(0, 1).tolist()
 
-        return scores.cpu().tolist(), hyps, atts
+        return scores.cpu().tolist(), hyps, None
 
     def translate_beam(self, src, max_decode_len=2, beam_width=5, conds=None):
         """
