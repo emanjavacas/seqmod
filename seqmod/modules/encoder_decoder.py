@@ -625,7 +625,7 @@ class EncoderDecoder(nn.Module):
         inp_mask = src != self.src_dict.get_pad()
 
         for _ in range(len(src) * max_decode_len):
-            prev = prev.unsqueeze(1)  # add seq_len dim
+            prev = prev.unsqueeze(0)  # add seq_len dim
             prev_emb = self.trg_embeddings(prev).squeeze(0)
             dec_out, dec_hidden, att_weights = self.decoder(
                 prev_emb, dec_hidden, enc_outs, prev_out=dec_out,
