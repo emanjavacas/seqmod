@@ -81,8 +81,10 @@ class EarlyStopping(pqueue):
 
     """
 
-    def __init__(self, maxsize, patience=None, reset_patience=True):
+    def __init__(self, maxsize, tolerance=1e-4,
+                 patience=None, reset_patience=True):
         """Set params."""
+        self.tolerance = tolerance
         self.patience, self.fails = patience or maxsize - 1, 0
         self.reset_patience = reset_patience
         self.stopped = False
@@ -102,7 +104,7 @@ class EarlyStopping(pqueue):
         self.checks.append(checkpoint)
         smallest, model = self.get_min()
 
-        if checkpoint > smallest:
+        if checkpoint + self.tolerance > smallest:
             self.fails += 1
             if self.fails == self.patience:
                 self.stopped = True
