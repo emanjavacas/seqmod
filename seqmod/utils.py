@@ -2,6 +2,7 @@
 import os
 import math
 import yaml
+from datetime import datetime
 import random; random.seed(1001)
 from collections import OrderedDict
 
@@ -67,29 +68,22 @@ def save_model(model, prefix, d=None, mode='torch'):
             save_fn(d, f)
 
 
-def save_checkpoint(path, model, d, args, ppl=None, sep='-', suffix='_dup',
-                    vals='cell layers hid_dim emb_dim bptt'):
+def save_checkpoint(parent, model, d, args, ppl=None, suffix=None):
     """
     Save model together with dictionary and training input arguments.
-    If target path doesn't exist it will be created.
+    If target parent path doesn't exist it will be created.
     """
-    vals = sep.join(['{}{{{}}}'.format(val[0], val) for val in vals.split()])
-    dirpath = vals.format(**args)
+    dirpath = datetime.now().strftime("%Y_%m_%d-%H_%M_%S")
 
     if ppl is not None:
         dirpath += '-{:.3f}'.format(ppl)
+    if suffix is not None:
+        dirpath += '-{}'.format(suffix)
 
-    if not os.path.isdir(path):
-        os.mkdir(path)
+    dirpath = os.path.join(parent, dirpath)
 
-    dirpath = os.path.join(path, dirpath)
-
-    if os.path.isdir(dirpath):
-        dirpath = dirpath + suffix
-        print("Path to this model already exists.")
-        print("Writting instead to [{}]".format(dirpath))
-
-    os.mkdir(dirpath)
+    if not os.path.isdir(dirpath):
+        os.makedirs(dirpath)
 
     # save model with dictionary
     save_model(model, os.path.join(dirpath, 'model'), d=d)
