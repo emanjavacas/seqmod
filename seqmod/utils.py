@@ -1,6 +1,7 @@
 
 import os
 import math
+import yaml
 import random; random.seed(1001)
 from collections import OrderedDict
 
@@ -33,12 +34,19 @@ def load_model(path):
         import numpy as np
         load_fn = np.load
     else:
-        raise ValueError("Unknown file format [%s]" % path)
+        raise ValueError("Unknown file format [{}]".format(path))
     with open(path, 'rb') as f:
         return load_fn(f)
 
 
 def save_model(model, prefix, d=None, mode='torch'):
+    """
+    Save model using a preferred method. Model gets saved to `prefix.ext`,
+    where `ext` is derived from the selected mode. Pass `d` if you want to
+    also save a corresponding dictionary to `prefix.dict.ext`.
+
+    If target directory path doesn't exist, it will fail.
+    """
     if mode == 'torch':
         import torch
         save_fn, ext = torch.save, 'pt'
@@ -49,27 +57,48 @@ def save_model(model, prefix, d=None, mode='torch'):
         import numpy as np
         save_fn, ext = lambda model, f: np.save(f, model), 'npy'
     else:
-        raise ValueError("Unknown mode [%s]" % mode)
+        raise ValueError("Unknown mode [{}]".format(mode))
+
     with open(prefix + "." + ext, 'wb') as f:
         save_fn(model, f)
+
     if d is not None:
         with open(prefix + ".dict." + ext, 'wb') as f:
             save_fn(d, f)
 
 
-def save_checkpoint(path, model, d, args, ppl=None,
+def save_checkpoint(path, model, d, args, ppl=None, sep='-', suffix='_dup',
                     vals='cell layers hid_dim emb_dim bptt'):
     """
     Save model together with dictionary and training input arguments.
+    If target path doesn't exist it will be created.
     """
-    vals = '-'.join(['{}{{{}}}'.format(val[0], val) for val in vals.split()])
-    fname = vals.format(**args)
+    vals = sep.join(['{}{{{}}}'.format(val[0], val) for val in vals.split()])
+    dirpath = vals.format(**args)
+
     if ppl is not None:
-        fname += '-{:.3f}'.format(ppl)
+        dirpath += '-{:.3f}'.format(ppl)
+
     if not os.path.isdir(path):
         os.mkdir(path)
-    fname = os.path.join(path, fname)
-    save_model({'model': model, 'd': d, 'args': args}, fname)
+
+    dirpath = os.path.join(path, dirpath)
+
+    if os.path.isdir(dirpath):
+        dirpath = dirpath + suffix
+        print("Path to this model already exists.")
+        print("Writting instead to [{}]".format(dirpath))
+
+    os.mkdir(dirpath)
+
+    # save model with dictionary
+    save_model(model, os.path.join(dirpath, 'model'), d=d)
+
+    # save hyperparameters
+    with open(os.path.join(dirpath, 'params.yml'), 'w') as f:
+        yaml.dump(args, f, default_flow_style=False)
+
+    return dirpath
 
 
 # Pytorch utils
@@ -84,7 +113,7 @@ def merge_states(state_dict1, state_dict2, merge_map):
         if p in merge_map:
             target_p = merge_map[p]
             assert target_p in state_dict1, \
-                "Wrong target param [%s]" % target_p
+                "Wrong target param [{}]".format(target_p)
             state_dict[target_p] = [p]
         else:
             state_dict[target_p] = state_dict1[target_p]
@@ -386,7 +415,7 @@ def make_lm_hook(d, seed_texts=None, max_seq_len=25, gpu=False,
         trainer.log("info", "Checking training...")
         if validate:
             loss = sum(trainer.validate_model().pack())
-            trainer.log("info", "Valid loss: %g" % loss)
+            trainer.log("info", "Valid loss: {:g}".format(loss))
             trainer.log("info", "Registering early stopping loss...")
             if early_stopping is not None:
                 early_stopping.add_checkpoint(loss)
@@ -412,7 +441,7 @@ def make_mlm_hook(d, seed_texts=None, max_seq_len=25, gpu=False,
         trainer.log("info", "Checking training...")
         if validate:
             loss = sum(trainer.validate_model().pack())
-            trainer.log("info", "Valid loss: %g" % loss)
+            trainer.log("info", "Valid loss: {:g}".format(loss))
             trainer.log("info", "Registering early stopping loss...")
             if early_stopping is not None:
                 early_stopping.add_checkpoint(loss)
