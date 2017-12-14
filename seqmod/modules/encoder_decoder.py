@@ -294,10 +294,8 @@ class EncoderDecoder(nn.Module):
             emb_dim, hid_dim, num_layers,
             cell=cell, bidi=bidi, dropout=dropout, train_init=train_init)
 
-        # Decoder
-        # (conditions)
+        # Conditions (optional)
         self.cond_dim, self.cond_embs, self.grls = None, None, None
-
         if cond_dims is not None:
             if len(cond_dims) != len(cond_vocabs):
                 raise ValueError("cond_dims & cond_vocabs must be same length")
@@ -312,57 +310,74 @@ class EncoderDecoder(nn.Module):
                 # (add GRL)
                 self.grls.append(MLP(hid_dim, hid_dim, cond_vocab))
 
-        # (rnn)
+        # Decoder
         self.decoder = Decoder(
             emb_dim, hid_dim, num_layers, cell, att_dim,
             dropout=dropout, input_feed=input_feed,
             att_type=att_type, cond_dim=self.cond_dim)
 
         # Deepout (optional)
-        self.has_deepout = False
         if deepout_layers > 0:
-            self.has_deepout = True
             self.deepout = Highway(
                 hid_dim, num_layers=deepout_layers, activation=deepout_act)
 
+        self.has_deepout = hasattr(self, 'deepout')
+
         # Output projection
-        output_size = trg_vocab_size if self.bilingual else src_vocab_size
         if tie_weights:
-            project = nn.Linear(emb_dim, output_size)
-            project.weight = self.trg_embeddings.weight
+            proj = nn.Linear(emb_dim, trg_vocab_size)
+            proj.weight = self.trg_embeddings.weight
             if emb_dim != hid_dim:
-                # inp embeddings are (vocab x emb_dim)
-                # output embeddings are (hidden x vocab)
+                # inp embeddings are (vocab x emb_dim); output is (hid x vocab)
                 # if emb_dim != hidden, we insert a projection
                 logging.warn("When tying weights, output layer and "
                              "embedding layer should have equal size. "
                              "A projection layer will be insterted.")
-                self.project = nn.Sequential(
-                    nn.Linear(hid_dim, emb_dim), project, nn.LogSoftmax())
-            else:
-                # emb_dim == hidden, no projection needed
-                self.project = nn.Sequential(project, nn.LogSoftmax())
+                proj = nn.Sequential(nn.Linear(hid_dim, emb_dim), proj)
         else:
             # no tying
-            self.project = nn.Sequential(
-                nn.Linear(hid_dim, output_size),
-                nn.LogSoftmax())
+            proj = nn.Sequential(nn.Linear(hid_dim, trg_vocab_size))
 
-    # General utility functions
+        self.proj = nn.Sequential(proj, nn.LogSoftmax())
+
+    def project(self, dec_out):
+        """
+        Run output projection (from the possibly attended output til softmax).
+        During training the input for the entire target sequence is processed
+        at once for efficiency.
+        """
+        if dec_out.dim() == 3:  # collapse seq_len and batch_size (training)
+            seq_len, batch_size, _ = dec_out.size()
+            dec_out = dec_out.view(seq_len * batch_size, -1)
+
+        if self.has_deepout:
+            dec_out = self.deepout(dec_out)
+
+        return self.proj(dec_out)
+
     def is_cuda(self):
         "Whether the model is on a gpu. We assume no device sharing."
         return next(self.parameters()).is_cuda
 
-    def parameters(self):
+    def parameters(self, only_trainable=True):
+        """
+        Return trainable parameters
+        """
         for p in super(EncoderDecoder, self).parameters():
-            if p.requires_grad is True:
-                yield p
+            if only_trainable and not p.requires_grad:
+                continue
+            yield p
 
-    def n_params(self):
-        return sum([p.nelement() for p in self.parameters()])
+    def n_params(self, only_trainable=True):
+        """
+        Return number of (trainable) parameters
+        """
+        return sum([p.nelement() for p in self.parameters(only_trainable)])
 
-    # Initializers
     def init_encoder(self, model, layer_map={'0': '0'}, target_module='rnn'):
+        """
+        Use a Language Model to initalize the encoder
+        """
         merge_map = {}
         for p in model.state_dict().keys():
             if not p.startswith(target_module):
@@ -573,13 +588,9 @@ class EncoderDecoder(nn.Module):
         loss = 0
 
         for shard in u.shards(shard_data, size=split, test=test):
-            # (split x batch x hid_dim) -> (split * batch x hid_dim)
-            split, batch_size, _ = shard['out'].size()
-            out = shard['out'].view(split * batch_size, -1)
-            # (split x batch)} -> (split * batch)
-            trg = shard['trg'].view(-1)
-            shard_loss = F.nll_loss(self.project(out), trg, weight=weight,
-                                    size_average=False)
+            out, trg = shard['out'], shard['trg'].view(-1)
+            out = self.project(out)
+            shard_loss = F.nll_loss(out, trg, weight, size_average=False)
             shard_loss /= num_examples
             loss += shard_loss
 
