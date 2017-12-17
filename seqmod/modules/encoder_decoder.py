@@ -9,206 +9,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 
-from seqmod.modules.custom import word_dropout, grad_reverse
+from seqmod.modules.embedding import Embedding
+from seqmod.modules.custom import grad_reverse
 from seqmod.modules.custom import StackedLSTM, StackedGRU, MLP, Highway
 from seqmod.modules import attention as attn
 from seqmod.misc.beam_search import Beam
 from seqmod import utils as u
-
-
-class Encoder(nn.Module):
-    """
-    RNN Encoder that computes a sentence matrix representation
-    of the input using an RNN.
-    """
-    def __init__(self, in_dim, hid_dim, num_layers, cell,
-                 train_init=False, add_init_jitter=True,
-                 dropout=0.0, bidi=True):
-        self.in_dim = in_dim
-        self.cell = cell
-        self.bidi = bidi
-        self.train_init = train_init
-        self.add_init_jitter = add_init_jitter
-        self.num_layers = num_layers
-        self.num_dirs = 2 if bidi else 1
-        self.hid_dim = hid_dim // self.num_dirs
-
-        if hid_dim % self.num_dirs != 0:
-            raise ValueError("Hidden dimension must be even for BiRNNs")
-
-        super(Encoder, self).__init__()
-        self.rnn = getattr(nn, cell)(self.in_dim, self.hid_dim,
-                                     num_layers=self.num_layers,
-                                     dropout=dropout, bidirectional=self.bidi)
-
-        if self.train_init:
-            train_init_size = self.num_layers * self.num_dirs, 1, self.hid_dim
-            self.h_0 = nn.Parameter(torch.Tensor(*train_init_size).zero_())
-
-    def init_hidden_for(self, enc_outs):
-        batch_size = enc_outs.size(1)
-        size = (self.num_dirs * self.num_layers, batch_size, self.hid_dim)
-
-        if self.train_init:
-            h_0 = self.h_0.repeat(1, batch_size, 1)
-        else:
-            h_0 = enc_outs.data.new(*size).zero_()
-            h_0 = Variable(h_0, volatile=not self.training)
-
-        if self.add_init_jitter:
-            h_0 = h_0 + torch.normal(torch.zeros_like(h_0), 0.3)
-
-        if self.cell.startswith('LSTM'):
-            # compute memory cell
-            c_0 = enc_outs.data.new(*size).zero_()
-            c_0 = Variable(c_0, volatile=not self.training)
-            return h_0, c_0
-        else:
-            return h_0
-
-    def forward(self, inp, hidden=None):
-        """
-        Paremeters:
-        -----------
-
-        - inp: torch.Tensor (seq_len x batch x emb_dim)
-        - hidden: tuple (h_0, c_0)
-            h_0: ((num_layers * num_dirs) x batch x hid_dim)
-            n_0: ((num_layers * num_dirs) x batch x hid_dim)
-
-        Returns: output, (h_t, c_t)
-        --------
-
-        - output: (seq_len x batch x hidden_size * num_directions)
-        - h_t: (num_layers x batch x hidden_size * num_directions)
-        - c_t: (num_layers x batch x hidden_size * num_directions)
-        """
-        if hidden is None:
-            hidden = self.init_hidden_for(inp)
-
-        outs, hidden = self.rnn(inp, hidden)
-
-        if self.bidi:
-            # BiRNN encoder outputs (num_layers * 2 x batch x hid_dim)
-            # but decoder expects   (num_layers x batch x hid_dim * 2)
-            if self.cell.startswith('LSTM'):
-                hidden = (u.repackage_bidi(hidden[0]),
-                          u.repackage_bidi(hidden[1]))
-            else:
-                hidden = u.repackage_bidi(hidden)
-
-        return outs, hidden
-
-
-class Decoder(nn.Module):
-    """
-    Attentional decoder for the EncoderDecoder architecture.
-
-    Parameters:
-    -----------
-
-    - input_feed: bool, whether to concatenate last attentional vector
-        to current rnn input. (See Luong et al. 2015)
-    """
-    def __init__(self, emb_dim, hid_dim, num_layers, cell,
-                 att_dim=None, att_type='general', dropout=0.0,
-                 input_feed=False, cond_dim=None):
-        self.hid_dim = hid_dim
-        self.emb_dim = emb_dim
-        self.num_layers = num_layers
-        self.cell = cell
-        self.att_dim = att_dim or hid_dim
-        self.att_type = att_type
-        self.dropout = dropout
-        self.cond_dim = cond_dim
-        self.input_feed = input_feed
-        super(Decoder, self).__init__()
-
-        in_dim = emb_dim if not input_feed else hid_dim + emb_dim
-
-        # handle conditions
-        if cond_dim is not None:
-            in_dim += cond_dim
-
-        # rnn layers
-        stacked = StackedLSTM if cell == 'LSTM' else StackedGRU
-        self.rnn_step = stacked(
-            self.num_layers, in_dim, self.hid_dim, dropout=self.dropout)
-
-        # attention network (optional)
-        if self.att_type and self.att_type.lower() != 'none':
-            self.attn = attn.Attention(
-                self.hid_dim, self.att_dim, scorer=self.att_type)
-
-        self.has_attention = hasattr(self, 'attn')
-
-    def init_hidden_for(self, enc_hidden):
-        """
-        Creates a variable at decoding step 0 to be fed as init hidden step.
-        Returns: torch.Tensor(num_layers x batch x hid_dim)
-        """
-        if self.cell.startswith('LSTM'):
-            h_0, _ = enc_hidden
-            c_0 = h_0.data.new(*h_0.size()).zero_()
-            c_0 = Variable(c_0, volatile=not self.training)
-            return h_0, c_0
-        else:
-            return enc_hidden
-
-    def init_output_for(self, hidden):
-        """
-        Creates a variable to be concatenated with previous target
-        embedding as input for the first rnn step. This is used
-        for the first decoding step when using the input_feed flag.
-
-        Returns: torch.Tensor(batch x hid_dim)
-        """
-        if self.cell.startswith('LSTM'):
-            hidden = hidden[0]
-
-        _, batch, hid_dim = hidden.size()
-
-        output = torch.normal(hidden.data.new(batch, hid_dim).zero_(), 0.3)
-
-        return Variable(output, volatile=not self.training)
-
-    def forward(self, inp, hidden, enc_outs, enc_att=None, prev_out=None,
-                mask=None, conds=None):
-        """
-        Parameters:
-        -----------
-
-        - inp: torch.Tensor (batch x emb_dim), Previously decoded output.
-        - hidden: Used to seed the initial hidden state of the decoder.
-            h_t: (num_layers x batch x hid_dim)
-            c_t: (num_layers x batch x hid_dim)
-        - enc_outs: torch.Tensor (seq_len x batch x hid_dim),
-            Output of the encoder at the last layer for all encoding steps.
-        - prev_out: torch.Tensor (batch x hid_dim), previous context vector,
-            (required for input feeding)
-
-        Returns:
-        --------
-        - out: torch.Tensor(batch x hid_dim)
-        - hidden: torch.Tensor(num_layers x batch_size x hid_dim)
-        - weight (optional): torch.Tensor(batch x seq_len)
-        """
-        weight = None
-
-        if self.input_feed:
-            if prev_out is None:
-                prev_out = self.init_output_for(hidden)
-            inp = torch.cat([inp, prev_out], 1)
-
-        if conds is not None:
-            inp = torch.cat([inp, conds], 1)
-
-        out, hidden = self.rnn_step(inp, hidden)
-
-        if self.has_attention:
-            out, weight = self.attn(out, enc_outs, enc_att=enc_att, mask=mask)
-
-        return out, hidden, weight
 
 
 class EncoderDecoder(nn.Module):
@@ -268,25 +74,17 @@ class EncoderDecoder(nn.Module):
         trg_vocab_size = len(self.trg_dict)
         self.bilingual = bool(trg_dict)
 
-        # Word_dropout
-        self.word_dropout = word_dropout
-        self.target_code = self.src_dict.get_unk()
-        codes = [self.src_dict.get_eos(),
-                 self.src_dict.get_bos(),
-                 self.src_dict.get_pad()]
-        self.reserved_codes = tuple(code for code in codes if code is not None)
-
         # NLLLoss weight (downweight loss on pad) & schedule
         self.nll_weight = torch.ones(len(self.trg_dict))
         self.nll_weight[self.trg_dict.get_pad()] = 0
         self.scheduled_rate = scheduled_rate
 
         # Embedding layer(s)
-        self.src_embeddings = nn.Embedding(
-            src_vocab_size, emb_dim, padding_idx=self.src_dict.get_pad())
+        self.src_embeddings = Embedding(
+            src_vocab_size, emb_dim, d=src_dict, word_dropout=word_dropout)
         if self.bilingual:
-            self.trg_embeddings = nn.Embedding(
-                trg_vocab_size, emb_dim, padding_idx=self.trg_dict.get_pad())
+            self.trg_embeddings = Embedding(
+                trg_vocab_size, emb_dim, d=trg_dict, word_dropout=word_dropout)
         else:
             self.trg_embeddings = self.src_embeddings
 
@@ -295,39 +93,31 @@ class EncoderDecoder(nn.Module):
             emb_dim, hid_dim, num_layers,
             cell=cell, bidi=bidi, dropout=dropout, train_init=train_init)
 
-        # Conditions (optional)
-        self.cond_dim, self.cond_embs, self.grls = None, None, None
-        if cond_dims is not None:
-            if len(cond_dims) != len(cond_vocabs):
-                raise ValueError("cond_dims & cond_vocabs must be same length")
-            # total cond embedding size
-            self.cond_dim = 0
-            # allocate parameters
-            self.cond_embs, self.grls = nn.ModuleList(), nn.ModuleList()
-            for cond_vocab, cond_dim in zip(cond_vocabs, cond_dims):
-                # (add conds embeddings)
-                self.cond_embs.append(nn.Embedding(cond_vocab, cond_dim))
-                self.cond_dim += cond_dim
-                # (add GRL)
-                self.grls.append(MLP(hid_dim, hid_dim, cond_vocab))
-
         # Decoder
         self.decoder = Decoder(
             emb_dim, hid_dim, num_layers, cell, att_dim,
             dropout=dropout, input_feed=input_feed,
             att_type=att_type, cond_dim=self.cond_dim)
 
-        # Deepout (optional)
+        self.proj = self._build_projection(
+            self.trg_embeddings, self.decoder.hid_dim,
+            deepout_layers, deepout_act)
+
+    def _build_projection(self, embs, hid_dim, deepout_layers, deepout_act):
+        output = []
+
         if deepout_layers > 0:
-            self.deepout = Highway(
+            highway = Highway(
                 hid_dim, num_layers=deepout_layers, activation=deepout_act)
+            output.append(highway)
 
-        self.has_deepout = hasattr(self, 'deepout')
+        emb_dim, vocab_size = embs.embedding_size, embs.num_embeddings
 
-        # Output projection
-        if tie_weights:
-            proj = nn.Linear(emb_dim, trg_vocab_size)
-            proj.weight = self.trg_embeddings.weight
+        if not tie_weights:
+            proj = nn.Linear(hid_dim, vocab_size)
+        else:
+            proj = nn.Linear(emb_dim, vocab_size)
+            proj.weight = embeddings.weight
             if emb_dim != hid_dim:
                 # inp embeddings are (vocab x emb_dim); output is (hid x vocab)
                 # if emb_dim != hidden, we insert a projection
@@ -335,11 +125,11 @@ class EncoderDecoder(nn.Module):
                              "embedding layer should have equal size. "
                              "A projection layer will be insterted.")
                 proj = nn.Sequential(nn.Linear(hid_dim, emb_dim), proj)
-        else:
-            # no tying
-            proj = nn.Sequential(nn.Linear(hid_dim, trg_vocab_size))
 
-        self.proj = nn.Sequential(proj, nn.LogSoftmax())
+        output.append(proj)
+        output.append(nn.LogSoftmax(dim=1))
+
+        return nn.Sequential(*output)
 
     def project(self, dec_out):
         """
@@ -374,80 +164,6 @@ class EncoderDecoder(nn.Module):
         Return number of (trainable) parameters
         """
         return sum([p.nelement() for p in self.parameters(only_trainable)])
-
-    def init_encoder(self, model, layer_map={'0': '0'}, target_module='rnn'):
-        """
-        Use a Language Model to initalize the encoder
-        """
-        merge_map = {}
-        for p in model.state_dict().keys():
-            if not p.startswith(target_module):
-                continue
-            from_layer = ''.join(filter(str.isdigit, p))
-            if from_layer not in layer_map:
-                continue
-            s = p.replace(target_module, 'encoder.rnn') \
-                 .replace(from_layer, layer_map[from_layer])
-            merge_map[p] = s
-        state_dict = u.merge_states(
-            self.state_dict(), model.state_dict(), merge_map)
-        self.load_state_dict(state_dict)
-
-    def init_decoder(self, model, target_module='rnn', layers=(0,)):
-        """
-        Use a Language Model to initalize the decoder
-        """
-        assert isinstance(model.rnn, type(self.decoder.rnn_step))
-        target_rnn = getattr(model, target_module).state_dict().keys()
-        source_rnn = self.decoder.rnn_step.state_dict().keys()
-        merge_map = {}
-        for param in source_rnn:
-            try:
-                # Decoder has format "LSTMCell_0.weight_ih"
-                num, suffix = re.findall(r".*([0-9]+)\.(.*)", param)[0]
-                # LM rnn has format "weight_ih_l0"
-                target_param = suffix + "_l" + num
-                if target_param in target_rnn:
-                    merge_map[target_param] = "decoder.rnn_step." + param
-            except IndexError:
-                continue        # couldn't find target module
-        state_dict = u.merge_states(
-            self.state_dict(), model.state_dict(), merge_map)
-        self.load_state_dict(state_dict)
-
-    def load_embeddings(self, weight, words, target_embs='src', verbose=False):
-        """
-        Load embeddings from a weight matrix with words `words` as rows.
-
-        Parameters
-        -----------
-        - weight: (vocab x emb_dim)
-        - words: list of words corresponding to each row in `weight`
-        """
-        # wrap in tensor
-        if isinstance(weight, list):
-            weight = torch.Tensor(weight).float()
-        if isinstance(weight, np.ndarray):
-            weight = torch.from_numpy(weight).float()
-        # check embedding size
-        assert weight.size(1) == self.emb_dim, \
-            "Mismatched embedding dim {} for model with dim {}".format(
-                (weight.size(1), self.emb_dim))
-
-        target_module = getattr(self, '{}_embeddings'.format(target_embs))
-        target_dict = getattr(self, '{}_dict'.format(target_embs))
-
-        src_idxs, trg_idxs = [], []
-        for trg_idx, word in enumerate(words):
-            try:
-                src_idxs.append(target_dict.s2i[word])
-                trg_idxs.append(trg_idx)
-            except KeyError:
-                pass
-
-        trg_idxs = torch.LongTensor(trg_idxs)
-        src_idxs = torch.LongTensor(src_idxs)
-        target_module.weight.data[src_idxs] = weight[trg_idxs]
 
     def freeze_submodule(self, module):
         """
@@ -502,6 +218,10 @@ class EncoderDecoder(nn.Module):
         weights: tuple or None with as many entries as conditions in the model.
             Each entry is of size (batch x n_classes)
         """
+        # Encoder
+        enc_outs, enc_hidden = self.encoder(inp)
+
+        # Decoder
         if self.cond_dim is not None:
             if conds is None:
                 raise ValueError("Conditional decoder needs conds")
@@ -509,23 +229,6 @@ class EncoderDecoder(nn.Module):
             # (batch_size x total emb dim)
             conds = torch.cat(conds, 1)
 
-        # Encoder
-        inp = word_dropout(
-            inp, self.target_code, reserved_codes=self.reserved_codes,
-            p=self.word_dropout, training=self.training)
-
-        enc_outs, enc_hidden = self.encoder(self.src_embeddings(inp))
-
-        cond_out = []
-        if self.cond_dim is not None:
-            # use last step as summary vector
-            # enc_out = grad_reverse(enc_outs[-1]) # keep this for experiments
-            # use average step as summary vector
-            enc_out = grad_reverse(enc_outs.mean(dim=0))
-            for grl in self.grls:
-                cond_out.append(F.log_softmax(grl(enc_out), 1))
-
-        # Decoder
         dec_hidden = self.decoder.init_hidden_for(enc_hidden)
         dec_outs, dec_out, enc_att = [], None, None
 
@@ -557,25 +260,17 @@ class EncoderDecoder(nn.Module):
         pad, eos = self.src_dict.get_pad(), self.src_dict.get_eos()
         src, trg = batch_data
 
-        src_conds, trg_conds = None, None
-        if self.cond_dim is not None:
+        if self.encoder.conditional:
+            src_conds, trg_conds = None, None
             (src, *src_conds), (trg, *trg_conds) = src, trg
 
-        # remove <eos> from decoder targets substituting them with <pad>
-        # dec_trg = Variable(u.map_index(trg[:-1].data, eos, pad))
-        dec_trg = trg[:-1]
-        # remove <bos> from loss targets
-        loss_trg = trg[1:]
+        # remove <eos> from decoder targets, remove <bos> from loss targets
+        dec_trg, loss_trg = trg[:-1], trg[1:]
 
         # compute model output
-        dec_outs, cond_outs = self(
-            src, dec_trg, conds=src_conds, use_schedule=use_schedule)
-
-        # compute cond loss
-        cond_loss = []
-        if trg_conds is not None:
-            cond_loss = [F.nll_loss(pred, target, size_average=True)
-                         for pred, target in zip(cond_outs, trg_conds)]
+        enc_outs, enc_hidden = self.encoder(src)
+        enc_loss = self.encoder.loss(enc_outs, src_conds, test=test)
+        dec_outs = self.decoder(dec_trg, enc_outs, enc_hidden, conds=trg_conds)
 
         # compute memory efficient word loss
         weight = self.nll_weight
@@ -587,22 +282,16 @@ class EncoderDecoder(nn.Module):
         loss = 0
 
         for shard in u.shards(shard_data, size=split, test=test):
-            out, trg = shard['out'], shard['trg'].view(-1)
-            out = self.project(out)
-            shard_loss = F.nll_loss(out, trg, weight, size_average=False)
+            shard_loss = F.nll_loss(
+                self.project(shard['out']), shard['trg'].view(-1),
+                weight, size_average=False)
             shard_loss /= num_examples
             loss += shard_loss
 
             if not test:
-                # accumulate word gradient
                 shard_loss.backward(retain_graph=True)
 
-        if not test:
-            # accumulate cond gradient
-            if trg_conds is not None:
-                sum(cond_loss).backward()
-
-        return (loss.data[0], *[l.data[0] for l in cond_loss]), num_examples
+        return (loss.data[0], *enc_loss), num_examples
 
     def translate(self, src, max_decode_len=2, conds=None):
         """
