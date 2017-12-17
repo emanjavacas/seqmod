@@ -51,6 +51,14 @@ def load_from_file(path):
     return data
 
 
+def load_dataset(path, d, processor, args):
+    data = load_lines(path, processor=processor)
+    if not d.fitted:
+        d.fit(data)
+
+    return BlockDataset(data, d, args.batch_size, args.bptt, gpu=args.gpu)
+
+
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
@@ -86,9 +94,6 @@ if __name__ == '__main__':
     # - optimizer
     parser.add_argument('--optim', default='Adam', type=str)
     parser.add_argument('--lr', default=0.01, type=float)
-    parser.add_argument('--lr_decay', default=0.5, type=float)
-    parser.add_argument('--start_decay_at', default=5, type=int)
-    parser.add_argument('--decay_every', default=1, type=int)
     parser.add_argument('--max_norm', default=5., type=float)
     parser.add_argument('--early_stopping', default=-1, type=int)
     # - check
@@ -112,53 +117,47 @@ if __name__ == '__main__':
         train, test, valid = BlockDataset(
             data, d, args.batch_size, args.bptt, gpu=args.gpu, fitted=True
         ).splits(test=args.test_split, dev=args.dev_split)
-        del data
+
     else:
         print("Processing datasets...")
-        proc = text_processor(lower=args.lower, num=args.num, level=args.level)
+        processor = text_processor(
+            lower=args.lower, num=args.num, level=args.level)
         d = Dict(max_size=args.max_size, min_freq=args.min_freq,
                  eos_token=u.EOS, force_unk=True)
-        train, valid, test = None, None, None
+
         # already split
         if os.path.isfile(os.path.join(args.path, 'train.txt')):
-            if not os.path.isfile(os.path.join(args.path, 'valid.txt')):
-                raise ValueError("train.txt requires test.txt")
-            train_data = load_lines(
-                os.path.join(args.path, 'train.txt'), processor=proc)
-            d.fit(train_data)
-            train = BlockDataset(
-                train_data, d, args.batch_size, args.bptt, gpu=args.gpu)
-            del train_data
-            test = BlockDataset(
-                load_lines(os.path.join(args.path, 'test.txt'), proc),
-                d, args.batch_size, args.bptt, gpu=args.gpu, evaluation=True)
+            # train set
+            path = os.path.join(args.path, 'train.txt')
+            train = load_dataset(path, d, processor, args)
+            # test set
+            path = os.path.join(args.path, 'test.txt')
+            test = load_dataset(path, d, processor, args)
+            # valid set
             if os.path.isfile(os.path.join(args.path, 'valid.txt')):
-                valid = BlockDataset(
-                    load_lines(
-                        os.path.join(args.path, 'valid.txt'), processor=proc),
-                    d, args.batch_size, args.bptt, gpu=args.gpu,
-                    evaluation=True)
+                path = os.path.join(args.path, 'valid.txt')
+                valid = load_dataset(path, d, processor, args)
             else:
                 train, valid = train.splits(dev=None, test=args.dev_split)
+
         # split, assume input is single file or dir with txt files
         else:
-            data = load_lines(args.path, processor=proc)
+            data = load_lines(args.path, processor=processor)
             d.fit(data)
             train, valid, test = BlockDataset(
                 data, d, args.batch_size, args.bptt, gpu=args.gpu
             ).splits(test=args.test_split, dev=args.dev_split)
-            del data
 
     print(' * vocabulary size. {}'.format(len(d)))
     print(' * number of train batches. {}'.format(len(train)))
 
     print('Building model...')
-    m = LM(len(d), args.emb_dim, args.hid_dim,
+    m = LM(len(d), args.emb_dim, args.hid_dim, d,
            num_layers=args.num_layers, cell=args.cell, dropout=args.dropout,
            att_dim=args.att_dim, tie_weights=args.tie_weights,
            deepout_layers=args.deepout_layers, train_init=args.train_init,
            deepout_act=args.deepout_act, maxouts=args.maxouts,
-           word_dropout=args.word_dropout, target_code=d.get_unk())
+           word_dropout=args.word_dropout)
 
     u.initialize_model(m, rnn={'type': 'orthogonal', 'args': {'gain': 1.0}})
 
@@ -169,11 +168,12 @@ if __name__ == '__main__':
     print('* number of parameters: {}'.format(m.n_params()))
 
     optimizer = getattr(optim, args.optim)(m.parameters(), lr=args.lr)
+    scheduler = optim.lr_scheduler.StepLR(optimizer, 1, 0.5)
 
     # create trainer
     trainer = Trainer(
         m, {"train": train, "test": test, "valid": valid}, optimizer,
-        max_norm=args.max_norm)
+        max_norm=args.max_norm, scheduler=scheduler)
 
     # hooks
     early_stopping = None

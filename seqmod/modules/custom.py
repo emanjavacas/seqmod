@@ -5,16 +5,6 @@ import torch.nn.functional as F
 from torch.autograd import Variable, Function
 
 
-def make_mask(inp, p, size):
-    """
-    Make dropout mask variable
-    """
-    keep_p = 1 - p
-    mask = inp.data.new(*size)
-    mask.bernoulli_(keep_p).div_(keep_p)
-    return Variable(mask)
-
-
 # Stateful Modules
 class MLP(nn.Module):
     """
@@ -258,6 +248,16 @@ def _custom_rhn_init(module):
                 nn.init.constant(m.bias, -3)
 
 
+def make_dropout_mask(inp, p, size):
+    """
+    Make dropout mask variable
+    """
+    keep_p = 1 - p
+    mask = inp.data.new(*size)
+    mask.bernoulli_(keep_p).div_(keep_p)
+    return Variable(mask)
+
+
 class _RHN(nn.Module):
     """
     Implementation of the full RHN in which the recurrence is computed as:
@@ -334,12 +334,12 @@ class _RHN(nn.Module):
         """
         seq_len, batch_size, _ = inp.size()
         mask_size = (batch_size, self.in_dim)
-        h_mask = make_mask(inp, self.input_dropout, mask_size)
+        h_mask = make_dropout_mask(inp, self.input_dropout, mask_size)
         if self.tied_noise:
             t_mask, c_mask = h_mask, h_mask
         else:
-            t_mask = make_mask(inp, self.input_dropout, (mask_size))
-            c_mask = make_mask(inp, self.input_dropout, (mask_size))
+            t_mask = make_dropout_mask(inp, self.input_dropout, (mask_size))
+            c_mask = make_dropout_mask(inp, self.input_dropout, (mask_size))
         H = (h_mask.expand_as(inp) * inp).view(seq_len * batch_size, -1)
         T = (t_mask.expand_as(inp) * inp).view(seq_len * batch_size, -1)
         C = (c_mask.expand_as(inp) * inp).view(seq_len * batch_size, -1)
@@ -348,12 +348,12 @@ class _RHN(nn.Module):
         C = self.input_C(C).view(seq_len, batch_size, -1)
 
         mask_size = (batch_size, self.hid_dim)
-        s_h_mask = make_mask(inp, self.hidden_dropout, mask_size)
+        s_h_mask = make_dropout_mask(inp, self.hidden_dropout, mask_size)
         if self.tied_noise:
             s_t_mask, s_c_mask = s_h_mask, s_h_mask
         else:
-            s_t_mask = make_mask(inp, self.hidden_dropout, mask_size)
-            s_c_mask = make_mask(inp, self.hidden_dropout, mask_size)
+            s_t_mask = make_dropout_mask(inp, self.hidden_dropout, mask_size)
+            s_c_mask = make_dropout_mask(inp, self.hidden_dropout, mask_size)
 
         outs = []
         for H_t, T_t, C_t in zip(H, T, C):
@@ -429,22 +429,22 @@ class _RHNCoupled(nn.Module):
         """
         seq_len, batch_size, _ = inp.size()
         mask_size = (batch_size, self.in_dim)
-        h_mask = make_mask(inp, self.input_dropout, mask_size)
+        h_mask = make_dropout_mask(inp, self.input_dropout, mask_size)
         if self.tied_noise:
             t_mask = h_mask
         else:
-            t_mask = make_mask(inp, self.input_dropout, (mask_size))
+            t_mask = make_dropout_mask(inp, self.input_dropout, (mask_size))
         H = (h_mask.expand_as(inp) * inp).view(seq_len * batch_size, -1)
         T = (t_mask.expand_as(inp) * inp).view(seq_len * batch_size, -1)
         H = self.input_H(H).view(seq_len, batch_size, -1)
         T = self.input_T(T).view(seq_len, batch_size, -1)
 
         mask_size = (batch_size, self.hid_dim)
-        s_h_mask = make_mask(inp, self.hidden_dropout, mask_size)
+        s_h_mask = make_dropout_mask(inp, self.hidden_dropout, mask_size)
         if self.tied_noise:
             s_t_mask = s_h_mask
         else:
-            s_t_mask = make_mask(inp, self.hidden_dropout, mask_size)
+            s_t_mask = make_dropout_mask(inp, self.hidden_dropout, mask_size)
 
         outs = []
         for H_t, T_t in zip(H, T):

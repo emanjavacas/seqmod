@@ -74,7 +74,7 @@ def save_checkpoint(parent, model, d, args, ppl=None, suffix=None):
     If target parent path doesn't exist it will be created.
     """
     dirpath = model.__class__.__name__
-    dirpath += datetime.now().strftime("%Y_%m_%d-%H_%M_%S")
+    dirpath += '-{}'.format(datetime.now().strftime("%Y_%m_%d-%H_%M_%S"))
     if ppl is not None:
         dirpath += '-{:.3f}'.format(ppl)
     if suffix is not None:
@@ -120,7 +120,7 @@ def repackage_bidi(h_or_c):
     - h_n: (num_layers * 2 x batch x hid_dim)
     - c_n: (num_layers * 2 x batch x hid_dim)
 
-    This function turns a hidden input into:
+    This function turns a hidden output into:
         (num_layers x batch x hid_dim * 2)
     """
     layers_2, bs, hid_dim = h_or_c.size()
@@ -129,14 +129,10 @@ def repackage_bidi(h_or_c):
                  .view(layers_2 // 2, bs, hid_dim * 2)
 
 
-def unpackage_bidi(h_or_c):
-    layers, bs, hid_dim_2 = h_or_c.size()
-    return h_or_c.view(layers, bs, 2, hid_dim_2 // 2) \
-                 .transpose(1, 2).contiguous() \
-                 .view(layers * 2, bs, hid_dim_2 // 2)
-
-
 def repackage_hidden(h):
+    """
+    Detach hidden from previous graph
+    """
     if type(h) == Variable:
         return Variable(h.data)
     else:

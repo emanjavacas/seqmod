@@ -150,7 +150,7 @@ if __name__ == '__main__':
         m = u.load_model(args.model_path)
     else:
         print('Building model...')
-        m = LM(len(lang_d), args.emb_dim, args.hid_dim,
+        m = LM(len(lang_d), args.emb_dim, args.hid_dim, lang_d,
                num_layers=args.layers, cell=args.cell,
                dropout=args.dropout, tie_weights=args.tie_weights,
                deepout_layers=args.deepout_layers,
@@ -166,6 +166,7 @@ if __name__ == '__main__':
         m.cuda()
 
     optimizer = getattr(optim, args.optim)(m.parameters(), lr=args.lr)
+    scheduler = optim.lr_scheduler.StepLR(optimizer, 1, 0.5)
     early_stopping = EarlyStopping(max(args.patience, 10), args.patience)
 
     # hook
@@ -177,7 +178,8 @@ if __name__ == '__main__':
     # trainer
     trainer = Trainer(
         m, {'train': train, 'valid': valid, 'test': test},
-        optimizer, early_stopping=early_stopping, max_norm=args.max_norm)
+        optimizer, early_stopping=early_stopping, max_norm=args.max_norm,
+        scheduler=scheduler)
     trainer.add_loggers(std_logger)
     trainer.add_hook(check_hook, hooks_per_epoch=args.hooks_per_epoch)
 

@@ -53,6 +53,14 @@ def load_from_file(path):
     return data
 
 
+def load_dataset(path, d, processor, args):
+    data = load_lines(path, processor=processor)
+    if not d.fitted:
+        d.fit(data)
+
+    return BlockDataset(data, d, args.batch_size, args.bptt, gpu=args.gpu)
+
+
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
@@ -101,42 +109,36 @@ if __name__ == '__main__':
         train, test, valid = BlockDataset(
             data, d, args.batch_size, args.bptt, gpu=args.gpu, fitted=True
         ).splits(test=args.test_split, dev=args.dev_split)
-        del data
+
     else:
         print("Processing datasets...")
-        proc = text_processor(lower=args.lower, num=args.num, level=args.level)
+        processor = text_processor(
+            lower=args.lower, num=args.num, level=args.level)
         d = Dict(max_size=args.max_size, min_freq=args.min_freq,
                  eos_token=u.EOS, force_unk=True)
-        train, valid, test = None, None, None
+
         # already split
         if os.path.isfile(os.path.join(args.path, 'train.txt')):
-            if not os.path.isfile(os.path.join(args.path, 'valid.txt')):
-                raise ValueError("train.txt requires test.txt")
-            train_data = load_lines(
-                os.path.join(args.path, 'train.txt'), processor=proc)
-            d.fit(train_data)
-            train = BlockDataset(
-                train_data, d, args.batch_size, args.bptt, gpu=args.gpu)
-            del train_data
-            test = BlockDataset(
-                load_lines(os.path.join(args.path, 'test.txt'), proc),
-                d, args.batch_size, args.bptt, gpu=args.gpu, evaluation=True)
+            # train set
+            path = os.path.join(args.path, 'train.txt')
+            train = load_dataset(path, d, processor, args)
+            # test set
+            path = os.path.join(args.path, 'test.txt')
+            test = load_dataset(path, d, processor, args)
+            # valid set
             if os.path.isfile(os.path.join(args.path, 'valid.txt')):
-                valid = BlockDataset(
-                    load_lines(
-                        os.path.join(args.path, 'valid.txt'), processor=proc),
-                    d, args.batch_size, args.bptt, gpu=args.gpu,
-                    evaluation=True)
+                path = os.path.join(args.path, 'valid.txt')
+                valid = load_dataset(path, d, processor, args)
             else:
                 train, valid = train.splits(dev=None, test=args.dev_split)
-        # do split, assume input is single file or dir with txt files
+
+        # split, assume input is single file or dir with txt files
         else:
             data = load_lines(args.path, processor=proc)
             d.fit(data)
             train, valid, test = BlockDataset(
                 data, d, args.batch_size, args.bptt, gpu=args.gpu
             ).splits(test=args.test_split, dev=args.dev_split)
-            del data
 
     print(' * vocabulary size. {}'.format(len(d)))
     print(' * number of train batches. {}'.format(len(train)))
@@ -159,12 +161,11 @@ if __name__ == '__main__':
         def __init__(self, params):
             self.trainer, self.early_stopping = None, None
 
-            m = LM(len(d), params['emb_dim'], params['hid_dim'],
+            m = LM(len(d), params['emb_dim'], params['hid_dim'], d,
                    num_layers=params['num_layers'], cell=params['cell'],
                    dropout=params['dropout'], train_init=params['train_init'],
                    deepout_layers=params['deepout_layers'],
-                   maxouts=params['maxouts'], target_code=d.get_unk(),
-                   word_dropout=params['word_dropout'])
+                   maxouts=params['maxouts'], word_dropout=params['word_dropout'])
             u.initialize_model(m)
 
             optimizer = getattr(optim, args.optim)(m.parameters(), lr=args.lr)

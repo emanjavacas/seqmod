@@ -10,6 +10,7 @@ from torch.autograd import Variable
 
 from seqmod import utils as u
 from seqmod.modules.embedding import Embedding
+from seqmod.modules import custom
 from seqmod.modules.custom import MaxOut, Highway
 from seqmod.misc.beam_search import Beam
 
