@@ -9,8 +9,8 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 
 from seqmod import utils as u
-from seqmod.modules import custom
-from seqmod.modules.custom import word_dropout, MaxOut, Highway
+from seqmod.modules.embedding import Embedding
+from seqmod.modules.custom import MaxOut, Highway
 from seqmod.misc.beam_search import Beam
 
 
@@ -321,44 +321,6 @@ class AttentionalProjection(nn.Module):
         return torch.stack(output), weights
 
 
-class DeepOut(nn.Module):
-    """
-    DeepOut for Language Model following https://arxiv.org/pdf/1312.6026.pdf
-
-    Parameters:
-    -----------
-
-    in_dim: int, input dimension for first layer
-    layers: iterable of output dimensions for the hidden layers
-    activation: str (ReLU, Tanh, MaxOut), activation after linear layer
-    """
-    def __init__(self, in_dim, layers, activation, maxouts=2, dropout=0.0):
-        self.in_dim = in_dim
-        self.layers = layers
-        self.activation = activation
-        self.dropout = dropout
-
-        super(DeepOut, self).__init__()
-        self.layers, in_dim = [], self.in_dim
-
-        for idx, out_dim in enumerate(layers):
-            if activation == 'MaxOut':
-                layer = MaxOut(in_dim, out_dim, maxouts)
-            else:
-                layer = nn.Sequential(
-                    nn.Linear(in_dim, out_dim), getattr(nn, activation))
-            self.add_module('deepout_{}'.format(idx), layer)
-            self.layers.append(layer)
-            in_dim = out_dim
-
-    def forward(self, inp):
-        for layer in self.layers:
-            out = layer(inp)
-            out = F.dropout(out, p=self.dropout, training=self.training)
-            inp = out
-        return out
-
-
 class LM(nn.Module):
     """
     Vanilla RNN-based language model.
@@ -369,6 +331,7 @@ class LM(nn.Module):
     - vocab: int, vocabulary size.
     - emb_dim: int, embedding size.
     - hid_dim: int, hidden dimension of the RNN.
+    - dictionary: Dict.
     - num_layers: int, number of layers of the RNN.
     - cell: str, one of GRU, LSTM, RNN.
     - bias: bool, whether to include bias in the RNN.
@@ -393,10 +356,10 @@ class LM(nn.Module):
     - maxouts: int, only used if deepout_act is MaxOut (number of parts to use
         to compose the non-linearity function).
     """
-    def __init__(self, vocab, emb_dim, hid_dim, num_layers=1,
+    def __init__(self, vocab, emb_dim, hid_dim, dictionary, num_layers=1,
                  cell='GRU', bias=True, dropout=0.0, conds=None,
-                 word_dropout=0.0, target_code=None, reserved_codes=(),
-                 att_dim=None, tie_weights=False, train_init=False,
+                 word_dropout=0.0, att_dim=0, tie_weights=False,
+                 train_init=False, add_init_jitter=True,
                  deepout_layers=0, deepout_act='MaxOut', maxouts=2):
 
         if tie_weights and not emb_dim == hid_dim:
@@ -412,24 +375,15 @@ class LM(nn.Module):
         self.cell = cell
         self.bias = bias
         self.train_init = train_init
-        self.has_dropout = bool(dropout)
+        self.add_init_jitter = add_init_jitter
         self.dropout = dropout
-        self.add_attn = att_dim and att_dim > 0
-        self.deepout_layers = deepout_layers
-        self.deepout_act = deepout_act
-        self.maxouts = maxouts
-        self.add_deepout = deepout_layers and deepout_layers > 0
         self.conds = conds
         self.hidden_state = {}  # for hidden state persistance during training
         super(LM, self).__init__()
 
-        # Word dropout
-        self.word_dropout = word_dropout
-        self.target_code = target_code
-        self.reserved_codes = reserved_codes
-
         # Embeddings
-        self.embeddings = nn.Embedding(vocab, self.emb_dim)
+        self.embeddings = Embedding(
+            vocab, emb_dim, d=dictionary, word_dropout=word_dropout)
         rnn_input_size = self.emb_dim
         if self.conds is not None:
             conds = []
@@ -442,14 +396,14 @@ class LM(nn.Module):
         if cell.startswith('RHN'):
             self.num_layers = 1  # RHN layers don't add to output dims
 
+        # train init
         if self.train_init:
-            self.h_0 = nn.Parameter(torch.zeros(hid_dim * self.num_layers))
-            if cell.startswith('LSTM'):
-                self.c_0 = nn.Parameter(torch.zeros(hid_dim * self.num_layers))
+            init_size = self.num_layers, 1, self.hid_dim
+            self.h_0 = nn.Parameter(torch.Tensor(*init_size).zero_())
 
-        if hasattr(nn, cell):   # custom cell
+        if hasattr(nn, cell):   # built-in cell
             cell = getattr(nn, cell)
-        else:                   # built-in cell
+        else:                   # custom cell
             cell = getattr(custom, cell)
 
         self.rnn = cell(
@@ -457,37 +411,34 @@ class LM(nn.Module):
             num_layers=num_layers, bias=bias, dropout=dropout)
 
         # (optional) attention
-        if self.add_attn:
+        if att_dim > 0:
             if self.conds is not None:
                 raise ValueError("Attention is not supported with conditions")
             if self.cell not in ('RNN', 'GRU'):
                 raise ValueError("Currently only RNN, GRU supports attention")
-            if att_dim is None:
-                raise ValueError("Need to specify att_dim")
-            self.att_dim = att_dim
-            self.attn = AttentionalProjection(
-                self.att_dim, self.hid_dim, self.emb_dim)
-
-        # (optional) deepout
-        if self.add_deepout:
-            self.deepout = Highway(
-                in_dim=self.hid_dim,
-                layers=deepout_layers,
-                activation=MaxOut,
-                maxouts=maxouts)
+            self.attn = AttentionalProjection(att_dim, hid_dim, emb_dim)
+        self.has_attention = hasattr(self, 'attn')
 
         # Output projection
+        project = []
+        if deepout_layers > 0:
+            deepout = Highway(
+                hid_dim, num_layers=deepout_layers,
+                activation=MaxOut, in_dim=hid_dim, out_dim=hid_dim, k=maxouts)
+            project.append(deepout)
+
         if self.tie_weights:
-            if self.emb_dim == self.hid_dim:
-                self.project = nn.Linear(self.hid_dim, self.vocab)
-                self.project.weight = self.embeddings.weight
-            else:
-                project = nn.Linear(self.emb_dim, self.vocab)
-                project.weight = self.embeddings.weight
-                self.project = nn.Sequential(
-                    nn.Linear(self.hid_dim, self.emb_dim), project)
+            proj = nn.Linear(self.emb_dim, self.vocab)
+            proj.weight = self.embeddings.weight
+            if self.emb_dim != self.hid_dim:
+                proj = nn.Sequential(
+                    nn.Linear(self.hid_dim, self.emb_dim), proj)
         else:
-            self.project = nn.Linear(self.hid_dim, self.vocab)
+            proj = nn.Linear(self.hid_dim, self.vocab)
+
+        project.append(proj)
+        project.append(nn.LogSoftmax(dim=1))
+        self.project = nn.Sequential(*project)
 
     def n_params(self, trainable=True):
         cnt = 0
@@ -506,31 +457,20 @@ class LM(nn.Module):
         for m in self.children():
             if hasattr(m, 'dropout'):
                 m.dropout = dropout
-            if hasattr(m, 'has_dropout'):
-                m.has_dropout = bool(dropout)
 
     def init_hidden_for(self, inp):
-        batch = inp.size(1)
-
-        # trainable initial hidden state
-        if hasattr(self, 'h_0'):
-            h_0 = self.h_0.view(self.num_layers, self.hid_dim)
-            h_0 = h_0.unsqueeze(1).repeat(1, batch, 1)
-
-            if hasattr(self, 'c_0'):  # trainable intial cell state
-                c_0 = self.c_0.view(self.num_layers, self.hid_dim)
-                c_0 = c_0.unsqueeze(1).repeat(1, batch, 1)
-                return h_0, c_0
-            else:
-                return h_0
-
-        # non-trainable intial hidden state
-        size = (self.num_layers, batch, self.hid_dim)
-        h_0 = Variable(inp.data.new(*size).zero_(), volatile=not self.training)
+        size = (self.num_layers, inp.size(1), self.hid_dim)
+        # create h_0
+        if self.train_init:
+            h_0 = self.h_0.repeat(1, inp.size(1), 1)
+        else:
+            h_0 = Variable(inp.data.new(*size), volatile=not self.training)
+        # eventualy add jitter
+        if self.add_init_jitter:
+            h_0 = h_0 + torch.normal(torch.zeros_like(h_0), 0.3)
+        # return
         if self.cell.startswith('LSTM'):
-            c_0 = Variable(inp.data.new(*size).zero_(),
-                           volatile=not self.training)
-            return h_0, c_0
+            return h_0, h_0.zeros_like(h_0)
         else:
             return h_0
 
@@ -552,41 +492,31 @@ class LM(nn.Module):
             It will only be not None if attention is provided.
         """
         # Embeddings
-        inp = word_dropout(
-            inp, self.target_code, p=self.word_dropout,
-            reserved_codes=self.reserved_codes, training=self.training)
         emb = self.embeddings(inp)
 
         # Conditions
         if hasattr(self, 'conds') and self.conds is not None:
             if conds is not None:
-                raise ValueError("Conditional model expects conds as input")
+                raise ValueError("Conditional model expects `conds` as input")
+            conds = [c_emb(inp_c) for c_emb, inp_c in zip(self.conds, conds)]
+            emb = torch.cat([emb, *conds], 2)
 
-            conds = torch.cat(
-                [c_emb(inp_c) for c_emb, inp_c in zip(self.conds, conds)],
-                2)
-            emb = torch.cat([emb, conds], 2)
-
-        if self.has_dropout and not self.cell.startswith('RHN'):
+        if not self.cell.startswith('RHN'):
             emb = F.dropout(emb, p=self.dropout, training=self.training)
 
         # RNN
         hidden = hidden if hidden is not None else self.init_hidden_for(emb)
         outs, hidden = self.rnn(emb, hidden)
-        if self.has_dropout:
-            outs = F.dropout(outs, p=self.dropout, training=self.training)
+        # (dropout after RNN)
+        outs = F.dropout(outs, p=self.dropout, training=self.training)
 
         # (optional attention)
         weights = None
-        if self.add_attn:
+        if self.has_attention:
             outs, weights = self.attn(outs, emb)
 
         # Output projection
-        seq_len, batch, hid_dim = outs.size()
-        outs = outs.view(seq_len * batch, hid_dim)
-        if self.add_deepout:
-            outs = self.deepout(outs)
-        outs = F.log_softmax(self.project(outs), 1)
+        outs = self.project(outs.view(-1, self.hid_dim))
 
         return outs, hidden, weights
 
@@ -660,17 +590,14 @@ class LM(nn.Module):
             if gpu:
                 conds = [c.cuda() for c in conds]
 
-        try:
-            decoder = getattr(Decoder(self, d, gpu=gpu), method)
-            scores, hyps = decoder(
-                seed_texts=seed_texts, max_seq_len=max_seq_len, conds=conds,
-                batch_size=batch_size, ignore_eos=ignore_eos, bos=bos, eos=eos,
-                # sample-only
-                temperature=temperature,
-                # beam-only
-                width=width, **kwargs)
-        except AttributeError:
-            raise ValueError("Wrong decoding method: {}".format(method))
+        decoder = getattr(Decoder(self, d, gpu=gpu), method)
+        scores, hyps = decoder(
+            seed_texts=seed_texts, max_seq_len=max_seq_len, conds=conds,
+            batch_size=batch_size, ignore_eos=ignore_eos, bos=bos, eos=eos,
+            # sample-only
+            temperature=temperature,
+            # beam-only
+            width=width, **kwargs)
 
         if not ignore_eos and d.get_eos() is not None:
             # strip content after <eos> for each batch
@@ -698,10 +625,15 @@ class LM(nn.Module):
         """
         if self.training:
             logging.warn("Generating in training modus!")
+
         if isinstance(inp, list):
             inp = torch.LongTensor(inp)
         if gpu:
             inp = inp.cuda()
+
         outs, *_ = self(Variable(inp, volatile=True), **kwargs)
         log_probs = u.select_cols(outs[:-1], inp[1:])
-        return log_probs.sum().data[0] / len(log_probs)
+        # normalize by length
+        log_probs = log_probs.sum().data[0] / len(log_probs)
+
+        return log_probs

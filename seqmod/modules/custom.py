@@ -590,44 +590,6 @@ class Highway(torch.nn.Module):
 
         return current_input
 
-
-# Stateless modules
-def _word_dropout_mask(X, dropout_rate, reserved_codes=()):
-    """
-    Computes a binary mask across batch examples based on a
-    bernoulli distribution with mean equal to dropout.
-    """
-    probs = X.new(*X.size()).zero_().float() + dropout_rate
-    # zero reserved_codes (avoid dropping reserved symbols)
-    probs[sum((X == x) for x in reserved_codes)] = 0
-    return probs.bernoulli_().byte()
-
-
-def word_dropout(inp, target_code, p=0.0, training=True,
-                 reserved_codes=(), lengths=None):
-    """
-    Applies word dropout to an input Variable. Dropout isn't constant
-    across batch examples. This is only to be used to drop input symbols
-    (i.e. before the embedding layer)
-
-    Parameters:
-    -----------
-    - inp: torch.LongTensor
-    - target_code: int, code to use as replacement for dropped timesteps
-    - dropout: float, dropout rate
-    - reserved_codes: tuple of ints, ints in the input that should never
-        be dropped
-    - training: bool
-    """
-    if not training or p == 0:
-        return inp
-
-    mask = _word_dropout_mask(
-        inp.data, dropout_rate=p, reserved_codes=reserved_codes)
-
-    return inp.masked_fill(torch.autograd.Variable(mask), target_code)
-
-
 # gracefully taken from:
 # https://discuss.pytorch.org/t/solved-reverse-gradients-in-backward-pass/3589/4
 class GradReverse(Function):

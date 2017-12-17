@@ -10,7 +10,8 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 
 import seqmod.utils as u
-from seqmod.modules.custom import word_dropout, StackedLSTM, StackedGRU, Highway
+from seqmod.modules.custom import StackedLSTM, StackedGRU, Highway
+from seqmod.modules.embedding import Embedding
 from seqmod.misc import Beam, inflection_sigmoid, linear
 from seqmod.modules.encoder_decoder import Encoder
 
@@ -183,16 +184,9 @@ class SequenceVAE(nn.Module):
         self.kl_weight = 0.0
         self.kl_schedule = kl_schedule
 
-        # Word_dropout
-        self.word_dropout = word_dropout
-        self.target_code = self.src_dict.get_unk()
-        self.reserved_codes = (self.src_dict.get_bos(),
-                               self.src_dict.get_eos(),
-                               self.src_dict.get_pad())
-
         # Embedding layer(s)
-        self.embeddings = nn.Embedding(
-            vocab_size, emb_dim, padding_idx=self.src_dict.get_pad())
+        self.embeddings = Embedding(
+            vocab_size, emb_dim, d=src_dict, word_dropout=word_dropout)
 
         # Encoder
         self.encoder = EncoderVAE(
@@ -278,10 +272,6 @@ class SequenceVAE(nn.Module):
         z = self.encoder.reparametrize(mu, logvar)
         # - decoder
         hidden, dec_outs = self.decoder.init_hidden_for(z), []
-        # apply word dropout on the conditioning targets
-        trg = word_dropout(
-            trg, self.target_code, p=self.word_dropout,
-            reserved_codes=self.reserved_codes, training=self.training)
 
         for emb_t in self.embeddings(trg).chunk(trg.size(0)):
             # rnn
