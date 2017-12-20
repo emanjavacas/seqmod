@@ -1,10 +1,30 @@
 
+import logging
+
+import torch
+import torch.nn as nn
+from torch.autograd import Variable
+
+from seqmod.modules.custom import StackedGRU, StackedLSTM, Highway
+from seqmod.modules import attention
+from seqmod import utils as u
+
 
 class BaseDecoder(nn.Module):
     """
     Base abstract class
     """
-    def forward(self, inp, enc_out, enc_hidden, **kwargs):
+    def init_state(self, context, enc_outs, **kwargs):
+        """
+        Parameters:
+        -----------
+        context: summary output from the decoder
+        enc_outs: extra encoder output (e.g. sequential last layer activations
+            for the RNN encoder)
+        """
+        raise NotImplementedError
+
+    def forward(self, inp, enc_out, enc_hidden, lengths, **kwargs):
         """
         Parameters:
         -----------
@@ -14,9 +34,59 @@ class BaseDecoder(nn.Module):
             decoder with last RNN encoder hidden step)
         """
         raise NotImplementedError
-    
 
-class RNNDecoder(nn.Module):
+    @property
+    def conditional(self):
+        """
+        Whether the current decoder implements takes conditions
+        """
+        return False
+
+    def build_output(self, hid_dim, deepout_layers, deepout_act, tie_weights):
+        """
+        Create output projection (from decoder output to softmax)
+        """
+        output = []
+
+        if deepout_layers > 0:
+            output.append(
+                Highway(hid_dim, num_layers=deepout_layers,
+                        activation=deepout_act))
+
+        emb_dim = self.embeddings.embedding_dim
+        vocab_size = self.embeddings.embs.num_embeddings
+
+        if not tie_weights:
+            proj = nn.Linear(hid_dim, vocab_size)
+        else:
+            proj = nn.Linear(emb_dim, vocab_size)
+            proj.weight = self.embeddings.weight
+            if emb_dim != hid_dim:
+                # inp embeddings are (vocab x emb_dim); output is (hid x vocab)
+                # if emb_dim != hidden, we insert a projection
+                logging.warn("When tying weights, output layer and "
+                             "embedding layer should have equal size. "
+                             "A projection layer will be insterted.")
+                proj = nn.Sequential(nn.Linear(hid_dim, emb_dim), proj)
+
+        output.append(proj)
+        output.append(nn.LogSoftmax(dim=1))
+
+        return nn.Sequential(*output)
+
+    def project(self, dec_out):
+        """
+        Run output projection (from the possibly attended output til softmax).
+        During training the input for the entire target sequence is processed
+        at once for efficiency.
+        """
+        if dec_out.dim() == 3:  # collapse seq_len and batch_size (training)
+            dec_out = dec_out.view(-1, dec_out.size(2))
+
+        return self.proj(dec_out)
+
+
+class RNNDecoder(BaseDecoder):
     """
     RNNDecoder
 
@@ -30,7 +100,8 @@ class RNNDecoder(nn.Module):
     def __init__(self, embeddings, hid_dim, num_layers, cell,
                  dropout=0.0, input_feed=False, att_type=None,
                  deepout_layers=0, deepout_act='ReLU', tie_weights=False,
-                 train_init=False, add_init_jitter=False, reuse_hidden=True):
+                 train_init=False, add_init_jitter=False, reuse_hidden=True,
+                 cond_dims=None, cond_vocabs=None):
         self.embeddings = embeddings
         self.hid_dim = hid_dim
         self.num_layers = num_layers
@@ -41,13 +112,22 @@ class RNNDecoder(nn.Module):
         self.train_init = train_init
         self.add_init_jitter = add_init_jitter
         self.reuse_hidden = reuse_hidden
-        super(Decoder, self).__init__()
+        super(RNNDecoder, self).__init__()
 
-        emb_dim = self.embeddings.embedding_size
-        in_dim = emb_dim if not input_feed else hid_dim + emb_dim
+        in_dim = self.embeddings.embedding_size
+        if input_feed:
+            in_dim += hid_dim
+
+        # conditions
+        if cond_dims is not None:
+            self.has_conditions, self.cond_embs = True, nn.ModuleList()
+
+            for cond_dim, cond_vocab in zip(cond_dims, cond_vocabs):
+                self.cond_embs.append(nn.Embedding(cond_vocab, cond_dim))
+                in_dim += cond_dim
 
         # rnn layer
-        self.rnn_step = self._build_rnn(num_layers, in_dim, hid_dim, dropout)
+        self.rnn = self._build_rnn(num_layers, in_dim, hid_dim, cell, dropout)
 
         # train init
         if self.train_init:
@@ -56,7 +136,7 @@ class RNNDecoder(nn.Module):
 
         # attention network (optional)
         if self.att_type is not None:
-            self.attn = attn.Attention(
+            self.attn = attention.Attention(
                 self.hid_dim, self.hid_dim, scorer=self.att_type)
         self.has_attention = hasattr(self, 'attn')
 
@@ -64,9 +144,13 @@ class RNNDecoder(nn.Module):
         self.proj = self._build_projection(
             embeddings, hid_dim, deepout_layers, deepout_act)
 
-    def _build_rnn(self, in_dim, hid_dim, cell, dropout):
+    def _build_rnn(self, num_layers, in_dim, hid_dim, cell, dropout):
         stacked = StackedLSTM if cell == 'LSTM' else StackedGRU
         return stacked(num_layers, in_dim, hid_dim, dropout=dropout)
+
+    @property
+    def conditional(self):
+        return self.has_conditions
 
     def init_hidden_for(self, enc_hidden):
         """
@@ -83,11 +167,12 @@ class RNNDecoder(nn.Module):
             h_0 = enc_hidden
 
         # compute h_0
-        if not self.reuse_hidden:
-            h_0 = h_0.zeros_like(h_0)
-
         if self.train_init:
             h_0 = self.h_0.repeat(1, h_0.size(1), 1)
+        elif not self.reuse_hidden:
+            h_0 = h_0.zeros_like(h_0)
+        else:
+            h_0 = h_0
 
         if self.add_init_jitter:
             h_0 = h_0 + torch.normal(torch.zeros_like(h_0), 0.3)
@@ -117,54 +202,125 @@ class RNNDecoder(nn.Module):
 
         return Variable(output, volatile=not self.training)
 
-    def forward(self, inp, outs, hidden, prev_out=None, **kwargs):
+    def init_state(self, outs, hidden, lengths, conds=None):
+        """
+        Must be call at the beginning of the decoding
+
+        Parameters:
+        -----------
+
+        outs: torch.FloatTensor, summary vector(s) from the Encoder.
+        hidden: torch.FloatTensor, previous hidden decoder state.
+        conds: (optional) tuple of (batch) with conditions
+        """
+        hidden = self.init_hidden_for(hidden)
+
+        mask, enc_att = None, None
+        if self.has_attention:
+            mask = u.make_length_mask(lengths)
+            if self.att_type.lower() == 'bahdanau':
+                enc_att = self.attn.project_enc_outs(outs)
+
+        input_feed = None
+        if self.input_feed:
+            input_feed = self.init_output_for(hidden)
+
+        if self.conditional:
+            if conds is None:
+                raise ValueError("Conditional decoder requires `conds`")
+            conds = torch.cat(
+                [emb(c) for c, emb in zip(conds, self.cond_embs)], 1)
+
+        return RNNDecoderState(hidden, outs, mask=mask, enc_att=enc_att,
+                               input_feed=input_feed, conds=conds)
+
+    def forward(self, inp, state):
         """
         Parameters:
         -----------
 
-        inp: torch.FloatTensor(batch x emb_dim), Embedding input
-        outs: summary vector(s) from the Encoder
-        hidden: previous hidden decoder state
-        prev_out: (optional), prev decoder output. Needed for input feeding.
+        inp: torch.FloatTensor(batch), Embedding input.
+        state: DecoderState, object data persisting throughout the decoding.
         """
-        if self.input_feed:
-            if prev_out is None:
-                prev_out = self.init_output_for(hidden)
-            inp = torch.cat([inp, prev_out], 1)
+        inp = self.embeddings(inp)
 
-        out, hidden = self.rnn_step(inp, hidden)
+        if self.input_feed:
+            inp = torch.cat([inp, state.input_feed], 1)
+
+        if self.conditional:
+            inp = torch.cat([inp, state.conds], 1)
+
+        out, hidden = self.rnn(inp, state.hidden)
 
         weight = None
         if self.has_attention:
-            out, weight = self.attn(out, outs, **kwargs)
+            out, weight = self.attn(
+                out, state.enc_outs, enc_att=state.enc_att, mask=state.mask)
 
-        return out, hidden, weight
+        # update state
+        state.hidden = hidden
+        if self.input_feed:
+            state.input_feed = out
+
+        return out, weight
 
 
-class ConditionalRNNDecoder(RNNDecoder):
-    def __init__(self, *args, cond_dims, cond_vocabs, **kwargs):
-        super(ConditionalRNNDecoder, self).__init__(*args, **kwargs)
+class State(object):
+    """
+    Abstract state class to be implemented by different decoder states.
+    It is used to carry over data across subsequent steps of the decoding
+    process. For beam search two methods are obligatory.
+    """
+    def expand_along_beam(self, width):
+        raise NotImplementedError
 
-        cond_dim = 0       # accumulate conditional emb dims
-        self.cond_embs = nn.ModuleList()
+    def reorder_beam(self, beam_ids):
+        raise NotImplementedError
 
-        for cond_dim, cond_vocab in zip(cond_dims, cond_vocabs):
-            self.cond_embs.append(nn.Embedding(cond_vocab, cond_dim))
-            cond_dim += cond_dim
 
-        # overwrite rnn with modified input
-        in_dim = self.rnn_step.input_size + cond_dim
-        self.rnn_step = self._build_rnn(
-            self.num_layers, in_dim, self.hid_dim, self.dropout)
+class RNNDecoderState(State):
+    """
+    DecoderState implementation for RNN-based decoders.
+    """
+    def __init__(self, dec_hidden, enc_outs,
+                 input_feed=None, enc_att=None, mask=None, conds=None):
+        self.hidden = dec_hidden
+        self.enc_outs = enc_outs
+        self.input_feed = input_feed
+        self.enc_att = enc_att
+        self.mask = mask
+        self.conds = conds
 
-    def forward(self, inp, outs, hidden, conds=None, **kwargs):
-        if conds is None:
-            raise ValueError("ConditionalRNNDecoder requires `conds`")
+    def expand_along_beam(self, width):
+        """
+        Expand state attributes to match the beam width
+        """
+        if isinstance(self.hidden, tuple):
+            hidden = (self.hidden[0].repeat(1, width, 1),
+                      self.hidden[1].repeat(1, width, 1))
+        else:
+            hidden = self.hidden.repeat(1, width, 1)
+        self.hidden = hidden
+        self.enc_outs = self.enc_outs.repeat(1, width, 1)
 
-        conds = [emb(cond) for cond, emb in zip(conds, self.cond_embs)]
-        inp = self.embeddings(inp)
-        inp = torch.cat([inp, *conds], 1)
+        if self.input_feed is not None:
+            self.input_feed = self.input_feed.repeat(width, 1)
+        if self.enc_att is not None:
+            self.enc_att = self.enc_att.repeat(1, width, 1)
+        if self.mask is not None:
+            self.mask = self.mask.repeat(width, 1)
+        if self.conds is not None:
+            self.conds = self.conds.repeat(width, 1)
 
-        return super(ConditionalRNNDecoder, self).forward(
-            self, inp, outs, hidden, **kwargs)
-
+    def reorder_beam(self, beam_ids):
+        """
+        Reorder state attributes to match the previously decoded beam order
+        """
+        if self.input_feed is not None:
+            self.input_feed = u.swap(self.input_feed, 0, beam_ids)
+        if isinstance(self.hidden, tuple):
+            hidden = (u.swap(self.hidden[0], 1, beam_ids),
+                      u.swap(self.hidden[1], 1, beam_ids))
+        else:
+            hidden = u.swap(self.hidden, 1, beam_ids)
+        self.hidden = hidden

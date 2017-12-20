@@ -1,6 +1,14 @@
 
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.autograd import Variable
 
-class BaseEncoder(nn.Moduler):
+import seqmod.utils as u
+from seqmod.modules.custom import grad_reverse, MLP
+
+
+class BaseEncoder(nn.Module):
     """
     Base abstract class
     """
@@ -22,7 +30,7 @@ class BaseEncoder(nn.Moduler):
     def loss(self, enc_outs, enc_trg):
         return
 
-    
+
 class RNNEncoder(BaseEncoder):
     """
     RNN Encoder that computes a sentence matrix representation with a RNN.
@@ -167,7 +175,7 @@ class RNNEncoder(BaseEncoder):
 
 
 class GRLRNNEncoder(BaseEncoder):
-    def __init__(self, *args, cond_dims, cond_vocabs, summary, **kwargs):
+    def __init__(self, *args, cond_dims, cond_vocabs, **kwargs):
         super(GRLRNNEncoder, self).__init__(*args, **kwargs)
         if self.encoding_size > 2:
             raise ValueError("GRLRNNEncoder can't regularize 3D summaries")

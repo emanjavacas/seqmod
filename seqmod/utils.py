@@ -1,6 +1,5 @@
 
 import os
-import math
 import yaml
 from datetime import datetime
 import random; random.seed(1001)
@@ -94,6 +93,51 @@ def save_checkpoint(parent, model, d, args, ppl=None, suffix=None):
     return dirpath
 
 
+class EmbeddingLoader(object):
+
+    MODES = ('glove', 'fasttext')
+
+    def __init__(self, filepath, mode):
+        if not os.path.isfile(filepath):
+            raise ValueError("Couldn't find file {}".format(filepath))
+
+        if mode.lower() not in EmbeddingLoader.MODES:
+            raise ValueError("Unknown file mode {}".format(mode))
+
+        self.filepath = filepath
+        self.mode = mode.lower()
+
+        self.has_header = False
+        if self.mode == 'fasttext':
+            self.has_header = True
+
+    def reader(self):
+        with open(self.filepath, 'r') as f:
+
+            if self.has_header:
+                next(f)
+
+            for line in f:
+                w, *vec = line.split()
+
+                yield w, vec
+
+    def load(self, words=None):
+        vectors, outwords = [], []
+
+        if words is not None:
+            words = set(words)
+
+        for word, vec in self.reader():
+            if words is not None and word not in words:
+                continue
+
+            vectors.append(list(map(float, vec)))
+            outwords.append(word)
+
+        return vectors, outwords
+
+
 # Pytorch utils
 def merge_states(state_dict1, state_dict2, merge_map):
     """
@@ -111,6 +155,24 @@ def merge_states(state_dict1, state_dict2, merge_map):
         else:
             state_dict[target_p] = state_dict1[target_p]
     return state_dict
+
+
+def make_length_mask(lengths):
+    """
+    Compute binary length mask.
+
+    lengths: torch.LongTensor(batch) should be on the desired output device
+
+    Returns:
+    --------
+
+    mask: torch.ByteTensor(batch x seq_len)
+    """
+    maxlen, batch = max(lengths), len(lengths)
+    return torch.arange(0, maxlen, out=lengths.new()) \
+                .type_as(lengths) \
+                .repeat(batch, 1) \
+                .lt(lengths.unsqueeze(1))
 
 
 def repackage_bidi(h_or_c):

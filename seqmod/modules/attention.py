@@ -28,7 +28,7 @@ class GeneralScorer(nn.Module):
 class BahdanauScorer(nn.Module):
     """
     Projects both query decoder state and encoder states to an attention space.
-    The scores are compute by a dot product with a learnable parameter v_a after
+    The scores are computed by a dot product with a learnable param v_a after
     transforming the sum of query decoder state and encoder state with a tanh.
 
     `score(a_i_j) = a_v \dot tanh(W_s @ h_s_j + W_t @ h_t_i)`
@@ -61,9 +61,9 @@ class BahdanauScorer(nn.Module):
         # (batch x att_dim)
         dec_att = self.W_t(dec_out)
         # (batch x seq_len x att_dim)
-        dec_enc_att = F.tanh(enc_att + dec_att[None,:,:])
+        dec_enc_att = F.tanh(enc_att + dec_att[None, :, :])
         # (batch x seq_len x att_dim) * (1 x att_dim x 1) -> (batch x seq_len)
-        return (dec_enc_att.transpose(0, 1) @ self.v_a[None,:,:]).squeeze(2)
+        return (dec_enc_att.transpose(0, 1) @ self.v_a[None, :, :]).squeeze(2)
 
 
 class Attention(nn.Module):
@@ -98,13 +98,13 @@ class Attention(nn.Module):
         - dec_out: torch.Tensor(batch_size x hid_dim)
         - enc_outs: torch.Tensor(seq_len x batch_size x hid_dim)
         - enc_att: (optional), torch.Tensor(seq_len x batch_size x att_dim)
-        - mask: (optional), torch.ByteTensor(seq_len x batch_size)
+        - mask: (optional), torch.ByteTensor(batch_size x seq_len)
         """
         # weights (batch x seq_len)
         weights = self.scorer(dec_out, enc_outs, enc_att=enc_att)
         # apply mask if given
         if mask is not None:
-            weights = weights * mask.transpose(0, 1).float()
+            weights = weights * mask.float()
         # softmax across seq_len dim
         weights = F.softmax(weights, dim=1)
         # (eq 7)
