@@ -51,7 +51,7 @@ class Embedding(nn.Embedding):
             raise ValueError("Word dropout requires unknown token")
 
         inst = cls(len(d), emb_dim, padding_idx=d.get_pad(), **kwargs)
-        inst.dict, inst.p, inst.target_code = d, p, d.get_unk()
+        inst.d, inst.p, inst.target_code = d, p, d.get_unk()
         codes = [d.get_eos(), d.get_bos(), d.get_pad()]
         inst.reserved_codes = tuple([c for c in codes if c is not None])
 
@@ -86,7 +86,7 @@ class Embedding(nn.Embedding):
         self_idxs, other_idxs = [], []
         for other_idx, word in enumerate(words):
             try:
-                self_idxs.append(self.dict.s2i[word])
+                self_idxs.append(self.d.s2i[word])
                 other_idxs.append(other_idx)
             except KeyError:
                 if verbose:
@@ -101,7 +101,7 @@ class Embedding(nn.Embedding):
         """
         Initialize embeddings from a file with a specified format (mode)
         """
-        words = self.dict.vocab
+        words = self.d.vocab
         weights, words = u.EmbeddingLoader(filepath, mode).load(words)
         self.init_embeddings(weights, words, **kwargs)
 
@@ -126,7 +126,7 @@ if __name__ == '__main__':
     weights = torch.Tensor(weights)
     by_word = dict(zip(words, weights))
 
-    for weight, word in zip(emb.weight.data, emb.dict.vocab):
+    for weight, word in zip(emb.weight.data, emb.d.vocab):
         if word in by_word:
             assert torch.equal(weight, by_word[word])
 

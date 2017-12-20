@@ -54,7 +54,7 @@ class BaseDecoder(nn.Module):
                         activation=deepout_act))
 
         emb_dim = self.embeddings.embedding_dim
-        vocab_size = self.embeddings.embs.num_embeddings
+        vocab_size = self.embeddings.num_embeddings
 
         if not tie_weights:
             proj = nn.Linear(hid_dim, vocab_size)
@@ -102,6 +102,8 @@ class RNNDecoder(BaseDecoder):
                  deepout_layers=0, deepout_act='ReLU', tie_weights=False,
                  train_init=False, add_init_jitter=False, reuse_hidden=True,
                  cond_dims=None, cond_vocabs=None):
+
+        super(RNNDecoder, self).__init__()
         self.embeddings = embeddings
         self.hid_dim = hid_dim
         self.num_layers = num_layers
@@ -112,13 +114,13 @@ class RNNDecoder(BaseDecoder):
         self.train_init = train_init
         self.add_init_jitter = add_init_jitter
         self.reuse_hidden = reuse_hidden
-        super(RNNDecoder, self).__init__()
 
-        in_dim = self.embeddings.embedding_size
+        in_dim = self.embeddings.embedding_dim
         if input_feed:
             in_dim += hid_dim
 
         # conditions
+        self.has_conditions = False
         if cond_dims is not None:
             self.has_conditions, self.cond_embs = True, nn.ModuleList()
 
@@ -127,7 +129,7 @@ class RNNDecoder(BaseDecoder):
                 in_dim += cond_dim
 
         # rnn layer
-        self.rnn = self._build_rnn(num_layers, in_dim, hid_dim, cell, dropout)
+        self.rnn = self.build_rnn(num_layers, in_dim, hid_dim, cell, dropout)
 
         # train init
         if self.train_init:
@@ -135,16 +137,16 @@ class RNNDecoder(BaseDecoder):
             self.h_0 = nn.Parameter(torch.Tensor(*init_size).zero_())
 
         # attention network (optional)
-        if self.att_type is not None:
+        if self.att_type is not None and self.att_type.lower() != 'none':
             self.attn = attention.Attention(
                 self.hid_dim, self.hid_dim, scorer=self.att_type)
         self.has_attention = hasattr(self, 'attn')
 
         # output projection
-        self.proj = self._build_projection(
-            embeddings, hid_dim, deepout_layers, deepout_act)
+        self.proj = self.build_output(
+            hid_dim, deepout_layers, deepout_act, tie_weights)
 
-    def _build_rnn(self, num_layers, in_dim, hid_dim, cell, dropout):
+    def build_rnn(self, num_layers, in_dim, hid_dim, cell, dropout):
         stacked = StackedLSTM if cell == 'LSTM' else StackedGRU
         return stacked(num_layers, in_dim, hid_dim, dropout=dropout)
 

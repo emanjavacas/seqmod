@@ -161,18 +161,19 @@ def make_length_mask(lengths):
     """
     Compute binary length mask.
 
-    lengths: torch.LongTensor(batch) should be on the desired output device
+    lengths: Variable torch.LongTensor(batch) should be on the desired
+        output device.
 
     Returns:
     --------
 
     mask: torch.ByteTensor(batch x seq_len)
     """
-    maxlen, batch = max(lengths), len(lengths)
-    return torch.arange(0, maxlen, out=lengths.new()) \
-                .type_as(lengths) \
+    maxlen, batch = lengths.data.max(), len(lengths)
+    mask = torch.arange(0, maxlen, out=lengths.data.new()) \
                 .repeat(batch, 1) \
-                .lt(lengths.unsqueeze(1))
+                .lt(lengths.data.unsqueeze(1))
+    return Variable(mask, volatile=lengths.volatile)
 
 
 def repackage_bidi(h_or_c):

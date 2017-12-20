@@ -10,13 +10,9 @@ try:
 except:
     print('no NVIDIA driver found')
 
-import numpy as np; np.random.seed(1001)
+from torch import nn, optim
 
-from torch import nn
-from torch import optim
-from torch.autograd import Variable
-
-from seqmod.modules.encoder_decoder import EncoderDecoder
+from seqmod.modules.encoder_decoder import make_rnn_encoder_decoder
 from seqmod import utils as u
 
 from seqmod.misc import EarlyStopping, Trainer
@@ -27,24 +23,26 @@ import dummy as d
 
 
 def translate(model, target, gpu, beam=True):
-    target = torch.LongTensor(
-        list(model.src_dict.transform([target])))
-    batch = Variable(target.t(), volatile=True)
-    batch = batch.cuda() if gpu else batch
+    src_dict = model.encoder.embeddings.d
+    inp = torch.LongTensor(list(src_dict.transform([target]))).transpose(0, 1)
+    length = torch.LongTensor([len(target)]) + 2
+    inp, length = u.wrap_variables((inp, length), volatile=True, gpu=gpu)
     if beam:
-        scores, hyps, att = model.translate_beam(
-            batch, beam_width=5, max_decode_len=4)
+        score, hyp, _ = model.translate_beam(
+            inp, length, beam_width=5, max_decode_len=4)
     else:
-        scores, hyps, att = model.translate(batch, max_decode_len=4)
-    return scores, hyps, att
+        scores, hyps, _ = model.translate(inp, length, max_decode_len=4)
+
+    return scores, hyps
 
 
 def make_encdec_hook(target, gpu, beam=True):
 
     def hook(trainer, epoch, batch_num, checkpoint):
         trainer.log("info", "Translating {}".format(target))
-        scores, hyps, atts = translate(trainer.model, target, gpu, beam=beam)
-        hyps = [u.format_hyp(score, hyp, num + 1, trainer.model.trg_dict)
+        trg_dict = trainer.model.decoder.embeddings.d
+        scores, hyps = translate(trainer.model, target, gpu, beam=beam)
+        hyps = [u.format_hyp(score, hyp, num + 1, trg_dict)
                 for num, (score, hyp) in enumerate(zip(scores, hyps))]
         trainer.log("info", '\n***' + ''.join(hyps) + '\n***')
 
@@ -55,15 +53,13 @@ def make_att_hook(target, gpu, beam=False):
     assert not beam, "beam doesn't output attention yet"
 
     def hook(trainer, epoch, batch_num, checkpoint):
+        d = train.decoder.embedding.d
         scores, hyps, atts = translate(trainer.model, target, gpu, beam=beam)
-        # grab first hyp (only one in translate modus)
-        hyp = ' '.join([trainer.model.trg_dict.vocab[i] for i in hyps[0]])
-        target = [trainer.model.trg_dict.bos_token] + list(target)
         trainer.log("attention",
                     {"att": atts[0],
                      "score": sum(scores[0]) / len(hyps[0]),
-                     "target": target,
-                     "hyp": hyp.split(),
+                     "target": [d.bos_token] + list(target),
+                     "hyp": ' '.join([d.vocab[i] for i in hyps[0]]).split(),
                      "epoch": epoch,
                      "batch_num": batch_num})
 
@@ -74,12 +70,12 @@ def make_schedule_hook(scheduler, verbose=True):
 
     def hook(trainer, epoch, batch, checkpoint):
         batches = len(trainer.datasets['train'])
-        old_rate = trainer.model.scheduled_rate
+        old_rate = trainer.model.exposure_rate
         new_rate = scheduler(epoch * batches + batch)
-        trainer.model.scheduled_rate = new_rate
+        trainer.model.exposure_rate = new_rate
 
         if verbose:
-            tmpl = "Updated scheduled rate from {:.3f} to {:.3f}"
+            tmpl = "Updated exposure rate from {:.3f} to {:.3f}"
             trainer.log("info", tmpl.format(old_rate, new_rate))
 
     return hook
@@ -109,21 +105,20 @@ if __name__ == '__main__':
     parser.add_argument('--cell', default='LSTM', type=str)
     parser.add_argument('--emb_dim', default=24, type=int)
     parser.add_argument('--hid_dim', default=64, type=int)
-    parser.add_argument('--att_dim', default=64, type=int)
     parser.add_argument('--att_type', default='general', type=str)
-    parser.add_argument('--deepout', default=0, type=int)
+    parser.add_argument('--deepout_layers', default=0, type=int)
     parser.add_argument('--tie_weights', action='store_true')
     # training
     parser.add_argument('--epochs', default=5, type=int)
     parser.add_argument('--batch_size', default=20, type=int)
     parser.add_argument('--optim', default='Adam', type=str)
     parser.add_argument('--lr', default=0.01, type=float)
-    parser.add_argument('--max_norm', default=5., type=float)
-    parser.add_argument('--dropout', default=0.3, type=float)
+    parser.add_argument('--max_norm', default=10., type=float)
+    parser.add_argument('--dropout', default=0.25, type=float)
     parser.add_argument('--word_dropout', default=0.0, type=float)
-    parser.add_argument('--patience', default=3, type=int)
+    parser.add_argument('--patience', default=5, type=int)
     parser.add_argument('--gpu', action='store_true')
-    parser.add_argument('--checkpoint', default=100, type=int)
+    parser.add_argument('--checkpoint', default=50, type=int)
     parser.add_argument('--hooks_per_epoch', default=2, type=int)
     parser.add_argument('--target', default='redrum', type=str)
     parser.add_argument('--beam', action='store_true')
@@ -160,12 +155,11 @@ if __name__ == '__main__':
 
     print('Building model...')
 
-    model = EncoderDecoder(
-        args.layers, args.emb_dim, args.hid_dim,
-        args.att_dim, src_dict, att_type=args.att_type, dropout=args.dropout,
-        word_dropout=args.word_dropout,
-        bidi=True, cell=args.cell, deepout_layers=args.deepout,
-        tie_weights=args.tie_weights)
+    model = make_rnn_encoder_decoder(
+        args.layers, args.emb_dim, args.hid_dim, src_dict, cell=args.cell,
+        bidi=True, encoder_summary='inner-attention', att_type=args.att_type,
+        dropout=args.dropout, input_feed=True, word_dropout=args.word_dropout,
+        deepout_layers=args.deepout_layers, tie_weights=args.tie_weights)
 
     # model.freeze_submodule('encoder')
     # model.encoder.register_backward_hook(u.log_grad)
@@ -185,7 +179,7 @@ if __name__ == '__main__':
     if args.gpu:
         model.cuda(), criterion.cuda()
 
-    early_stopping = EarlyStopping(max(10, args.patience), args.patience)
+    early_stopping = EarlyStopping(args.patience)
     trainer = Trainer(
         model, {'train': train, 'valid': valid}, optimizer,
         early_stopping=early_stopping, max_norm=args.max_norm)

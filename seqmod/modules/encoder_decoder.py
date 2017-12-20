@@ -29,8 +29,8 @@ class EncoderDecoder(nn.Module):
         self.exposure_rate = exposure_rate
 
         # NLLLoss weight (downweight loss on pad) & schedule
-        self.nll_weight = torch.ones(len(self.trg_dict))
-        self.nll_weight[self.trg_dict.get_pad()] = 0
+        self.nll_weight = torch.ones(len(self.decoder.embeddings.d))
+        self.nll_weight[self.decoder.embeddings.d.get_pad()] = 0
 
     def is_cuda(self):
         "Whether the model is on a gpu. We assume no device sharing."
@@ -99,17 +99,18 @@ class EncoderDecoder(nn.Module):
         Return batch-averaged loss and examples processed for speed monitoring
         """
         # unpack batch data
-        src, trg = batch_data
-        src_conds, trg_conds = None, None
+        (src, trg), (src_conds, trg_conds) = batch_data, (None, None)
         if self.encoder.conditional:
-            ((src, lengths), *src_conds) = src
+            (src, *src_conds) = src
+        (src, src_lengths) = src
         if self.decoder.conditional:
-            ((trg, trg_lengths), *trg_conds) = trg
+            (trg, *trg_conds) = trg
+        (trg, trg_lengths) = trg
 
         # word-level loss weight (weight down padding)
         weight = self.nll_weight
         if self.is_cuda():
-            weight = self.nll_weight.cuda()
+            weight = weight.cuda()
 
         # remove <eos> from decoder targets, remove <bos> from loss targets
         dec_trg, loss_trg = trg[:-1], trg[1:]
@@ -117,14 +118,15 @@ class EncoderDecoder(nn.Module):
         # compute model output
         enc_outs, enc_hidden = self.encoder(src)
         dec_state = self.decoder.init_state(
-            enc_outs, enc_hidden, lengths, conds=trg_conds)
+            enc_outs, enc_hidden, src_lengths, conds=trg_conds)
 
         dec_outs = []
         for step, t in enumerate(dec_trg):
             if use_schedule and step > 0 and self.exposure_rate < 1.0:
                 t = self.schedule_sampling(t, dec_outs[-1])
                 t = Variable(t, volatile=not self.training)
-            out, weight = self.decoder(t, dec_state)
+            out, _ = self.decoder(t, dec_state)
+            dec_outs.append(out)
         dec_outs = torch.stack(dec_outs)
 
         # compute loss and backprop
@@ -161,8 +163,8 @@ class EncoderDecoder(nn.Module):
         hyps: (batch_size x trg_seq_len)
         atts: (batch_size x trg_seq_len x source_seq_len)
         """
-        eos = self.src_dict.get_eos()
-        bos = self.src_dict.get_bos()
+        eos = self.decoder.embeddings.d.get_eos()
+        bos = self.decoder.embeddings.d.get_bos()
         seq_len, batch_size = src.size()
 
         enc_outs, enc_hidden = self.encoder(src)
@@ -208,8 +210,8 @@ class EncoderDecoder(nn.Module):
         lengths: torch.LongTensor (1)
         conds: (optional) conditions for the decoder
         """
-        eos = self.src_dict.get_eos()
-        bos = self.src_dict.get_bos()
+        eos = self.decoder.embeddings.d.get_eos()
+        bos = self.decoder.embeddings.d.get_bos()
         gpu = src.is_cuda
 
         enc_outs, enc_hidden = self.encoder(src)
@@ -225,7 +227,7 @@ class EncoderDecoder(nn.Module):
             prev = beam.get_current_state().unsqueeze(0)
             prev = Variable(prev, volatile=True)
 
-            dec_out, att_weights = self.decoder(prev, dec_state)
+            dec_out, _ = self.decoder(prev, dec_state)
             logprobs = self.project(dec_out)  # (width x vocab_size)
             beam.advance(logprobs.data)
 
@@ -316,6 +318,9 @@ def make_rnn_encoder_decoder(
                          add_init_jitter=add_init_jitter,
                          cond_dims=cond_dims, cond_vocabs=cond_vocabs)
 
+    if decoder.has_attention and encoder_summary != 'full':
+        raise ValueError("Attentional decoder needs full encoder summary")
+
     return EncoderDecoder(encoder, decoder)
 
 
@@ -340,8 +345,6 @@ def make_grl_rnn_encoder_decoder(
         cond_dims=None,
         cond_vocabs=None
 ):
-    src_embeddings, trg_embeddings = make_embeddings(
-        src_dict, trg_dict, emb_dim, word_dropout)
 
     if encoder_summary == 'full':
         raise ValueError("GRL encoder can't use full summaries")
@@ -351,6 +354,9 @@ def make_grl_rnn_encoder_decoder(
 
     if cond_dims is None or cond_vocabs is None:
         raise ValueError("GRL needs conditions")
+
+    src_embeddings, trg_embeddings = make_embeddings(
+        src_dict, trg_dict, emb_dim, word_dropout)
 
     encoder = GRLRNNEncoder(src_embeddings, hid_dim, num_layers, cell,
                             cond_dims=cond_dims, cond_vocabs=cond_vocabs,

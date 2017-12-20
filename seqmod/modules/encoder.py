@@ -27,8 +27,8 @@ class BaseEncoder(nn.Module):
         """
         raise NotImplementedError
 
-    def loss(self, enc_outs, enc_trg):
-        return
+    def loss(self, enc_outs, enc_trg, test=False):
+        return tuple()
 
 
 class RNNEncoder(BaseEncoder):
@@ -38,6 +38,8 @@ class RNNEncoder(BaseEncoder):
     def __init__(self, embeddings, hid_dim, num_layers, cell, bidi=True,
                  dropout=0.0, summary='full',
                  train_init=False, add_init_jitter=True):
+
+        super(BaseEncoder, self).__init__()
 
         if bidi and hid_dim % 2 != 0:
             raise ValueError("Hidden dimension must be even for BiRNNs")
@@ -53,14 +55,13 @@ class RNNEncoder(BaseEncoder):
         self.train_init = train_init
         self.add_init_jitter = add_init_jitter
 
-        super(BaseEncoder, self).__init__()
-        self.rnn = getattr(nn, cell)(self.embeddings.embedding_size,
+        self.rnn = getattr(nn, cell)(self.embeddings.embedding_dim,
                                      self.hid_dim, num_layers=self.num_layers,
                                      dropout=dropout, bidirectional=self.bidi)
 
         if self.train_init:
-            train_init_size = self.num_layers * self.num_dirs, 1, self.hid_dim
-            self.h_0 = nn.Parameter(torch.Tensor(*train_init_size).zero_())
+            init_size = self.num_layers * self.num_dirs, 1, self.hid_dim
+            self.h_0 = nn.Parameter(torch.Tensor(*init_size).zero_())
 
         if self.summary == 'inner-attention':
             # Challenges with Variational Autoencoders for Text
@@ -69,7 +70,7 @@ class RNNEncoder(BaseEncoder):
             # input embedding and RNN hidden states
             enc_dim = self.hid_dim * self.num_dirs  # output dimension
             self.attention = nn.Linear(
-                self.embeddings.embedding_size + enc_dim, enc_dim)
+                self.embeddings.embedding_dim + enc_dim, enc_dim)
 
         elif self.summary == 'structured-attention':
             # A structured self-attentive sentence embedding
@@ -146,7 +147,7 @@ class RNNEncoder(BaseEncoder):
             # combine across feature dimension and project to hid_dim
             weights = self.attention(
                 torch.cat(
-                    [inp.view(-1, self.embeddings.embedding_size),
+                    [inp.view(-1, self.embeddings.embedding_dim),
                      outs.view(-1, self.hid_dim * self.num_dirs)], 1))
             # apply softmax over the seq_len dimension
             weights = F.softmax(weights.view(seq_len, batch_size, -1), 0)
@@ -176,7 +177,9 @@ class RNNEncoder(BaseEncoder):
 
 class GRLRNNEncoder(BaseEncoder):
     def __init__(self, *args, cond_dims, cond_vocabs, **kwargs):
+
         super(GRLRNNEncoder, self).__init__(*args, **kwargs)
+
         if self.encoding_size > 2:
             raise ValueError("GRLRNNEncoder can't regularize 3D summaries")
 

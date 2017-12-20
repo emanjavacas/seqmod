@@ -99,13 +99,14 @@ def get_splits(length, test, dev=None):
     return cumsum(int(length * i) for i in [train, dev, test] if i)
 
 
-def pad_pack_batch(examples, pad_token=None, return_lengths=True):
-    lengths = [len(example) for example in examples]
-    if pad_token is None and not all(lengths[0] == l for l in lengths[1:]):
+def pad_pack_batch(examples, d, return_lengths=True):
+    pad, extra = d.get_pad(), bool(d.bos_token) + bool(d.eos_token)
+    lengths = [len(example) + extra for example in examples]
+    if pad is None and not all(lengths[0] == l for l in lengths[1:]):
         raise ValueError("Variable length without padding")
 
     # create batch
-    out = torch.LongTensor(len(examples), max(lengths)).fill_(pad_token or 0)
+    out = torch.LongTensor(len(examples), max(lengths)).fill_(pad or 0)
 
     # populate
     for i in range(len(examples)):
@@ -320,9 +321,7 @@ class Dict(object):
         """
         if self.sequential:
             return pad_pack_batch(
-                batch_data,
-                pad_token=self.get_pad(),
-                return_lengths=return_lengths)
+                batch_data, self, return_lengths=return_lengths)
         else:
             return torch.LongTensor(batch_data)
 
