@@ -68,7 +68,7 @@ def destruct(tup, idx):
     if the idx refers to the last tuple value
     """
     if idx >= len(tup):
-        raise ValueError("Index out of range")
+        raise IndexError("Index out of range")
     if idx == 0:
         return (), tup[0:1], tup[1:]
     else:
@@ -99,22 +99,26 @@ def get_splits(length, test, dev=None):
     return cumsum(int(length * i) for i in [train, dev, test] if i)
 
 
-def pad_pack_batch(examples, pad_token):
-    # check lengths
-    max_length = 0
-    for example in examples:
-        if len(example) != max_length and max_length > 0 and pad_token is None:
-            raise ValueError("Variable length without padding")
-        max_length = max(max_length, len(example))
+def pad_pack_batch(examples, pad_token=None, return_lengths=True):
+    lengths = [len(example) for example in examples]
+    if pad_token is None and not all(lengths[0] == l for l in lengths[1:]):
+        raise ValueError("Variable length without padding")
+
     # create batch
-    out = torch.LongTensor(len(examples), max_length).fill_(pad_token or 0)
+    out = torch.LongTensor(len(examples), max(lengths)).fill_(pad_token or 0)
+
     # populate
     for i in range(len(examples)):
         example = torch.Tensor(examples[i])
-        length = example.size(0)
-        out[i].narrow(0, 0, length).copy_(example)
-    # turn to batch second and return
-    return out.t().contiguous()
+        out[i].narrow(0, 0, example.size(0)).copy_(example)
+
+    # turn to batch second
+    out = out.t().contiguous()
+
+    if return_lengths:
+        return out, lengths
+    else:
+        return out
 
 
 def default_sort_key(pair):
@@ -177,6 +181,7 @@ class Dict(object):
                  unk_token=u.UNK, force_unk=False, max_size=None, min_freq=1,
                  sequential=True, max_len=None, use_vocab=True,
                  preprocessing=None):
+        force_unk = force_unk or sequential  # force unk for sequential dicts
         self.counter = Counter()
         self.reserved = set()
         self.fitted = False
@@ -201,11 +206,15 @@ class Dict(object):
         self.sequential = sequential
 
     def __repr__(self):
-        return (
-            "<Dict fitted={}, max_size={}, min_freq={}, bos_token={}, "
-            "eos_token={}, unk_token={}, sequential={}, n_symbols={}>").format(
-                self.fitted, self.max_size, self.min_freq, self.bos_token,
-                self.eos_token, self.unk_token, self.sequential, len(self))
+        rep = ("<Dict fitted={}, max_size={}, min_freq={}, bos_token={}, "
+               "eos_token={}, unk_token={}, sequential={}").format(
+                   self.fitted, self.max_size, self.min_freq, self.bos_token,
+                   self.eos_token, self.unk_token, self.sequential)
+        if self.fitted:
+            rep += ' n_symbols={}>'.format(len(self))
+        else:
+            rep += '>'
+        return rep
 
     def __len__(self):
         return len(self.vocab)
@@ -224,8 +233,7 @@ class Dict(object):
 
     def index(self, s):
         if s not in self.s2i and self.unk_token not in self.s2i:
-            raise ValueError("OOV [{}, type: {}] with no unk code"
-                             .format(s, type(s)))
+            raise ValueError("OOV {} of type {} but no UNK".format(s, type(s)))
 
         return self.s2i.get(s, self.get_unk())
 
@@ -239,12 +247,12 @@ class Dict(object):
                 else:
                     self.counter.update(dataset)
             else:
-                for example in dataset:
-                    if self.max_len is not None and len(example) > self.max_len:
-                        example = example[:self.max_len]
+                for ex in dataset:
+                    if self.max_len is not None and len(ex) > self.max_len:
+                        ex = ex[:self.max_len]
                     if self.preprocessing is not None:
-                        example = self.preprocessing(example)
-                    self.counter.update(example)
+                        ex = self.preprocessing(ex)
+                    self.counter.update(ex)
 
     def fit(self, *datasets):
         """
@@ -301,7 +309,7 @@ class Dict(object):
             else:
                 yield self.index(example)
 
-    def pack(self, batch_data):
+    def pack(self, batch_data, return_lengths=False):
         """
         Convert transformed data into torch batch. Output type is LongTensor.
         This could be adapted to return other types as well.
@@ -311,7 +319,10 @@ class Dict(object):
         - batch_data: a list of examples
         """
         if self.sequential:
-            return pad_pack_batch(batch_data, self.get_pad())
+            return pad_pack_batch(
+                batch_data,
+                pad_token=self.get_pad(),
+                return_lengths=return_lengths)
         else:
             return torch.LongTensor(batch_data)
 
@@ -465,15 +476,15 @@ class PairedDataset(Dataset):
         trg_dict: same as src_dict but for the target data
     """
     def __init__(self, src, trg, d, batch_size=1,
-                 fitted=False, gpu=False, evaluation=False):
-        self.autoregressive = False
-        self.data, self.d = {}, d
+                 fitted=False, gpu=False, evaluation=False,
+                 return_lengths=True):
+        self.autoregressive, self.data, self.d = False, {}, d
 
         # prepare src data
         self.data['src'] = src if fitted else self._fit(src, self.d['src'])
-        if len(self.data['src']) < batch_size:
-            raise ValueError("Not enough input examples: {}".format(
-                len(self.data['src'])))
+        src_len = len(self.data['src'])
+        if src_len < batch_size:
+            raise ValueError("Not enough input examples: {}".format(src_len))
 
         # prepare trg data
         if trg is None:         # autoregressive dataset
@@ -481,16 +492,16 @@ class PairedDataset(Dataset):
             self.data['trg'], self.d['trg'] = self.data['src'], self.d['src']
         else:
             self.data['trg'] = trg if fitted else self._fit(trg, self.d['trg'])
-            if len(self.data['src']) != len(self.data['trg']):
-                raise ValueError("Source and target must be equal length"
-                                 "Got src {} and trg {}".format(
-                                     len(self.data['src']),
-                                     len(self.data['trg'])))
+            trg_len = len(self.data['trg'])
+            if src_len != trg_len:
+                raise ValueError("Source and target must be equal length. Got "
+                                 "src {} and trg {}".format(src_len, trg_len))
 
         self.batch_size = batch_size
         self.gpu = gpu
         self.evaluation = evaluation
-        self.num_batches = len(self.data['src']) // batch_size
+        self.return_lengths = return_lengths
+        self.num_batches = src_len // batch_size
 
     def _fit(self, data, dicts):
         # multiple input dataset with MultiDict
@@ -521,9 +532,10 @@ class PairedDataset(Dataset):
             batches = list(zip(*batch))  # unpack batches
             if isinstance(dicts, MultiDict):
                 dicts = dicts.dicts.values()
-            out = tuple(d.pack(b) for (d, b) in zip(dicts, batches))
+            out = tuple(d.pack(b, return_lengths=self.return_lengths)
+                        for (d, b) in zip(dicts, batches))
         else:
-            out = dicts.pack(batch)
+            out = dicts.pack(batch, return_lengths=self.return_lengths)
 
         return wrap_variables(out, volatile=self.evaluation, gpu=self.gpu)
 
@@ -531,7 +543,9 @@ class PairedDataset(Dataset):
         return self.num_batches
 
     def __getitem__(self, idx):
-        assert idx < self.num_batches, "{} >= {}".format(idx, self.num_batches)
+        if idx >= self.num_batches:
+            raise IndexError("{} >= {}".format(idx, self.num_batches))
+
         b_from, b_to = idx * self.batch_size, (idx+1) * self.batch_size
         src = self._pack(self.data['src'][b_from: b_to], self.d['src'])
         trg = self._pack(self.data['trg'][b_from: b_to], self.d['trg'])
@@ -657,7 +671,7 @@ class BlockDataset(Dataset):
         if isinstance(examples, tuple) or isinstance(dicts, tuple):
             assert isinstance(dicts, tuple) and isinstance(examples, tuple), \
                 "Input sequence is type {}, but dict is {}".format(
-                    type(data), type(dicts))
+                    type(examples), type(dicts))
             assert len(examples) == len(dicts), \
                 "Equal number of input sequences and Dicts needed"
             assert all(len(examples[i]) == len(examples[i+1])
