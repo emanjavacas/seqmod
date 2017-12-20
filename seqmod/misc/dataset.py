@@ -99,33 +99,28 @@ def get_splits(length, test, dev=None):
     return cumsum(int(length * i) for i in [train, dev, test] if i)
 
 
-def pad_pack_batch(examples, pad_token=None, return_lengths=True):
-    lengths = [len(example) for example in examples]
-    if pad_token is None and not all(lengths[0] == l for l in lengths[1:]):
+def pad_pack_batch(examples, pad=None, return_lengths=True):
+    """
+    Transform a list of examples into a proper torch.LongTensor batch
+    """
+    lengths = list(map(len, examples))
+
+    if pad is None and not all(lengths[0] == l for l in lengths[1:]):
         raise ValueError("Variable length without padding")
 
     # create batch
-    out = torch.LongTensor(len(examples), max(lengths)).fill_(pad_token or 0)
-
-    # populate
-    for i in range(len(examples)):
-        example = torch.Tensor(examples[i])
-        out[i].narrow(0, 0, example.size(0)).copy_(example)
+    out = torch.LongTensor(len(examples), max(lengths)).fill_(pad or 0)
+    for i, example in enumerate(examples):
+        out[i].narrow(0, 0, len(example)).copy_(torch.Tensor(example))
 
     # turn to batch second
     out = out.t().contiguous()
 
     if return_lengths:
-        return out, lengths
+        ix = argsort(lengths, reverse=True)  # sort lengths in descending order
+        return out[:, ix], [lengths[i] for i in ix]
     else:
         return out
-
-
-def default_sort_key(pair):
-    src, trg = pair
-    if isinstance(src, tuple):
-        return len(src[0])
-    return len(src)
 
 
 def block_batchify(vector, batch_size):
@@ -317,12 +312,12 @@ class Dict(object):
         Parameter:
         ----------
         - batch_data: a list of examples
+        - return_lengths: bool, if True output will be a tuple of LongTensor
+            and list with sequence lengths in the batch
         """
         if self.sequential:
             return pad_pack_batch(
-                batch_data,
-                pad_token=self.get_pad(),
-                return_lengths=return_lengths)
+                batch_data, pad=self.get_pad(), return_lengths=return_lengths)
         else:
             return torch.LongTensor(batch_data)
 

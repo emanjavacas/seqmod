@@ -161,18 +161,19 @@ def make_length_mask(lengths):
     """
     Compute binary length mask.
 
-    lengths: torch.LongTensor(batch) should be on the desired output device
+    lengths: Variable torch.LongTensor(batch) should be on the desired
+        output device.
 
     Returns:
     --------
 
     mask: torch.ByteTensor(batch x seq_len)
     """
-    maxlen, batch = max(lengths), len(lengths)
-    return torch.arange(0, maxlen, out=lengths.new()) \
-                .type_as(lengths) \
+    maxlen, batch = lengths.data.max(), len(lengths)
+    mask = torch.arange(0, maxlen, out=lengths.data.new()) \
                 .repeat(batch, 1) \
-                .lt(lengths.unsqueeze(1))
+                .lt(lengths.data.unsqueeze(1))
+    return Variable(mask, volatile=lengths.volatile)
 
 
 def repackage_bidi(h_or_c):
@@ -324,7 +325,7 @@ def make_initializer(
         rnn={'type': 'xavier_uniform', 'args': {'gain': 1.}},
         rnn_bias={'type': 'constant', 'args': {'val': 0.}},
         cnn_bias={'type': 'constant', 'args': {'val': 0.}},
-        emb={'type': 'uniform', 'args': {'a': -0.05, 'b': 0.05}},
+        emb={'type': 'normal', 'args': {'mean': 0, 'std': 1}},
         default={'type': 'uniform', 'args': {'a': -0.05, 'b': 0.05}}):
 
     rnns = (torch.nn.LSTM, torch.nn.GRU,
@@ -342,7 +343,7 @@ def make_initializer(
                     continue
                 if is_bias(p_name):
                     getattr(init, rnn_bias['type'])(p, **rnn_bias['args'])
-                else:           # assume weight
+                else:
                     getattr(init, rnn['type'])(p, **rnn['args'])
 
         elif isinstance(m, torch.nn.Linear):  # linear
@@ -351,7 +352,7 @@ def make_initializer(
                     continue
                 if is_bias(p_name):
                     getattr(init, linear_bias['type'])(p, **linear_bias['args'])
-                else:           # assume weight
+                else:
                     getattr(init, linear['type'])(p, **linear['args'])
 
         elif isinstance(m, torch.nn.Embedding):  # embedding
@@ -379,7 +380,10 @@ def make_initializer(
 def initialize_model(model, overwrite_custom=True, **init_ops):
     """
     Applies initializer function, eventually calling any module
-    specific custom initializers.
+    specific custom initializers. Modules can implement custom initialization
+    methods `custom_init` to overwrite the general initialization.
+    Additionally, parameters can have an additional custom attribute
+    set to True and `initialize_model` won't touch them.
 
     Parameters
     ----------

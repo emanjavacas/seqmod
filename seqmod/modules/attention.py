@@ -100,13 +100,15 @@ class Attention(nn.Module):
         - enc_att: (optional), torch.Tensor(seq_len x batch_size x att_dim)
         - mask: (optional), torch.ByteTensor(batch_size x seq_len)
         """
-        # weights (batch x seq_len)
+        # (batch x seq_len)
         weights = self.scorer(dec_out, enc_outs, enc_att=enc_att)
-        # apply mask if given
+
         if mask is not None:
-            weights = weights * mask.float()
-        # softmax across seq_len dim
+            # weights = weights * mask.float()
+            weights.data.masked_fill_(1 - mask.data, -float('inf'))
+
         weights = F.softmax(weights, dim=1)
+
         # (eq 7)
         context = weights.unsqueeze(1).bmm(enc_outs.transpose(0, 1)).squeeze(1)
         # (eq 5) linear out combining context and hidden
