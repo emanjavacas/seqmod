@@ -9,7 +9,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 
-from seqmod.modules.custom import word_dropout, grad_reverse
+from seqmod.modules.custom import grad_reverse
+from seqmod.modules.embedding import word_dropout
 from seqmod.modules.custom import StackedLSTM, StackedGRU, MLP, Highway
 from seqmod.modules import attention as attn
 from seqmod.misc.beam_search import Beam
