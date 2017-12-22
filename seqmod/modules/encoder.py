@@ -43,6 +43,8 @@ class RNNEncoder(BaseEncoder):
 
         super(BaseEncoder, self).__init__()
 
+        super(BaseEncoder, self).__init__()
+
         if bidi and hid_dim % 2 != 0:
             raise ValueError("Hidden dimension must be even for BiRNNs")
 
