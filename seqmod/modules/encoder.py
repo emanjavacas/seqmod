@@ -43,6 +43,8 @@ class RNNEncoder(BaseEncoder):
 
         super(BaseEncoder, self).__init__()
 
+        super(BaseEncoder, self).__init__()
+
         if bidi and hid_dim % 2 != 0:
             raise ValueError("Hidden dimension must be even for BiRNNs")
 
@@ -130,7 +132,7 @@ class RNNEncoder(BaseEncoder):
         outs, hidden = self.rnn(inp, hidden)
 
         if lengths is not None:  # unpack if lengths given
-            outs, _ = unpack(outs)
+            (outs, _), (inp, _) = unpack(outs), unpack(inp)
 
         if self.bidi:
             # BiRNN encoder outputs:   (num_layers * 2 x batch x hid_dim)
