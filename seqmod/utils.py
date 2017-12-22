@@ -1,6 +1,5 @@
 
 import os
-import math
 import yaml
 from datetime import datetime
 import random; random.seed(1001)
@@ -94,6 +93,51 @@ def save_checkpoint(parent, model, d, args, ppl=None, suffix=None):
     return dirpath
 
 
+class EmbeddingLoader(object):
+
+    MODES = ('glove', 'fasttext')
+
+    def __init__(self, filepath, mode):
+        if not os.path.isfile(filepath):
+            raise ValueError("Couldn't find file {}".format(filepath))
+
+        if mode.lower() not in EmbeddingLoader.MODES:
+            raise ValueError("Unknown file mode {}".format(mode))
+
+        self.filepath = filepath
+        self.mode = mode.lower()
+
+        self.has_header = False
+        if self.mode == 'fasttext':
+            self.has_header = True
+
+    def reader(self):
+        with open(self.filepath, 'r') as f:
+
+            if self.has_header:
+                next(f)
+
+            for line in f:
+                w, *vec = line.split()
+
+                yield w, vec
+
+    def load(self, words=None):
+        vectors, outwords = [], []
+
+        if words is not None:
+            words = set(words)
+
+        for word, vec in self.reader():
+            if words is not None and word not in words:
+                continue
+
+            vectors.append(list(map(float, vec)))
+            outwords.append(word)
+
+        return vectors, outwords
+
+
 # Pytorch utils
 def merge_states(state_dict1, state_dict2, merge_map):
     """
@@ -111,6 +155,25 @@ def merge_states(state_dict1, state_dict2, merge_map):
         else:
             state_dict[target_p] = state_dict1[target_p]
     return state_dict
+
+
+def make_length_mask(lengths):
+    """
+    Compute binary length mask.
+
+    lengths: Variable torch.LongTensor(batch) should be on the desired
+        output device.
+
+    Returns:
+    --------
+
+    mask: torch.ByteTensor(batch x seq_len)
+    """
+    maxlen, batch = lengths.data.max(), len(lengths)
+    mask = torch.arange(0, maxlen, out=lengths.data.new()) \
+                .repeat(batch, 1) \
+                .lt(lengths.data.unsqueeze(1))
+    return Variable(mask, volatile=lengths.volatile)
 
 
 def repackage_bidi(h_or_c):
@@ -262,7 +325,7 @@ def make_initializer(
         rnn={'type': 'xavier_uniform', 'args': {'gain': 1.}},
         rnn_bias={'type': 'constant', 'args': {'val': 0.}},
         cnn_bias={'type': 'constant', 'args': {'val': 0.}},
-        emb={'type': 'uniform', 'args': {'a': -0.05, 'b': 0.05}},
+        emb={'type': 'normal', 'args': {'mean': 0, 'std': 1}},
         default={'type': 'uniform', 'args': {'a': -0.05, 'b': 0.05}}):
 
     rnns = (torch.nn.LSTM, torch.nn.GRU,
@@ -280,7 +343,7 @@ def make_initializer(
                     continue
                 if is_bias(p_name):
                     getattr(init, rnn_bias['type'])(p, **rnn_bias['args'])
-                else:           # assume weight
+                else:
                     getattr(init, rnn['type'])(p, **rnn['args'])
 
         elif isinstance(m, torch.nn.Linear):  # linear
@@ -289,7 +352,7 @@ def make_initializer(
                     continue
                 if is_bias(p_name):
                     getattr(init, linear_bias['type'])(p, **linear_bias['args'])
-                else:           # assume weight
+                else:
                     getattr(init, linear['type'])(p, **linear['args'])
 
         elif isinstance(m, torch.nn.Embedding):  # embedding
@@ -317,7 +380,10 @@ def make_initializer(
 def initialize_model(model, overwrite_custom=True, **init_ops):
     """
     Applies initializer function, eventually calling any module
-    specific custom initializers.
+    specific custom initializers. Modules can implement custom initialization
+    methods `custom_init` to overwrite the general initialization.
+    Additionally, parameters can have an additional custom attribute
+    set to True and `initialize_model` won't touch them.
 
     Parameters
     ----------

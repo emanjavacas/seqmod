@@ -138,7 +138,7 @@ class Decoder(object):
             prev, hidden = read_batch(
                 self.model, seed_texts, gpu=self.gpu, **kwargs)
 
-              # extend to batch size if only single seed
+            # extend to batch size if only single seed
             if len(seed_texts) == 1:
                 prev = prev.repeat(1, batch_size)
                 if self.model.cell.startswith('LSTM'):
@@ -357,7 +357,7 @@ class LM(nn.Module):
     - maxouts: int, only used if deepout_act is MaxOut (number of parts to use
         to compose the non-linearity function).
     """
-    def __init__(self, vocab, emb_dim, hid_dim, dictionary, num_layers=1,
+    def __init__(self, vocab, emb_dim, hid_dim, d, num_layers=1,
                  cell='GRU', bias=True, dropout=0.0, conds=None,
                  word_dropout=0.0, att_dim=0, tie_weights=False,
                  train_init=False, add_init_jitter=True,
@@ -383,8 +383,7 @@ class LM(nn.Module):
         super(LM, self).__init__()
 
         # Embeddings
-        self.embeddings = Embedding(
-            vocab, emb_dim, d=dictionary, word_dropout=word_dropout)
+        self.embeddings = Embedding.from_dict(d, emb_dim, p=word_dropout)
         rnn_input_size = self.emb_dim
         if self.conds is not None:
             conds = []
@@ -465,7 +464,8 @@ class LM(nn.Module):
         if self.train_init:
             h_0 = self.h_0.repeat(1, inp.size(1), 1)
         else:
-            h_0 = Variable(inp.data.new(*size), volatile=not self.training)
+            h_0 = Variable(inp.data.new(*size).zero_(),
+                           volatile=not self.training)
         # eventualy add jitter
         if self.add_init_jitter:
             h_0 = h_0 + torch.normal(torch.zeros_like(h_0), 0.3)
