@@ -188,4 +188,4 @@ if __name__ == '__main__':
 
     if args.save:
         u.save_checkpoint(
-            args.model_path, best_model, d, vars(args), ppl=test_ppl)
+            args.model_path, best_model, vars(args), d=d, ppl=test_ppl)

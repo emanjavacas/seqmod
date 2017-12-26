@@ -67,7 +67,7 @@ def save_model(model, prefix, d=None, mode='torch'):
             save_fn(d, f)
 
 
-def save_checkpoint(parent, model, d, args, ppl=None, suffix=None):
+def save_checkpoint(parent, model, args, d=None, ppl=None, suffix=None):
     """
     Save model together with dictionary and training input arguments.
     If target parent path doesn't exist it will be created.
@@ -83,7 +83,7 @@ def save_checkpoint(parent, model, d, args, ppl=None, suffix=None):
     if not os.path.isdir(dirpath):
         os.makedirs(dirpath)
 
-    # save model with dictionary
+    # save model with (optionally) dictionary
     save_model(model, os.path.join(dirpath, 'model'), d=d)
 
     # save hyperparameters
