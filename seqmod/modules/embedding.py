@@ -1,4 +1,6 @@
 
+import os
+
 import torch
 import torch.nn as nn
 from torch.autograd import Variable
@@ -97,14 +99,24 @@ class Embedding(nn.Embedding):
         self_idxs = torch.LongTensor(self_idxs)
         self.weight.data[self_idxs] = weight[other_idxs]
 
-    def init_embeddings_from_file(self, filepath, mode, **kwargs):
+    def init_embeddings_from_file(self, filepath, mode=None, **kwargs):
         """
         Initialize embeddings from a file with a specified format (mode)
 
         - filepath: str, path to embeddings file
-        - mode: str, embedding type (glove, fasttext)
+        - mode: (optional) str, embedding type (glove, fasttext). If not given,
+            it will be guessed based on the filename.
         """
         words = self.d.vocab
+
+        if mode is None:
+            if 'glove' in os.path.basename(filepath).lower():
+                mode = 'glove'
+            elif 'fasttext' in os.path.basename(filepath).lower():
+                mode = 'fasttext'
+            else:
+                raise ValueError("Unrecognized embedding type")
+
         weights, words = u.EmbeddingLoader(filepath, mode).load(words)
         self.init_embeddings(weights, words, **kwargs)
 
