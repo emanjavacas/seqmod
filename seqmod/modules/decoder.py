@@ -5,7 +5,8 @@ import torch
 import torch.nn as nn
 from torch.autograd import Variable
 
-from seqmod.modules.custom import StackedGRU, StackedLSTM, Highway
+from seqmod.modules.rnn import StackedGRU, StackedLSTM
+from seqmod.modules.ff import Highway
 from seqmod.modules import attention
 from seqmod import utils as u
 
@@ -177,14 +178,14 @@ class RNNDecoder(BaseDecoder):
             h_0 = self.h_0.repeat(1, h_0.size(1), 1)
         else:
             if not self.reuse_hidden:
-                h_0 = h_0.zeros_like(h_0)
+                h_0 = torch.zeros_like(h_0)
 
         if self.add_init_jitter:
             h_0 = h_0 + torch.normal(torch.zeros_like(h_0), 0.3)
 
         # pack
         if self.cell.startswith('LSTM'):
-            return h_0, h_0.zeros_like(h_0)
+            return h_0, torch.zeros_like(h_0)
         else:
             return h_0
 
@@ -253,7 +254,7 @@ class RNNDecoder(BaseDecoder):
             inp = torch.cat([inp, state.input_feed], 1)
 
         if self.conditional:
-            inp = torch.cat([inp, state.conds], 1)
+            inp = torch.cat([inp, *state.conds], 1)
 
         out, hidden = self.rnn(inp, state.hidden)
 

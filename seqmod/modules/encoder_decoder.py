@@ -10,6 +10,8 @@ from seqmod.modules.decoder import RNNDecoder
 from seqmod.modules.embedding import Embedding
 from seqmod import utils as u
 
+from seqmod.modules.exposure import schedule_sampling
+
 
 class EncoderDecoder(nn.Module):
     """
@@ -22,15 +24,16 @@ class EncoderDecoder(nn.Module):
     - exposure_rate: float (0.0, 1.0), initial exposure to model predictions
         during training.
     """
-    def __init__(self, encoder, decoder, exposure_rate=1.):
+    def __init__(self, encoder, decoder, exposure_rate=1., train_data=None):
         super(EncoderDecoder, self).__init__()
 
         self.encoder = encoder
         self.decoder = decoder
 
         self.exposure_rate = exposure_rate
+        self.train_data = train_data
 
-        # NLLLoss weight (downweight loss on pad) & schedule
+        # NLLLoss weight (downweight loss on pad)
         self.nll_weight = torch.ones(len(self.decoder.embeddings.d))
         self.nll_weight[self.decoder.embeddings.d.get_pad()] = 0
 
@@ -59,42 +62,6 @@ class EncoderDecoder(nn.Module):
         """
         for p in getattr(self, module).parameters():
             p.requires_grad = False
-
-    def schedule_sampling(self, prev, dec_out):
-        """
-        Resample n inputs to next iteration from the model itself. N is itself
-        sampled from a bernoulli independently for each example in the batch
-        with weights equal to the model's variable self.scheduled_rate.
-
-        Parameters:
-        -----------
-
-        - prev: torch.LongTensor(batch_size)
-        - dec_out: torch.Tensor(batch_size x hid_dim)
-
-        Returns: partially resampled input
-        --------
-        - prev: torch.LongTensor(batch_size)
-        """
-        prev, dec_out = prev.data, dec_out.data  # don't register computation
-
-        keep_mask = torch.bernoulli(
-            torch.zeros_like(prev).float() + self.exposure_rate) == 1
-
-        # return if no sampling is necessary
-        if len(keep_mask.nonzero()) == len(prev):
-            return prev
-
-        sampled = self.decoder.project(
-            Variable(dec_out, volatile=True)).max(1)[1].data
-
-        if keep_mask.nonzero().dim() == 0:  # return all sampled
-            return sampled
-
-        keep_mask = keep_mask.nonzero().squeeze(1)
-        sampled[keep_mask] = prev[keep_mask]
-
-        return sampled
 
     def loss(self, batch_data, test=False, split=25, use_schedule=False):
         """
@@ -125,14 +92,17 @@ class EncoderDecoder(nn.Module):
         dec_outs = []
         for step, t in enumerate(dec_trg):
             if use_schedule and step > 0 and self.exposure_rate < 1.0:
-                t = self.schedule_sampling(t, dec_outs[-1])
+                t = schedule_sampling(
+                    t, dec_outs[-1],
+                    self.decoder.project,
+                    self.exposure_rate)
                 t = Variable(t, volatile=not self.training)
             out, _ = self.decoder(t, dec_state)
             dec_outs.append(out)
         dec_outs = torch.stack(dec_outs)
 
         # compute loss and backprop
-        enc_loss = self.encoder.loss(enc_outs, src_conds, test=test)
+        enc_loss, _ = self.encoder.loss(enc_outs, src_conds, test=test)
 
         # compute memory efficient word loss
         shard_data = {'out': dec_outs, 'trg': loss_trg}
@@ -271,7 +241,8 @@ def make_rnn_encoder_decoder(
         train_init=False,
         add_init_jitter=False,
         cond_dims=None,
-        cond_vocabs=None
+        cond_vocabs=None,
+        train_data=None
 ):
     """
     - num_layers: int, Number of layers for both the encoder and the decoder.
@@ -323,7 +294,7 @@ def make_rnn_encoder_decoder(
     if decoder.has_attention and encoder_summary != 'full':
         raise ValueError("Attentional decoder needs full encoder summary")
 
-    return EncoderDecoder(encoder, decoder)
+    return EncoderDecoder(encoder, decoder, train_data=train_data)
 
 
 def make_grl_rnn_encoder_decoder(
@@ -341,18 +312,15 @@ def make_grl_rnn_encoder_decoder(
         deepout_layers=0,
         deepout_act='ReLU',
         tie_weights=False,
-        reuse_hidden=True,
         train_init=False,
         add_init_jitter=False,
         cond_dims=None,
-        cond_vocabs=None
+        cond_vocabs=None,
+        train_data=None
 ):
 
     if encoder_summary == 'full':
         raise ValueError("GRL encoder can't use full summaries")
-
-    if reuse_hidden:
-        raise ValueError("GRL decoder cant' reuse encoder hidden")
 
     if cond_dims is None or cond_vocabs is None:
         raise ValueError("GRL needs conditions")
@@ -375,4 +343,4 @@ def make_grl_rnn_encoder_decoder(
                          add_init_jitter=add_init_jitter,
                          cond_dims=cond_dims, cond_vocabs=cond_vocabs)
 
-    return EncoderDecoder(encoder, decoder)
+    return EncoderDecoder(encoder, decoder, train_data=train_data)

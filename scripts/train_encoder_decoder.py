@@ -66,21 +66,6 @@ def make_att_hook(target, gpu, beam=False):
     return hook
 
 
-def make_schedule_hook(scheduler, verbose=True):
-
-    def hook(trainer, epoch, batch, checkpoint):
-        batches = len(trainer.datasets['train'])
-        old_rate = trainer.model.exposure_rate
-        new_rate = scheduler(epoch * batches + batch)
-        trainer.model.exposure_rate = new_rate
-
-        if verbose:
-            tmpl = "Updated exposure rate from {:.3f} to {:.3f}"
-            trainer.log("info", tmpl.format(old_rate, new_rate))
-
-    return hook
-
-
 def make_criterion(vocab_size, pad):
     weight = torch.ones(vocab_size)
     weight[pad] = 0
@@ -190,9 +175,9 @@ if __name__ == '__main__':
 
     hook = make_encdec_hook(args.target, args.gpu, beam=args.beam)
     trainer.add_hook(hook, hooks_per_epoch=args.hooks_per_epoch)
-    hook = make_schedule_hook(
+    hook = u.make_schedule_hook(
         inflection_sigmoid(len(train) * 2, 1.75, inverse=True))
-    # trainer.add_hook(hook, hooks_per_epoch=1000)
+    trainer.add_hook(hook, hooks_per_epoch=1000)
 
     (model, valid_loss), test_loss = trainer.train(
         args.epochs, args.checkpoint, shuffle=True, use_schedule=False)

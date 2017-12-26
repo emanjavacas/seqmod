@@ -7,7 +7,7 @@ from torch.nn.utils.rnn import pack_padded_sequence as pack
 from torch.nn.utils.rnn import pad_packed_sequence as unpack
 
 import seqmod.utils as u
-from seqmod.modules.custom import grad_reverse, MLP
+from seqmod.modules.ff import grad_reverse, MLP
 
 
 class BaseEncoder(nn.Module):
@@ -209,7 +209,7 @@ class GRLRNNEncoder(BaseEncoder):
             grl_loss.append(F.nll_loss(cond_out, cond, size_average=True))
 
         if not test:
-            (sum(grl_loss) / len(self.grls)).backward()
+            (sum(grl_loss) / len(self.grls)).backward(retain_graph=True)
 
         return [l.data[0] for l in grl_loss]
 

@@ -178,7 +178,7 @@ if __name__ == '__main__':
     # hooks
     early_stopping = None
     if args.early_stopping > 0:
-        early_stopping = EarlyStopping(10, patience=args.early_stopping)
+        early_stopping = EarlyStopping(args.early_stopping)
     model_hook = u.make_lm_hook(
         d, method=args.decoding_method, temperature=args.temperature,
         max_seq_len=args.max_seq_len, gpu=args.gpu,

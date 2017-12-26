@@ -11,7 +11,7 @@ import torch
 import torch.nn.init as init
 from torch.autograd import Variable
 
-from seqmod.modules.custom import (
+from seqmod.modules.rnn import (
     StackedLSTM, StackedGRU,
     StackedNormalizedGRU, NormalizedGRUCell, NormalizedGRU,
     RHNCoupled, RHN)
@@ -554,5 +554,20 @@ def make_clm_hook(d, sampled_conds=None, max_seq_len=200, gpu=False,
                     for hyp_num, (score, hyp) in enumerate(zip(scores, hyps))]
             trainer.log("info", ''.join(hyps) + "\n")
         trainer.log("info", '***\n')
+
+    return hook
+
+
+def make_schedule_hook(scheduler, verbose=True):
+
+    def hook(trainer, epoch, batch, checkpoint):
+        batches = len(trainer.datasets['train'])
+        old_rate = trainer.model.exposure_rate
+        new_rate = scheduler(epoch * batches + batch)
+        trainer.model.exposure_rate = new_rate
+
+        if verbose:
+            tmpl = "Exposure rate: [{:.3f}] -> [{:.3f}]"
+            trainer.log("info", tmpl.format(old_rate, new_rate))
 
     return hook

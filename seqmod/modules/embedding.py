@@ -100,6 +100,9 @@ class Embedding(nn.Embedding):
     def init_embeddings_from_file(self, filepath, mode, **kwargs):
         """
         Initialize embeddings from a file with a specified format (mode)
+
+        - filepath: str, path to embeddings file
+        - mode: str, embedding type (glove, fasttext)
         """
         words = self.d.vocab
         weights, words = u.EmbeddingLoader(filepath, mode).load(words)

@@ -1,8 +1,6 @@
 
 import logging
 
-import numpy as np
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -10,8 +8,9 @@ from torch.autograd import Variable
 
 from seqmod import utils as u
 from seqmod.modules.embedding import Embedding
-from seqmod.modules import custom
-from seqmod.modules.custom import MaxOut, Highway
+from seqmod.modules import rnn
+from seqmod.modules.ff import MaxOut, Highway
+from seqmod.modules.attention import Attention
 from seqmod.misc.beam_search import Beam
 
 
@@ -242,63 +241,11 @@ class Decoder(object):
         return scores.tolist(), list(zip(*hyps))
 
 
-class Attention(nn.Module):
-    """
-    Attention module over path hidden activations in an RNN
-    """
-    def __init__(self, att_dim, hid_dim, emb_dim):
-        self.att_dim = att_dim
-        self.hid_dim = hid_dim
-        self.emb_dim = emb_dim
-        super(Attention, self).__init__()
-        self.hid2att = nn.Linear(hid_dim, att_dim)    # W
-        self.emb2att = nn.Linear(emb_dim, att_dim)       # U
-        self.att_v = nn.Parameter(torch.Tensor(att_dim))  # b
-        self.att_v.data.uniform_(-0.05, 0.05)
-
-    def project_emb(self, emb):
-        """
-        Returns:
-        --------
-
-        torch.Tensor: (seq_len x batch_size x att_dim)
-        """
-        seq_len, batch_size, _ = emb.size()
-        return self.emb2att(emb.view(seq_len * batch_size, -1)) \
-                   .view(seq_len, batch_size, self.att_dim)
-
-    def forward(self, hid, emb, emb_att=None):
-        """
-        Parameters:
-        -----------
-
-        hid: torch.Tensor (batch_size x hid_dim)
-            Hidden state at step h_{t-1}
-        emb: torch.Tensor (seq_len x batch_size x emb_dim)
-            Embeddings of input words up to step t-1
-
-        Returns: context, weights
-        --------
-        context: torch.Tensor (batch_size x emb_dim)
-        weights: torch.Tensor (batch_size x seq_len)
-        """
-        seq_len, batch_size, _ = emb.size()
-        # hid_att: (batch_size x hid_dim)
-        hid_att = self.hid2att(hid)
-        emb_att = emb_att or self.project_emb(emb)
-        # att: (seq_len x batch_size x att_dim)
-        att = F.tanh(emb_att + hid_att[None, :, :])
-        # weights: (batch_size x seq_len)
-        weights = F.softmax((att.t() @ self.att_v[:, None], 1).squeeze(2))
-        # context: (batch_size x emb_dim)
-        context = weights.unsqueeze(1).bmm(emb.t()).squeeze(1)
-        return context, weights
-
-
 class AttentionalProjection(nn.Module):
     def __init__(self, att_dim, hid_dim, emb_dim):
         super(AttentionalProjection, self).__init__()
-        self.attn = Attention(att_dim, hid_dim, emb_dim)
+        self.attn = Attention(
+            hid_dim, att_dim, hid_dim2=emb_dim, scorer='bahdanau')
         self.hid2hid = nn.Linear(hid_dim, hid_dim)
         self.emb2hid = nn.Linear(emb_dim, hid_dim)
 
@@ -311,12 +258,12 @@ class AttentionalProjection(nn.Module):
         output: torch.Tensor (seq_len x batch_size x hid_dim)
         weights: list of torch.Tensor(batch_size x 0:t-1) of length seq_len
         """
-        emb_att = self.attn.project_emb(emb)
+        emb_att = self.attn.scorer.project_enc_outs(emb)
         output, weights = [], []
         for idx, hid in enumerate(outs):
             t = max(0, idx-1)  # use same hid at t=0
             context, weight = self.attn(
-                outs[t], emb[:max(1, t)], emb_att=emb_att[:max(1, t)])
+                outs[t], emb[:max(1, t)], enc_att=emb_att[:max(1, t)])
             output.append(self.hid2hid(hid) + self.emb2hid(context))
             weights.append(weight)
         return torch.stack(output), weights
@@ -332,7 +279,7 @@ class LM(nn.Module):
     - vocab: int, vocabulary size.
     - emb_dim: int, embedding size.
     - hid_dim: int, hidden dimension of the RNN.
-    - dictionary: Dict.
+    - d: Dict.
     - num_layers: int, number of layers of the RNN.
     - cell: str, one of GRU, LSTM, RNN.
     - bias: bool, whether to include bias in the RNN.
@@ -345,11 +292,12 @@ class LM(nn.Module):
         embedding size for that condition.
         Note that the conditions should be specified in the same order as
         they are passed into the model at run-time.
+    - word_dropout: float.
+    - att_dim: int, whether to add an attention module of dimension `att_dim`
+        over the prefix. No attention will be added if att_dim is None or 0.
     - tie_weights: bool, whether to tie input and output embedding layers.
         In case of unequal emb_dim and hid_dim values a linear project layer
         will be inserted after the RNN to match back to the embedding dim
-    - att_dim: int, whether to add an attention module of dimension `att_dim`
-        over the prefix. No attention will be added if att_dim is None or 0
     - deepout_layers: int, whether to add deep output after hidden layer and
         before output projection layer. No deep output will be added if
         deepout_layers is 0 or None.
@@ -361,7 +309,8 @@ class LM(nn.Module):
                  cell='GRU', bias=True, dropout=0.0, conds=None,
                  word_dropout=0.0, att_dim=0, tie_weights=False,
                  train_init=False, add_init_jitter=True,
-                 deepout_layers=0, deepout_act='MaxOut', maxouts=2):
+                 deepout_layers=0, deepout_act='MaxOut', maxouts=2,
+                 exposure_rate=1.0):
 
         if tie_weights and not emb_dim == hid_dim:
             logging.warn("When tying weights, output layer and embedding " +
@@ -380,6 +329,7 @@ class LM(nn.Module):
         self.dropout = dropout
         self.conds = conds
         self.hidden_state = {}  # for hidden state persistance during training
+        self.exposure_rate = exposure_rate
         super(LM, self).__init__()
 
         # Embeddings
@@ -401,10 +351,10 @@ class LM(nn.Module):
             init_size = self.num_layers, 1, self.hid_dim
             self.h_0 = nn.Parameter(torch.Tensor(*init_size).zero_())
 
-        if hasattr(nn, cell):   # built-in cell
+        try:
             cell = getattr(nn, cell)
-        else:                   # custom cell
-            cell = getattr(custom, cell)
+        except AttributeError:  # assume custom rnn cell
+            cell = getattr(rnn, cell)
 
         self.rnn = cell(
             rnn_input_size, self.hid_dim,
@@ -521,7 +471,7 @@ class LM(nn.Module):
 
         return outs, hidden, weights
 
-    def loss(self, batch_data, test=False):
+    def loss(self, batch_data, test=False, use_schedule=False):
         # unpack data
         (source, targets), conds = batch_data, None
         if self.conds is not None:
@@ -529,8 +479,10 @@ class LM(nn.Module):
 
         # get hidden from previous batch (if stored)
         hidden = self.hidden_state.get('hidden', None)
+
         # run RNN
         output, hidden, _ = self(source, hidden=hidden, conds=conds)
+
         # store hidden for next batch
         self.hidden_state['hidden'] = u.repackage_hidden(hidden)
 

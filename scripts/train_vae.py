@@ -5,60 +5,56 @@ import argparse
 
 import torch
 from torch import optim
-from torch.autograd import Variable
 
 from seqmod import utils as u
 from seqmod.misc import StdLogger, VisdomLogger
 from seqmod.misc import text_processor, PairedDataset, Dict
-from seqmod.misc import Trainer, EarlyStopping
-from seqmod.modules.vae import SequenceVAE, kl_sigmoid_annealing_schedule
+from seqmod.misc import Trainer, EarlyStopping, inflection_sigmoid
+from seqmod.modules.vae import kl_sigmoid_annealing_schedule
+from seqmod.modules.vae import make_vae_encoder_decoder
 from seqmod.loaders import load_twisty, load_split_data
-
-from w2v import load_embeddings
 
 
 def kl_weight_hook(trainer, epoch, batch, checkpoints):
-    trainer.log("info", "kl weight: [{:.3f}]".format(trainer.model.kl_weight))
+    weight = trainer.model.encoder.kl_weight
+    trainer.log("info", "kl weight: [{:.3f}]".format(weight))
 
 
-def decode_report(trainer, src, z_params, n=5, keep=2):
-    """
-    src: LongTensor (seq_len, n)
-    z_params (mu, logvar): FloatTensors (n * keep x z_dim)
-    """
-    d = trainer.datasets['train'].d['src']
-    src = src.chunk(src.size(1), 1)
-    z_params = zip(z_params[0].chunk(n, 0), z_params[1].chunk(n, 0))
-
-    for idx, (src, z_params) in enumerate(zip(src, z_params)):
-        # src: (1 x seq_len); z_params = (mu, logvar): ((keep x z_dim), ...)
-        scores, hyps = trainer.model.generate(z_params=z_params)
-
-        # build report
-        report = '{}\nSource: '.format(idx)
-        report += ' '.join(d.vocab[c] for c in src.squeeze().data.tolist())
-
-        # report best n hypotheses
-        report += '\nHypotheses:'
-        report += "".join(
-            u.format_hyp(scores[i], hyps[i], i, d) for i in range(len(hyps)))
-        report += '\n\n'
-
-        yield report
-
-
-def make_generate_hook(n=5, keep=2):
+def make_generate_hook(level, n=2, samples=2, beam_width=5):
 
     def hook(trainer, epoch, batch, checkpoints):
         # grab random batch from valid
         src, _ = valid[random.randint(0, len(valid)-1)]
+        if trainer.model.encoder.conditional:
+            (src, *_) = src
+        (src, lengths) = src
         # grab random examples from batch
         idxs = torch.randperm(n)
         src = src[:, idxs.cuda() if src.data.is_cuda else idxs]
-        emb = trainer.model.embeddings(src)
-        mu, logvar = trainer.model.encoder(emb)
-        z_params = mu.repeat(keep, 1), logvar.repeat(keep, 1)
-        for report in decode_report(trainer, src, z_params, n=n, keep=keep):
+        # dict
+        d = trainer.model.decoder.embeddings.d
+        sep = ' ' if level == 'word' else ''
+
+        for idx, src in enumerate(src.chunk(src.size(1), 1)):
+            report = '{}\nSource: '.format(idx)
+            report += sep.join(d.vocab[char.data[0]] for char in src)
+            
+            for sample in range(samples):
+                scores, hyps, _ = trainer.model.translate_beam(
+                    src, lengths=lengths, beam_width=beam_width)
+                # select only best
+                scores, hyps = [scores[0]], [hyps[0]]
+
+                # report
+                report += '\nSample {}'.format(sample + 1)
+
+                # report best n hypotheses
+                report += '\nHypotheses:'
+                formatted = [u.format_hyp(scores[i], hyps[i], i, d, level)
+                             for i in range(len(hyps))]
+                report += "".join(formatted)
+                report += '\n\n'
+
             trainer.log("info", report)
 
     return hook
@@ -92,18 +88,19 @@ if __name__ == '__main__':
     parser.add_argument('--dropout', default=0.1, type=float)
     parser.add_argument('--word_dropout', default=0.0, type=float)
     parser.add_argument('--train_init', action='store_true')
-    parser.add_argument('--summary', default='attention')
+    parser.add_argument('--add_init_jitter', action='store_true')
+    parser.add_argument('--encoder-summary', default='inner-attention')
+    parser.add_argument('--deepout_layers', type=int, default=0)
+    parser.add_argument('--deepout_act', default='ReLU')
     parser.add_argument('--dont_add_z', action='store_true')
     parser.add_argument('--load_embeddings', action='store_true')
-    parser.add_argument('--flavor', default=None)
-    parser.add_argument('--suffix', default=None)
+    parser.add_argument('--embeddings_path')
+    parser.add_argument('--embeddings_file')
     # training
     parser.add_argument('--optim', default='RMSprop')
     parser.add_argument('--lr', default=0.005, type=float)
     parser.add_argument('--max_norm', default=5., type=float)
     parser.add_argument('--weight_decay', default=0, type=float)
-    parser.add_argument('--lr_decay', default=0.85, type=float)
-    parser.add_argument('--start_decay_at', default=1, type=int)
     parser.add_argument('--patience', default=2, type=int)
     parser.add_argument('--inflection', default=6000, type=int)
     parser.add_argument('--epochs', default=15, type=int)
@@ -132,10 +129,12 @@ if __name__ == '__main__':
 
     # preprocess
     if not args.cache_data or not os.path.isfile('data/{}_train.pt'.format(prefix)):
+
+        processor = text_processor(lower=False, level=args.level)
+
         if args.source == 'twisty':
             src, trg = load_twisty(
-                min_len=args.min_len, concat=args.concat,
-                processor=text_processor(lower=False, level=args.level))
+                min_len=args.min_len, concat=args.concat, processor=processor)
             train, test, valid = load_twisty_dataset(
                 src, trg, args.batch_size,
                 min_freq=args.min_freq, max_size=args.max_size,
@@ -144,7 +143,7 @@ if __name__ == '__main__':
         else:
             train, test, valid = load_split_data(
                 os.path.join('~/corpora', args.source), args.batch_size,
-                args.max_size, args.min_freq, args.max_len, args.gpu)
+                args.max_size, args.min_freq, args.max_len, args.gpu, processor)
         # save
         if args.cache_data:
             train.to_disk('data/{}_train.pt'.format(prefix))
@@ -166,13 +165,13 @@ if __name__ == '__main__':
     print("* Number of train batches {}".format(len(train)))
 
     print("Building model...")
-    model = SequenceVAE(
-        args.emb_dim, args.hid_dim, args.z_dim, train.d['src'],
-        num_layers=args.num_layers, cell=args.cell, dropout=args.dropout,
-        add_z=not args.dont_add_z, word_dropout=args.word_dropout,
-        tie_weights=args.tie_weights, train_init=args.train_init,
-        summary=args.summary,
-        kl_schedule=kl_sigmoid_annealing_schedule(inflection=args.inflection))
+    model = make_vae_encoder_decoder(
+        args.z_dim, args.num_layers, args.emb_dim, args.hid_dim,
+        train.d['src'], cell=args.cell, encoder_summary=args.encoder_summary,
+        dropout=args.dropout, word_dropout=args.word_dropout,
+        add_z=not args.dont_add_z, tie_weights=args.tie_weights,
+        deepout_layers=args.deepout_layers, deepout_act=args.deepout_act,
+        train_init=args.train_init, add_init_jitter=args.add_init_jitter)
     print(model)
 
     print("* number of parameters: {}".format(
@@ -181,12 +180,8 @@ if __name__ == '__main__':
     u.initialize_model(model)
 
     if args.load_embeddings:
-        weight = load_embeddings(
-            train.d['src'].vocab,
-            args.flavor,
-            args.suffix,
-            '/home/corpora/word_embeddings/')
-        model.init_embeddings(weight)
+        path = os.path.join(args.embeddings_path, args.embeddings_file)
+        model.encoder.embeddings.init_embeddings_from_file(path, 'glove')
 
     if args.gpu:
         model.cuda()
@@ -195,12 +190,14 @@ if __name__ == '__main__':
     # reduce rate by gamma every n epochs
     scheduler = optim.lr_scheduler.StepLR(optimizer, 1, gamma=0.75)
     scheduler.verbose = True
+    # kl annealing
+    kl_schedule = kl_sigmoid_annealing_schedule(inflection=args.inflection)
 
     class VAETrainer(Trainer):
         def on_batch_end(self, epoch, batch, loss):
             # reset kl weight
             total_batches = len(self.datasets['train'])
-            self.model.kl_weight = self.model.kl_schedule(
+            self.model.encoder.kl_weight = kl_schedule(
                 batch + total_batches * epoch)
 
     losses = [{'loss': 'rec'},
@@ -210,9 +207,16 @@ if __name__ == '__main__':
         model, {'train': train, 'valid': valid, 'test': test}, optimizer,
         losses=losses, early_stopping=EarlyStopping(5, patience=args.patience),
         max_norm=args.max_norm, scheduler=scheduler)
-    trainer.add_hook(make_generate_hook(), hooks_per_epoch=1)
-    trainer.add_hook(kl_weight_hook, hooks_per_epoch=2)
-    trainer.add_loggers(
-        StdLogger(), VisdomLogger(env='vae', losses=('rec', 'kl'), max_y=600))
 
-    trainer.train(args.epochs, args.checkpoints, shuffle=True)
+    trainer.add_hook(make_generate_hook(args.level), hooks_per_epoch=100)
+    trainer.add_hook(kl_weight_hook, hooks_per_epoch=100)
+    hook = u.make_schedule_hook(
+        inflection_sigmoid(len(train) * 2, 1.75, inverse=True), verbose=True)
+    trainer.add_hook(hook, hooks_per_epoch=1000)
+    trainer.add_loggers(
+        StdLogger(),
+        # VisdomLogger(env='vae', losses=('rec', 'kl'), max_y=600)
+    )
+
+    trainer.train(
+        args.epochs, args.checkpoints, shuffle=True, use_schedule=True)

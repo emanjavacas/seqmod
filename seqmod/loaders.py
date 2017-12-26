@@ -23,13 +23,16 @@ def load_lines(path, max_len=None, processor=text_processor()):
     return lines
 
 
-def load_split_data(path, batch_size, max_size, min_freq, max_len, gpu):
+def load_split_data(path, batch_size, max_size, min_freq, max_len, gpu, processor):
     """
     Load corpus that is already splitted in 'train.txt', 'valid.txt', 'test.txt'
     """
-    train_data = load_lines(os.path.join(path, 'train.txt'), max_len=max_len)
-    valid_data = load_lines(os.path.join(path, 'valid.txt'), max_len=max_len)
-    test_data = load_lines(os.path.join(path, 'test.txt'), max_len=max_len)
+    train_data = load_lines(
+        os.path.join(path, 'train.txt'), max_len=max_len, processor=processor)
+    valid_data = load_lines(
+        os.path.join(path, 'valid.txt'), max_len=max_len, processor=processor)
+    test_data = load_lines(
+        os.path.join(path, 'test.txt'), max_len=max_len, processor=processor)
 
     d = Dict(pad_token=u.PAD, eos_token=u.EOS, bos_token=u.BOS,
              max_size=max_size, min_freq=min_freq, force_unk=True)

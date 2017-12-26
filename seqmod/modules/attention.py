@@ -33,11 +33,12 @@ class BahdanauScorer(nn.Module):
 
     `score(a_i_j) = a_v \dot tanh(W_s @ h_s_j + W_t @ h_t_i)`
     """
-    def __init__(self, hid_dim, att_dim):
+    def __init__(self, hid_dim1, att_dim, hid_dim2=None):
         super(BahdanauScorer, self).__init__()
         # params
-        self.W_s = nn.Linear(hid_dim, att_dim, bias=False)
-        self.W_t = nn.Linear(hid_dim, att_dim, bias=True)
+        hid_dim2 = hid_dim2 or hid_dim1
+        self.W_s = nn.Linear(hid_dim1, att_dim, bias=False)
+        self.W_t = nn.Linear(hid_dim2, att_dim, bias=True)
         self.v_a = nn.Parameter(torch.Tensor(att_dim, 1))
         self.v_a.data.uniform_(-0.05, 0.05)
         self.v_a.custom = True  # don't overwrite initialization
@@ -67,12 +68,26 @@ class BahdanauScorer(nn.Module):
 
 
 class Attention(nn.Module):
-    def __init__(self, hid_dim, att_dim, scorer='general'):
+    """
+    Global attention implementing the three scorer modules from Luong 15.
+
+    Parameters:
+    -----------
+    - hid_dim: int, dimensionality of the query vector
+    - att_dim: (optional) int, dimensionality of the attention space (only
+        used by the bahdanau scorer). If not given it will default to hid_dim.
+    - scorer: str, one of ('dot', 'general', 'bahdanau')
+    - hid_dim2: (optional), int, dimensionality of the key vectors (optionally
+        used by the bahdanau scorer if given)
+    """
+    def __init__(self, hid_dim, att_dim=None, scorer='general', hid_dim2=None):
         super(Attention, self).__init__()
 
-        if hid_dim != att_dim and scorer != 'bahdanau':
+        if scorer != 'bahdanau' and att_dim is not None and hid_dim != hid_dim:
             raise ValueError("Global attention requires attention size "
                              "equal to Encoder/Decoder hidden size")
+        if scorer == 'bahdanau:' and att_dim is None:
+            att_dim = hid_dim
 
         # Scorer
         if scorer.lower() == 'dot':
@@ -80,11 +95,11 @@ class Attention(nn.Module):
         elif scorer.lower() == 'general':
             self.scorer = GeneralScorer(hid_dim)
         elif scorer.lower() == 'bahdanau':
-            self.scorer = BahdanauScorer(hid_dim, att_dim)
+            self.scorer = BahdanauScorer(hid_dim, att_dim, hid_dim2=hid_dim2)
         else:
             raise ValueError(
-                "scorer must be one of ('dot', 'general', 'bahdanau') "
-                "got {}".format(scorer))
+                "`scorer` must be one of ('dot', 'general', 'bahdanau')"
+                " but got {}".format(scorer))
 
         # Output layer (Luong 15. eq (5))
         self.linear_out = nn.Linear(
