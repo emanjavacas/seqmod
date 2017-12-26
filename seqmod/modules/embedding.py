@@ -81,9 +81,10 @@ class Embedding(nn.Embedding):
         if isinstance(weight, np.ndarray):
             weight = torch.from_numpy(weight).float()
         # check embedding size
-        assert weight.size(1) == self.embedding_dim, \
-            "Mismatched embedding dim {} for model with dim {}".format(
-                weight.size(1), self.embedding_dim)
+        if weight.size(1) != self.embedding_dim:
+            raise ValueError("Mismatched embedding dim {} for model "
+                             "with dim {}".format(weight.size(1),
+                                                  self.embedding_dim))
 
         self_idxs, other_idxs = [], []
         for other_idx, word in enumerate(words):

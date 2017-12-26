@@ -30,7 +30,7 @@ class BaseEncoder(nn.Module):
         raise NotImplementedError
 
     def loss(self, enc_outs, enc_trg, test=False):
-        return tuple()
+        return [], None
 
 
 class RNNEncoder(BaseEncoder):

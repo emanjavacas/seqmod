@@ -97,14 +97,14 @@ class EmbeddingLoader(object):
 
     MODES = ('glove', 'fasttext')
 
-    def __init__(self, filepath, mode):
-        if not os.path.isfile(filepath):
-            raise ValueError("Couldn't find file {}".format(filepath))
+    def __init__(self, fname, mode):
+        if not os.path.isfile(fname):
+            raise ValueError("Couldn't find file {}".format(fname))
 
         if mode.lower() not in EmbeddingLoader.MODES:
             raise ValueError("Unknown file mode {}".format(mode))
 
-        self.filepath = filepath
+        self.fname = fname
         self.mode = mode.lower()
 
         self.has_header = False
@@ -112,13 +112,13 @@ class EmbeddingLoader(object):
             self.has_header = True
 
     def reader(self):
-        with open(self.filepath, 'r') as f:
+        with open(self.fname, 'r') as f:
 
             if self.has_header:
                 next(f)
 
             for line in f:
-                w, *vec = line.split()
+                w, *vec = line.split(' ')
 
                 yield w, vec
 
@@ -128,12 +128,15 @@ class EmbeddingLoader(object):
         if words is not None:
             words = set(words)
 
-        for word, vec in self.reader():
+        for idx, (word, vec) in enumerate(self.reader()):
             if words is not None and word not in words:
                 continue
 
-            vectors.append(list(map(float, vec)))
-            outwords.append(word)
+            try:
+                vectors.append(list(map(float, vec)))
+                outwords.append(word)
+            except ValueError as e:
+                raise ValueError(str(e) + ' at {}:{}'.format(self.fname, idx))
 
         return vectors, outwords
 

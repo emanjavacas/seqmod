@@ -102,7 +102,7 @@ class EncoderDecoder(nn.Module):
         dec_outs = torch.stack(dec_outs)
 
         # compute loss and backprop
-        enc_loss, _ = self.encoder.loss(enc_outs, src_conds, test=test)
+        enc_losses, _ = self.encoder.loss(enc_outs, src_conds, test=test)
 
         # compute memory efficient word loss
         shard_data = {'out': dec_outs, 'trg': loss_trg}
@@ -118,7 +118,7 @@ class EncoderDecoder(nn.Module):
             if not test:
                 shard_loss.backward(retain_graph=True)
 
-        return (loss.data[0], *enc_loss), num_examples
+        return (loss.data[0], *enc_losses), num_examples
 
     def translate(self, src, lengths, conds=None, max_decode_len=2):
         """
