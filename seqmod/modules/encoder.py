@@ -126,13 +126,16 @@ class RNNEncoder(BaseEncoder):
         if hidden is None:
             hidden = self.init_hidden_for(inp)
 
-        if lengths is not None:  # pack if lengths given
-            inp = pack(inp, lengths=lengths.data.tolist())
+        # # TODO: use packed_sequence (sort input by length and unsort output)
+        # if lengths is not None:  # pack if lengths given
+        #     lengths, ix = torch.sort(lengths)
+        #     inp = pack(inp[:, ix], lengths=lengths.data.tolist())
 
         outs, hidden = self.rnn(inp, hidden)
 
-        if lengths is not None:  # unpack if lengths given
-            (outs, _), (inp, _) = unpack(outs), unpack(inp)
+        # if lengths is not None:  # unpack if lengths given
+        #     (outs, _), (inp, _) = unpack(outs), unpack(inp)
+        # # TODO: unsort inp, outs & hidden
 
         if self.bidi:
             # BiRNN encoder outputs:   (num_layers * 2 x batch x hid_dim)

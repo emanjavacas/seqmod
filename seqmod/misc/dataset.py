@@ -99,7 +99,7 @@ def get_splits(length, test, dev=None):
     return cumsum(int(length * i) for i in [train, dev, test] if i)
 
 
-def pad_pack_batch(examples, pad=None, return_lengths=True):
+def pad_pack_batch(examples, pad, return_lengths):
     """
     Transform a list of examples into a proper torch.LongTensor batch
     """
@@ -117,8 +117,7 @@ def pad_pack_batch(examples, pad=None, return_lengths=True):
     out = out.t().contiguous()
 
     if return_lengths:
-        ix = argsort(lengths, reverse=True)  # sort lengths in descending order
-        return out[:, ix], [lengths[i] for i in ix]
+        return out, lengths
     else:
         return out
 
@@ -316,8 +315,7 @@ class Dict(object):
             and list with sequence lengths in the batch
         """
         if self.sequential:
-            return pad_pack_batch(
-                batch_data, pad=self.get_pad(), return_lengths=return_lengths)
+            return pad_pack_batch(batch_data, self.get_pad(), return_lengths)
         else:
             return torch.LongTensor(batch_data)
 
