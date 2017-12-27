@@ -208,7 +208,7 @@ class RNNDecoder(BaseDecoder):
 
         return Variable(output, volatile=not self.training)
 
-    def init_state(self, outs, hidden, lengths, conds=None):
+    def init_state(self, outs, hidden, lengths, conds=None, mask=None):
         """
         Must be call at the beginning of the decoding
 
@@ -218,12 +218,15 @@ class RNNDecoder(BaseDecoder):
         outs: torch.FloatTensor, summary vector(s) from the Encoder.
         hidden: torch.FloatTensor, previous hidden decoder state.
         conds: (optional) tuple of (batch) with conditions
+        mask: (optional) precomputed attention mask. If passed, lengths
+            will be ignored.
         """
         hidden = self.init_hidden_for(hidden)
 
-        mask, enc_att = None, None
+        enc_att = None
         if self.has_attention:
-            mask = u.make_length_mask(lengths)
+            if mask is None:
+                mask = u.make_length_mask(lengths)
             if self.att_type.lower() == 'bahdanau':
                 enc_att = self.attn.scorer.project_enc_outs(outs)
 

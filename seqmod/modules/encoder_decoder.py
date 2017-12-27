@@ -170,7 +170,7 @@ class EncoderDecoder(nn.Module):
 
         return scores, hyps, weights
 
-    def translate_beam(self, src, lengths, conds=None,
+    def translate_beam(self, src, lengths, mask=None, conds=None,
                        beam_width=5, max_decode_len=2):
         """
         Translate a single input sequence using beam search.
@@ -180,6 +180,7 @@ class EncoderDecoder(nn.Module):
 
         src: torch.LongTensor (seq_len x 1)
         lengths: torch.LongTensor (1)
+        mask: (optional) see Decoder.init_state
         conds: (optional) conditions for the decoder
         """
         eos = self.decoder.embeddings.d.get_eos()
@@ -190,7 +191,7 @@ class EncoderDecoder(nn.Module):
 
         enc_outs, enc_hidden = self.encoder(src)
         dec_state = self.decoder.init_state(
-            enc_outs, enc_hidden, lengths, conds=conds)
+            enc_outs, enc_hidden, lengths, conds=conds, mask=mask)
 
         dec_state.expand_along_beam(beam_width)
 
