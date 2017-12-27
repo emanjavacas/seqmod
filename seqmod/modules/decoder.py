@@ -43,16 +43,16 @@ class BaseDecoder(nn.Module):
         """
         return False
 
-    def build_output(self, hid_dim, deepout_layers, deepout_act, tie_weights):
+    def build_output(self, hid_dim, deep_layers, deep_act, tie_weights, p):
         """
         Create output projection (from decoder output to softmax)
         """
         output = []
 
-        if deepout_layers > 0:
+        if deep_layers > 0:
             output.append(
-                Highway(hid_dim, num_layers=deepout_layers,
-                        activation=deepout_act))
+                Highway(hid_dim, num_layers=deep_layers,
+                        activation=deep_act, dropout=p))
 
         emb_dim = self.embeddings.embedding_dim
         vocab_size = self.embeddings.num_embeddings
@@ -149,7 +149,7 @@ class RNNDecoder(BaseDecoder):
 
         # output projection
         self.proj = self.build_output(
-            hid_dim, deepout_layers, deepout_act, tie_weights)
+            hid_dim, deepout_layers, deepout_act, tie_weights, dropout)
 
     def build_rnn(self, num_layers, in_dim, hid_dim, cell, dropout):
         stacked = StackedLSTM if cell == 'LSTM' else StackedGRU
