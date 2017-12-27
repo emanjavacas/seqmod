@@ -90,12 +90,12 @@ class StdLogger(Logger):
     def epoch_end(self, payload):
         speed = payload["examples"] / payload["duration"]
         loss = StdLogger.loss_str(payload['loss'], 'train')
-        self.logger.info("Epoch [%d]; %s; speed: %d tokens/sec" %
+        self.logger.info("Epoch[%d]; %s; speed: %d tokens/sec" %
                          (payload['epoch'], loss, speed))
 
     def validation_end(self, payload):
         loss = StdLogger.loss_str(payload['loss'], 'valid')
-        self.logger.info("Epoch [%d]; %s" % (payload['epoch'], loss))
+        self.logger.info("Epoch[%d]; %s" % (payload['epoch'], loss))
 
     def test_begin(self, payload):
         self.logger.info("Testing...")

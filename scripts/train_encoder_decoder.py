@@ -101,6 +101,7 @@ if __name__ == '__main__':
     parser.add_argument('--max_norm', default=10., type=float)
     parser.add_argument('--dropout', default=0.25, type=float)
     parser.add_argument('--word_dropout', default=0.0, type=float)
+    parser.add_argument('--use_schedule', action='store_true')
     parser.add_argument('--patience', default=5, type=int)
     parser.add_argument('--gpu', action='store_true')
     parser.add_argument('--checkpoint', default=50, type=int)
@@ -180,4 +181,5 @@ if __name__ == '__main__':
     trainer.add_hook(hook, hooks_per_epoch=1000)
 
     (model, valid_loss), test_loss = trainer.train(
-        args.epochs, args.checkpoint, shuffle=True, use_schedule=False)
+        args.epochs, args.checkpoint, shuffle=True,
+        use_schedule=args.use_schedule)
