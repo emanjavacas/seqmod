@@ -1,6 +1,7 @@
 
 import logging
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -12,6 +13,7 @@ from seqmod.modules import rnn
 from seqmod.modules.ff import MaxOut, Highway
 from seqmod.modules.attention import Attention
 from seqmod.misc.beam_search import Beam
+from seqmod.modules.exposure import scheduled_sampling
 
 
 def strip_post_eos(sents, eos):
@@ -70,9 +72,9 @@ def read_batch(m, seed_texts, gpu=False, **kwargs):
         return prev, torch.cat(hs, 1)
 
 
-class Decoder(object):
+class Generator(object):
     """
-    General Decoder class for language models.
+    General generator class for language models.
 
     Parameters:
     -----------
@@ -169,6 +171,7 @@ class Decoder(object):
 
         for _ in range(max_seq_len):
             outs, hidden, _ = self.model(prev, hidden=hidden, **kwargs)
+            outs = self.model.project(outs)
             score, prev = outs.max(1)
             score, prev = score.squeeze(), prev.t()
             hyps.append(prev.squeeze().data.tolist())
@@ -198,6 +201,7 @@ class Decoder(object):
             prev = Variable(beam.get_current_state().unsqueeze(0),
                             volatile=True)
             outs, hidden, _ = self.model(prev, hidden=hidden, **kwargs)
+            outs = self.model.project(outs)
             beam.advance(outs.data)
 
             if self.model.cell.startswith('LSTM'):
@@ -226,6 +230,7 @@ class Decoder(object):
 
         for _ in range(max_seq_len):
             outs, hidden, _ = self.model(prev, hidden=hidden, **kwargs)
+            outs = self.model.project(outs)
             prev = outs.div_(temperature).exp().multinomial(1).t()
             score = u.select_cols(outs.data.cpu(), prev.squeeze().data.cpu())
             hyps.append(prev.squeeze().data.tolist())
@@ -269,7 +274,151 @@ class AttentionalProjection(nn.Module):
         return torch.stack(output), weights
 
 
-class LM(nn.Module):
+class BaseLM(nn.Module):
+    """
+    Abstract LM Class
+    """
+    def __init__(self, *args, **kwargs):
+        # LM training data
+        self.hidden_state = {}
+        self.exposure_rate = 1.0
+
+        super(BaseLM, self).__init__()
+
+    def is_cuda(self):
+        return next(self.parameters()).is_cuda
+
+    def n_params(self, trainable=True):
+        cnt = 0
+        for p in self.parameters():
+            if trainable and not p.requires_grad:
+                continue
+            cnt += p.nelement()
+
+        return cnt
+
+    def freeze_submodule(self, module, flag=False):
+        for p in getattr(self, module).parameters():
+            p.requires_grad = flag
+
+    def set_dropout(self, dropout):
+        for m in self.children():
+            if hasattr(m, 'dropout'):
+                m.dropout = dropout
+
+    def project(self, output, reshape=False):
+        raise NotImplementedError
+
+    def forward(self, inp, **kwargs):
+        raise NotImplementedError
+
+    def loss(self, batch, test=False):
+        raise NotImplementedError
+
+    def generate(self, d, conds=None, seed_texts=None, max_seq_len=25,
+                 gpu=False, method='sample', temperature=1., width=5,
+                 bos=False, eos=False, ignore_eos=False, batch_size=10,
+                 **kwargs):
+        """
+        Generate text using a specified method (argmax, sample, beam)
+
+        Parameters:
+        -----------
+        d: Dict used during training to fit the vocabulary
+        conds: list, list of integers specifying the input conditions for
+            sampling from a conditional language model. Implies that all output
+            elements in the batch will have same conditions
+        seed_texts: None or list of sentences to use as seed for the generator
+        max_seq_len: int, maximum number of symbols to be generated. The output
+            might actually be less than this number if the Dict was fitted with
+            a <eos> token (in which case generation will end after the first
+            generated <eos>)
+        gpu: bool, whether to generate on the gpu
+        method: str, one of 'sample', 'argmax', 'beam' (check the corresponding
+            functions in Generator for more info)
+        temperature: float, temperature for multinomial sampling (only applies
+            to method 'sample')
+        width: int, beam size width (only applies to the 'beam' method)
+        bos: bool, whether to prefix the seed with the bos_token. Only used if
+            seed_texts is given and the dictionary has a bos_token.
+        eos: bool, whether to suffix the seed with the eos_token. Only used if
+            seed_texts is given and the dictionary has a eos_token.
+        ignore_eos: bool, whether to stop generation after hitting <eos> or not
+        batch_size: int, number of parallel generations (only used if
+            seed_texts is None)
+
+        Returns:
+        --------
+        scores: list of floats, unnormalized scores, one for each hypothesis
+        hyps: list of lists, decoded hypotheses in integer form
+        """
+        if self.training:
+            logging.warn("Generating in training modus!")
+
+        if hasattr(self, 'conds') and self.conds is not None:
+            # expand conds to batch
+            if conds is None:
+                raise ValueError("conds is required for generating with a CLM")
+            conds = [torch.LongTensor([c]).repeat(1, batch_size) for c in conds]
+            conds = [Variable(c, volatile=True) for c in conds]
+            if gpu:
+                conds = [c.cuda() for c in conds]
+
+        generator = getattr(Generator(self, d, gpu=gpu), method)
+        scores, hyps = generator(
+            seed_texts=seed_texts, max_seq_len=max_seq_len, conds=conds,
+            batch_size=batch_size, ignore_eos=ignore_eos, bos=bos, eos=eos,
+            # sample-only
+            temperature=temperature,
+            # beam-only
+            width=width, **kwargs)
+
+        if not ignore_eos and d.get_eos() is not None:
+            # strip content after <eos> for each batch
+            hyps = strip_post_eos(hyps, d.get_eos())
+
+        norm_scores = [s/len(hyps[idx]) for idx, s in enumerate(scores)]
+
+        return norm_scores, hyps
+
+    def predict_proba(self, inp, **kwargs):
+        """
+        Compute the probability assigned by the model to an input sequence.
+        In the future this should use pack_padded_sequence to run prediction
+        on multiple input sentences at once.
+
+        Parameters:
+        -----------
+        inp: Variable(seq_len x batch_size)
+        kwargs: other model parameters
+
+        Returns:
+        --------
+        np.array (batch) of representing the log probability of the input
+        """
+        if self.training:
+            logging.warn("Generating in training modus!")
+
+        if self.is_cuda():
+            inp = inp.cuda()
+
+        # compute output
+        outs, *_ = self(inp, **kwargs)
+        outs = self.project(outs, reshape=True) # (seq_len x batch x vocab)
+
+        # select
+        outs, index = outs[:-1].data.cpu().numpy(), inp[1:].data.cpu().numpy()
+        seq_len, batch = np.ogrid[0:index.shape[0], 0:index.shape[1]]
+        # (batch x seq_len)
+        log_probs = outs.transpose(2, 0, 1)[index, seq_len, batch].T
+
+        # normalize by length
+        log_probs = np.exp(log_probs.sum(1)) / log_probs.shape[1]
+
+        return log_probs
+
+
+class LM(BaseLM):
     """
     Vanilla RNN-based language model.
 
@@ -305,10 +454,10 @@ class LM(nn.Module):
     - maxouts: int, only used if deepout_act is MaxOut (number of parts to use
         to compose the non-linearity function).
     """
-    def __init__(self, vocab, emb_dim, hid_dim, d, num_layers=1,
+    def __init__(self, emb_dim, hid_dim, d, num_layers=1,
                  cell='GRU', bias=True, dropout=0.0, conds=None,
                  word_dropout=0.0, att_dim=0, tie_weights=False,
-                 train_init=False, add_init_jitter=True,
+                 train_init=False, add_init_jitter=False,
                  deepout_layers=0, deepout_act='MaxOut', maxouts=2,
                  exposure_rate=1.0):
 
@@ -317,7 +466,6 @@ class LM(nn.Module):
                          "layer should have equal size. A projection layer " +
                          "will be insterted to accomodate for this")
 
-        self.vocab = vocab
         self.emb_dim = emb_dim
         self.hid_dim = hid_dim
         self.num_layers = num_layers
@@ -328,9 +476,9 @@ class LM(nn.Module):
         self.add_init_jitter = add_init_jitter
         self.dropout = dropout
         self.conds = conds
-        self.hidden_state = {}  # for hidden state persistance during training
-        self.exposure_rate = exposure_rate
         super(LM, self).__init__()
+
+        self.exposure_rate = exposure_rate
 
         # Embeddings
         self.embeddings = Embedding.from_dict(d, emb_dim, p=word_dropout)
@@ -370,43 +518,40 @@ class LM(nn.Module):
         self.has_attention = hasattr(self, 'attn')
 
         # Output projection
-        project = []
+        output_proj = []
         if deepout_layers > 0:
             deepout = Highway(
                 hid_dim, num_layers=deepout_layers,
                 activation=MaxOut, in_dim=hid_dim, out_dim=hid_dim, k=maxouts)
-            project.append(deepout)
+            output_proj.append(deepout)
 
+        vocab = len(self.embeddings.d)
         if self.tie_weights:
-            proj = nn.Linear(self.emb_dim, self.vocab)
+            proj = nn.Linear(self.emb_dim, vocab)
             proj.weight = self.embeddings.weight
             if self.emb_dim != self.hid_dim:
                 proj = nn.Sequential(
                     nn.Linear(self.hid_dim, self.emb_dim), proj)
         else:
-            proj = nn.Linear(self.hid_dim, self.vocab)
+            proj = nn.Linear(self.hid_dim, vocab)
 
-        project.append(proj)
-        project.append(nn.LogSoftmax(dim=1))
-        self.project = nn.Sequential(*project)
+        output_proj.append(proj)
+        output_proj.append(nn.LogSoftmax(dim=1))
+        self.output_proj = nn.Sequential(*output_proj)
 
-    def n_params(self, trainable=True):
-        cnt = 0
-        for p in self.parameters():
-            if trainable and not p.requires_grad:
-                continue
-            cnt += p.nelement()
+    def project(self, output, reshape=False):
+        if output.dim() == 2:
+            seq_len = 1
+        else:
+            seq_len = output.size(0)
 
-        return cnt
+        output = self.output_proj(output.view(-1, self.hid_dim))
 
-    def freeze_submodule(self, module, flag=False):
-        for p in getattr(self, module).parameters():
-            p.requires_grad = flag
+        if reshape:
+            # (seq_len x batch_size x vocab)
+            output = output.view(seq_len, -1, len(self.embeddings.d))
 
-    def set_dropout(self, dropout):
-        for m in self.children():
-            if hasattr(m, 'dropout'):
-                m.dropout = dropout
+        return output
 
     def init_hidden_for(self, inp):
         size = (self.num_layers, inp.size(1), self.hid_dim)
@@ -466,9 +611,6 @@ class LM(nn.Module):
         if self.has_attention:
             outs, weights = self.attn(outs, emb)
 
-        # Output projection
-        outs = self.project(outs.view(-1, self.hid_dim))
-
         return outs, hidden, weights
 
     def loss(self, batch_data, test=False, use_schedule=False):
@@ -481,112 +623,27 @@ class LM(nn.Module):
         hidden = self.hidden_state.get('hidden', None)
 
         # run RNN
-        output, hidden, _ = self(source, hidden=hidden, conds=conds)
+        if use_schedule and self.exposure_rate < 1.0:
+            outs = []
+            for step, t in enumerate(source):
+                if step > 0:
+                    t = scheduled_sampling(
+                        t, outs[-1], self.project, self.exposure_rate)
+                    t = Variable(t, volatile=not self.training)
+                out, hidden, _ = self(t.unsqueeze(0), hidden=hidden, conds=conds)
+                outs.append(out.squeeze(0)) # remove seq_len dim
+            outs = torch.stack(outs, 0)
+        else:
+            outs, hidden, _ = self(source, hidden=hidden, conds=conds)
 
         # store hidden for next batch
         self.hidden_state['hidden'] = u.repackage_hidden(hidden)
 
         # compute loss and backward
-        loss = F.nll_loss(output, targets.view(-1), size_average=True)
+        loss = F.nll_loss(
+            self.project(outs), targets.view(-1), size_average=True)
 
         if not test:
             loss.backward()
 
         return (loss.data[0], ), source.nelement()
-
-    def generate(self, d, conds=None, seed_texts=None, max_seq_len=25,
-                 gpu=False, method='sample', temperature=1., width=5,
-                 bos=False, eos=False, ignore_eos=False, batch_size=10,
-                 **kwargs):
-        """
-        Generate text using a specified method (argmax, sample, beam)
-
-        Parameters:
-        -----------
-        d: Dict used during training to fit the vocabulary
-        conds: list, list of integers specifying the input conditions for
-            sampling from a conditional language model. Implies that all output
-            elements in the batch will have same conditions
-        seed_texts: None or list of sentences to use as seed for the generator
-        max_seq_len: int, maximum number of symbols to be generated. The output
-            might actually be less than this number if the Dict was fitted with
-            a <eos> token (in which case generation will end after the first
-            generated <eos>)
-        gpu: bool, whether to generate on the gpu
-        method: str, one of 'sample', 'argmax', 'beam' (check the corresponding
-            functions in Decoder for more info)
-        temperature: float, temperature for multinomial sampling (only applies
-            to method 'sample')
-        width: int, beam size width (only applies to the 'beam' method)
-        bos: bool, whether to prefix the seed with the bos_token. Only used if
-            seed_texts is given and the dictionary has a bos_token.
-        eos: bool, whether to suffix the seed with the eos_token. Only used if
-            seed_texts is given and the dictionary has a eos_token.
-        ignore_eos: bool, whether to stop generation after hitting <eos> or not
-        batch_size: int, number of parallel generations (only used if
-            seed_texts is None)
-
-        Returns:
-        --------
-        scores: list of floats, unnormalized scores, one for each hypothesis
-        hyps: list of lists, decoded hypotheses in integer form
-        """
-        if self.training:
-            logging.warn("Generating in training modus!")
-
-        if hasattr(self, 'conds') and self.conds is not None:
-            # expand conds to batch
-            if conds is None:
-                raise ValueError("conds is required for generating with a CLM")
-            conds = [torch.LongTensor([c]).repeat(1, batch_size) for c in conds]
-            conds = [Variable(c, volatile=True) for c in conds]
-            if gpu:
-                conds = [c.cuda() for c in conds]
-
-        decoder = getattr(Decoder(self, d, gpu=gpu), method)
-        scores, hyps = decoder(
-            seed_texts=seed_texts, max_seq_len=max_seq_len, conds=conds,
-            batch_size=batch_size, ignore_eos=ignore_eos, bos=bos, eos=eos,
-            # sample-only
-            temperature=temperature,
-            # beam-only
-            width=width, **kwargs)
-
-        if not ignore_eos and d.get_eos() is not None:
-            # strip content after <eos> for each batch
-            hyps = strip_post_eos(hyps, d.get_eos())
-
-        norm_scores = [s/len(hyps[idx]) for idx, s in enumerate(scores)]
-
-        return norm_scores, hyps
-
-    def predict_proba(self, inp, gpu=False, **kwargs):
-        """
-        Compute the probability assigned by the model to an input sequence.
-        In the future this should use pack_padded_sequence to run prediction
-        on multiple input sentences at once.
-
-        Parameters:
-        -----------
-        inp: list of ints representing the input sequence
-        gpu: bool, whether to use the gpu
-        kwargs: other model parameters
-
-        Returns:
-        --------
-        float representing the log probability of the input sequence
-        """
-        if self.training:
-            logging.warn("Generating in training modus!")
-
-        if isinstance(inp, list):
-            inp = torch.LongTensor(inp)
-        if gpu:
-            inp = inp.cuda()
-
-        outs, *_ = self(Variable(inp, volatile=True), **kwargs)
-        log_probs = u.select_cols(outs[:-1], inp[1:])
-        # normalize by length
-        log_probs = log_probs.sum().data[0] / len(log_probs)
-
-        return log_probs
