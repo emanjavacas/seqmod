@@ -1,5 +1,7 @@
 
 import os
+import time
+import math
 import yaml
 from datetime import datetime
 import random; random.seed(1001)
@@ -10,6 +12,7 @@ import numpy as np
 import torch
 import torch.nn.init as init
 from torch.autograd import Variable
+from torch.nn.utils.rnn import pack_padded_sequence
 
 from seqmod.modules.rnn import (
     StackedLSTM, StackedGRU,
@@ -253,6 +256,24 @@ def select_cols(t, vec):
     if isinstance(vec, list):
         vec = torch.LongTensor(vec)
     return t.gather(1, vec.unsqueeze(1)).squeeze(1)
+
+
+def pack_sort(inp, lengths, batch_first=False):
+    """
+    Transform input into PaddedSequence sorting batch by length (as required).
+    Also return an index variable that unsorts the output back to the original
+    order.
+    """
+    lengths, ix = torch.sort(lengths, descending=True)
+    if batch_first:
+        inp = pack_padded_sequence(inp[ix], lengths.data.tolist())
+    else:
+        inp = pack_padded_sequence(inp[:, ix], lengths.data.tolist())
+
+    unsort = torch.zeros_like(ix)
+    unsort[ix] = torch.arange(len(ix), out=torch.zeros_like(ix.data))
+
+    return inp, unsort
 
 
 def _wrap_variable(t, volatile, gpu):

@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
-from torch.nn.utils.rnn import pack_padded_sequence as pack
+from seqmod.utils import pack_sort
 from torch.nn.utils.rnn import pad_packed_sequence as unpack
 
 import seqmod.utils as u
@@ -102,13 +102,13 @@ class RNNEncoder(BaseEncoder):
         else:
             return h_0
 
-    def forward(self, inp, hidden=None, lengths=None):
+    def forward(self, inp, lengths=None):
         """
         Paremeters:
         -----------
 
         - inp: torch.LongTensor (seq_len x batch)
-        - hidden: torch.FloatTensor (num_layers * num_dirs x batch x hid_dim)
+        - lengths: torch.LongTensor (batch)
 
         Returns: output, hidden
         --------
@@ -118,24 +118,26 @@ class RNNEncoder(BaseEncoder):
             - mean: (batch x hid_dim * num_dirs)
             - mean-concat: (batch x hid_dim * num_dirs * 2)
             - inner-attention: (batch x hid_dim * num_dirs)
-            - structured-attention: TODO
+
         - hidden: (num_layers x batch x hid_dim * num_dirs)
         """
         inp = self.embeddings(inp)
 
-        if hidden is None:
-            hidden = self.init_hidden_for(inp)
+        hidden = self.init_hidden_for(inp)
 
-        # # TODO: use packed_sequence (sort input by length and unsort output)
-        # if lengths is not None:  # pack if lengths given
-        #     lengths, ix = torch.sort(lengths)
-        #     inp = pack(inp[:, ix], lengths=lengths.data.tolist())
+        rnn_inp = inp
+        if lengths is not None:  # pack if lengths given
+            rnn_inp, unsort = pack_sort(rnn_inp, lengths)
 
-        outs, hidden = self.rnn(inp, hidden)
+        outs, hidden = self.rnn(rnn_inp, hidden)
 
-        # if lengths is not None:  # unpack if lengths given
-        #     (outs, _), (inp, _) = unpack(outs), unpack(inp)
-        # # TODO: unsort inp, outs & hidden
+        if lengths is not None:  # unpack & unsort
+            outs, _ = unpack(outs)
+            outs = outs[:, unsort]
+            if self.cell.startswith('LSTM'):
+                hidden = (hidden[0][:, unsort, :], hidden[1][:, unsort, :])
+            else:
+                hidden = hidden[:, unsort, :]
 
         if self.bidi:
             # BiRNN encoder outputs:   (num_layers * 2 x batch x hid_dim)
