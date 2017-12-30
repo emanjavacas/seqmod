@@ -112,7 +112,7 @@ if __name__ == '__main__':
     parser.add_argument('--max_norm', default=5., type=float)
     parser.add_argument('--weight_decay', default=0, type=float)
     parser.add_argument('--patience', default=0, type=int)
-    parser.add_argument('--lr_schedule_epochs', type=int, default=1)
+    parser.add_argument('--lr_schedule_checkpoints', type=int, default=1)
     parser.add_argument('--lr_schedule_factor', type=float, default=1)
     # - check
     parser.add_argument('--seed', default=None)
@@ -189,14 +189,11 @@ if __name__ == '__main__':
 
     optimizer = getattr(optim, args.optim)(
         m.parameters(), lr=args.lr, betas=(0., 0.99), eps=1e-5)
-    # scheduler = optim.lr_scheduler.StepLR(
-    #     optimizer, args.lr_schedule_epochs, args.lr_schedule_factor)
-    scheduler = None
 
     # create trainer
     trainer = Trainer(
         m, {"train": train, "test": test, "valid": valid}, optimizer,
-        max_norm=args.max_norm, scheduler=scheduler)
+        max_norm=args.max_norm)
 
     # hooks
     # - general hook
@@ -215,7 +212,13 @@ if __name__ == '__main__':
         trainer.add_hook(
             u.make_schedule_hook(schedule, verbose=True), hooks_per_epoch=10e4)
     # - lr schedule hook
-    trainer.add_hook(make_lr_hook(optimizer, 0.1, 30), num_checkpoints=4)
+    hook = make_lr_hook(
+        optimizer,
+        0.1,  # args.lr_schedule_factor,
+        5,  # args.lr_schedule_checkpoints
+    )
+    # run a hook args.checkpoint * 4 batches
+    trainer.add_hook(hook, num_checkpoints=4)
 
     # loggers
     trainer.add_loggers(StdLogger())
