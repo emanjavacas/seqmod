@@ -66,7 +66,7 @@ class Embedding(nn.Embedding):
 
         return super(Embedding, self).forward(inp)
 
-    def init_embeddings(self, weight, words, verbose=False):
+    def init_embeddings(self, weight, words):
         """
         Load embeddings from a weight matrix with words `words` as rows.
 
@@ -92,8 +92,6 @@ class Embedding(nn.Embedding):
                 self_idxs.append(self.d.s2i[word])
                 other_idxs.append(other_idx)
             except KeyError:
-                if verbose:
-                    print("Couldn't find {} in dictionary".format(word))
                 pass
 
         other_idxs = torch.LongTensor(other_idxs)
@@ -118,8 +116,8 @@ class Embedding(nn.Embedding):
             else:
                 raise ValueError("Unrecognized embedding type")
 
-        weights, words = u.EmbeddingLoader(filepath, mode).load(words)
-        self.init_embeddings(weights, words, **kwargs)
+        weight, words = u.EmbeddingLoader(filepath, mode).load(words, **kwargs)
+        self.init_embeddings(weight, words)
 
 
 if __name__ == '__main__':

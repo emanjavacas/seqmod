@@ -77,15 +77,15 @@ if __name__ == '__main__':
     parser.add_argument('--test_split', default=0.1, type=float)
     # training
     parser.add_argument('--batch_size', default=20, type=int)
-    parser.add_argument('--bptt', default=20, type=int)
+    parser.add_argument('--bptt', default=50, type=int)
     parser.add_argument('--gpu', action='store_true')
     # - optimizer
     parser.add_argument('--optim', default='Adam', type=str)
     parser.add_argument('--lr', default=0.01, type=float)
     parser.add_argument('--max_norm', default=5., type=float)
-    parser.add_argument('--early_stopping', default=-1, type=int)
     # - hyperopts
     parser.add_argument('--max_iter', default=81, type=int)
+    parser.add_argument('--max_epochs', default=5, type=int)
     parser.add_argument('--eta', default=3, type=int)
     # - check
     parser.add_argument('--seed', default=None)
@@ -145,11 +145,11 @@ if __name__ == '__main__':
 
     # prepare hyperband functions
     sampler = make_sampler({
-        'emb_dim': ['uniform', int, 20, 50],
+        'emb_dim': ['uniform', int, 20, 100],
         'hid_dim': ['uniform', int, 100, 1000],
-        'num_layers': ['choice', int, (1, 2)],
+        'num_layers': ['choice', int, (1,)],
         'dropout': ['loguniform', float, math.log(0.1), math.log(0.5)],
-        'word_dropout': ['loguniform', float, math.log(0.1), math.log(0.5)],
+        'word_dropout': ['loguniform', float, math.log(0.01), math.log(0.1)],
         'cell': ['choice', str, ('GRU', 'LSTM', 'RHN')],
         'train_init': ['choice', bool, (True, False)],
         'deepout_layers': ['uniform', int, 1, 3],
@@ -161,7 +161,7 @@ if __name__ == '__main__':
         def __init__(self, params):
             self.trainer, self.early_stopping = None, None
 
-            m = LM(len(d), params['emb_dim'], params['hid_dim'], d,
+            m = LM(params['emb_dim'], params['hid_dim'], d,
                    num_layers=params['num_layers'], cell=params['cell'],
                    dropout=params['dropout'], train_init=params['train_init'],
                    deepout_layers=params['deepout_layers'],
@@ -188,7 +188,7 @@ if __name__ == '__main__':
         def __call__(self, n_iters):
             # max run will be 5 epochs
             batches = len(self.trainer.datasets['train'])
-            batches = int((batches / args.max_iter) * 5)
+            batches = int((batches / args.max_iter) * args.max_epochs)
 
             if args.gpu:
                 self.trainer.model.cuda()
@@ -197,7 +197,6 @@ if __name__ == '__main__':
 
             return {'loss': loss, 'early_stop': self.early_stopping.stopped}
 
-    hb = Hyperband(
-        sampler, create_runner, max_iter=args.max_iter, eta=args.eta)
+    hb = Hyperband(sampler, create_runner, max_iter=args.max_iter, eta=args.eta)
 
     print(hb.run())

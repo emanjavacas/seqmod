@@ -3,7 +3,7 @@ import torch
 from torch.autograd import Variable
 
 
-def schedule_sampling(inp, prev_out, project, exposure_rate):
+def scheduled_sampling(inp, prev_out, project, exposure_rate):
     """
     Resample n inputs to next iteration from the model itself. N is itself
     sampled from a bernoulli independently for each example in the batch
@@ -39,5 +39,4 @@ def schedule_sampling(inp, prev_out, project, exposure_rate):
     sampled[keep_mask] = inp[keep_mask]
 
     return sampled
-
 

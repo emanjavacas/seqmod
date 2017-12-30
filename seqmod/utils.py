@@ -122,11 +122,14 @@ class EmbeddingLoader(object):
 
                 yield w, vec
 
-    def load(self, words=None):
-        vectors, outwords = [], []
+    def load(self, words=None, verbose=False):
+        vectors, outwords, start = [], [], time.time()
 
         if words is not None:
             words = set(words)
+
+            if verbose:
+                print("Loading {} embeddings".format(len(words)))
 
         for idx, (word, vec) in enumerate(self.reader()):
             if words is not None and word not in words:
@@ -137,6 +140,10 @@ class EmbeddingLoader(object):
                 outwords.append(word)
             except ValueError as e:
                 raise ValueError(str(e) + ' at {}:{}'.format(self.fname, idx))
+
+        if verbose:
+            print("Loaded {} embeddings in {:.3f}".format(
+                len(outwords), time.time() - start))
 
         return vectors, outwords
 
@@ -453,9 +460,9 @@ def format_hyp(score, hyp, hyp_num, d, level='word'):
     hyp_num: int, index of the hypothesis
     d: Dict, dictionary used for fitting the vocabulary
     """
-    if level not in ('word', 'char'):
-        raise ValueError('level must be "word" or "char"')
-    sep = ' ' if level == 'word' else ''
+    if level not in ('word', 'char', 'token'):
+        raise ValueError('level must be "word/token" or "char"')
+    sep = ' ' if level == 'word' or level == 'token' else ''
     return '\n* [{hyp}] [Score:{score:.3f}]: {sent}'.format(
         hyp=hyp_num,
         score=score/len(hyp),
@@ -463,7 +470,7 @@ def format_hyp(score, hyp, hyp_num, d, level='word'):
 
 
 def make_lm_hook(d, seed_texts=None, max_seq_len=25, gpu=False,
-                 method='sample', temperature=1, width=5,
+                 temperature=1, level='token',
                  early_stopping=None, validate=True):
     """
     Make a generator hook for a normal language model
@@ -472,25 +479,32 @@ def make_lm_hook(d, seed_texts=None, max_seq_len=25, gpu=False,
     def hook(trainer, epoch, batch_num, checkpoint):
         trainer.log("info", "Checking training...")
         if validate:
-            loss = sum(trainer.validate_model().pack())
-            trainer.log("info", "Valid loss: {:g}".format(loss))
-            trainer.log("info", "Registering early stopping loss...")
+            loss = trainer.validate_model()
+            packed = loss.pack(labels=True)
+            trainer.log("validation_end", {'epoch': epoch, 'loss': packed})
             if early_stopping is not None:
-                early_stopping.add_checkpoint(loss)
+                trainer.log("info", "Registering early stopping loss...")
+                early_stopping.add_checkpoint(sum(loss.pack()))
+
         trainer.log("info", "Generating text...")
         scores, hyps = trainer.model.generate(
             d, seed_texts=seed_texts, max_seq_len=max_seq_len, gpu=gpu,
-            method=method, temperature=temperature, width=width)
-        hyps = [format_hyp(score, hyp, hyp_num + 1, d)
+            method='sample', temperature=temperature)
+        hyps = [format_hyp(score, hyp, hyp_num + 1, d, level=level)
                 for hyp_num, (score, hyp) in enumerate(zip(scores, hyps))]
         trainer.log("info", '\n***' + ''.join(hyps) + "\n***")
+
+        trainer.log("info", "Computing held-out perplexity...")
+        batch, _ = trainer.datasets['valid'][0]
+        prob = trainer.model.predict_proba(batch).mean()
+        trainer.log("info", "Average probability [{:.3f}]".format(prob))
 
     return hook
 
 
 def make_mlm_hook(d, seed_texts=None, max_seq_len=25, gpu=False,
-                  method='sample', temperature=1, width=5,
-                  early_stopping=None, validate=True):
+                  temperature=1, level='token', early_stopping=None,
+                  validate=True):
     """
     Make a generator hook for a normal language model
     """
@@ -500,16 +514,16 @@ def make_mlm_hook(d, seed_texts=None, max_seq_len=25, gpu=False,
         if validate:
             loss = sum(trainer.validate_model().pack())
             trainer.log("info", "Valid loss: {:g}".format(loss))
-            trainer.log("info", "Registering early stopping loss...")
             if early_stopping is not None:
+                trainer.log("info", "Registering early stopping loss...")
                 early_stopping.add_checkpoint(loss)
         trainer.log("info", "Generating text...")
         for head in trainer.model.project:
             trainer.log("info", "Head: {}".format(head))
             scores, hyps = trainer.model.generate(
                 d, head=head, seed_texts=seed_texts, max_seq_len=max_seq_len,
-                gpu=gpu, method=method, temperature=temperature, width=width)
-            hyps = [format_hyp(score, hyp, hyp_num + 1, d)
+                gpu=gpu, method='sample', temperature=temperature)
+            hyps = [format_hyp(score, hyp, hyp_num + 1, d, level=level)
                     for hyp_num, (score, hyp) in enumerate(zip(scores, hyps))]
             trainer.log("info", '\n***' + ''.join(hyps) + "\n***")
 
@@ -517,7 +531,7 @@ def make_mlm_hook(d, seed_texts=None, max_seq_len=25, gpu=False,
 
 
 def make_clm_hook(d, sampled_conds=None, max_seq_len=200, gpu=False,
-                  method='sample', temperature=1, batch_size=10):
+                  temperature=1, batch_size=10, level='token'):
     """
     Make a generator hook for a CLM.
 
@@ -551,9 +565,9 @@ def make_clm_hook(d, sampled_conds=None, max_seq_len=200, gpu=False,
             trainer.log("info", "\n***\nConditions: " + conds_str)
             scores, hyps = trainer.model.generate(
                 lang_d, max_seq_len=max_seq_len, gpu=gpu,
-                method=method, temperature=temperature,
+                method='sample', temperature=temperature,
                 batch_size=batch_size, conds=conds)
-            hyps = [format_hyp(score, hyp, hyp_num + 1, lang_d)
+            hyps = [format_hyp(score, hyp, hyp_num + 1, lang_d, level=level)
                     for hyp_num, (score, hyp) in enumerate(zip(scores, hyps))]
             trainer.log("info", ''.join(hyps) + "\n")
         trainer.log("info", '***\n')

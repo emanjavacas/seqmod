@@ -14,11 +14,10 @@ except:
 from torch import optim
 
 from seqmod.modules.lm import LM
-from seqmod import utils as u
-
-from seqmod.misc import Trainer, StdLogger, VisdomLogger
+from seqmod.misc import Trainer, StdLogger, VisdomLogger, EarlyStopping
 from seqmod.misc import Dict, BlockDataset, text_processor
-from seqmod.misc import EarlyStopping
+from seqmod.misc import inflection_sigmoid, inverse_exponential, inverse_linear
+from seqmod import utils as u
 
 
 # Load data
@@ -59,6 +58,19 @@ def load_dataset(path, d, processor, args):
     return BlockDataset(data, d, args.batch_size, args.bptt, gpu=args.gpu)
 
 
+def make_lr_hook(optimizer, factor, patience, verbose=True):
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, factor=factor, patience=patience, verbose=verbose)
+
+    def hook(trainer, epoch, batch_num, checkpoint):
+        valid_loss = trainer.validate_model()
+        if verbose:
+            packed = valid_loss.pack(labels=True)
+            trainer.log("validation_end", {"epoch": epoch, "loss": packed})
+        scheduler.step(sum(valid_loss.pack()))
+
+    return hook
+
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
@@ -83,27 +95,31 @@ if __name__ == '__main__':
     parser.add_argument('--min_freq', default=1, type=int)
     parser.add_argument('--lower', action='store_true')
     parser.add_argument('--num', action='store_true')
-    parser.add_argument('--level', default='token')
+    parser.add_argument('--level', default='char')
     parser.add_argument('--dev_split', default=0.1, type=float)
     parser.add_argument('--test_split', default=0.1, type=float)
     # training
     parser.add_argument('--epochs', default=40, type=int)
-    parser.add_argument('--batch_size', default=20, type=int)
+    parser.add_argument('--batch_size', default=128, type=int)
     parser.add_argument('--bptt', default=35, type=int)
     parser.add_argument('--gpu', action='store_true')
+    parser.add_argument('--use_schedule', action='store_true')
+    parser.add_argument('--schedule_inflection', type=int, default=2)
+    parser.add_argument('--schedule_steepness', type=float, default=1.75)
     # - optimizer
     parser.add_argument('--optim', default='Adam', type=str)
-    parser.add_argument('--lr', default=0.01, type=float)
+    parser.add_argument('--lr', default=0.001, type=float)
     parser.add_argument('--max_norm', default=5., type=float)
-    parser.add_argument('--early_stopping', default=-1, type=int)
+    parser.add_argument('--weight_decay', default=0, type=float)
+    parser.add_argument('--patience', default=0, type=int)
+    parser.add_argument('--lr_schedule_epochs', type=int, default=1)
+    parser.add_argument('--lr_schedule_factor', type=float, default=1)
     # - check
     parser.add_argument('--seed', default=None)
-    parser.add_argument('--decoding_method', default='sample')
     parser.add_argument('--max_seq_len', default=25, type=int)
     parser.add_argument('--temperature', default=1, type=float)
     parser.add_argument('--checkpoint', default=100, type=int)
     parser.add_argument('--hooks_per_epoch', default=1, type=int)
-    parser.add_argument('--log_checkpoints', action='store_true')
     parser.add_argument('--visdom', action='store_true')
     parser.add_argument('--visdom_host', default='localhost')
     parser.add_argument('--save', action='store_true')
@@ -152,14 +168,18 @@ if __name__ == '__main__':
     print(' * number of train batches. {}'.format(len(train)))
 
     print('Building model...')
-    m = LM(len(d), args.emb_dim, args.hid_dim, d,
+    m = LM(args.emb_dim, args.hid_dim, d,
            num_layers=args.num_layers, cell=args.cell, dropout=args.dropout,
            att_dim=args.att_dim, tie_weights=args.tie_weights,
            deepout_layers=args.deepout_layers, train_init=args.train_init,
            deepout_act=args.deepout_act, maxouts=args.maxouts,
            word_dropout=args.word_dropout)
 
-    u.initialize_model(m, rnn={'type': 'orthogonal', 'args': {'gain': 1.0}})
+    # u.initialize_model(m, rnn={'type': 'orthogonal', 'args': {'gain': 1.0}})
+    # u.initialize_model(m)
+    m.embeddings.weight.data.uniform_(-0.1, 0.1)
+    next(m.output_proj.children()).weight.data.uniform_(-0.1, 0.1)
+    next(m.output_proj.children()).bias.data.fill_(0)
 
     if args.gpu:
         m.cuda()
@@ -167,8 +187,11 @@ if __name__ == '__main__':
     print(m)
     print('* number of parameters: {}'.format(m.n_params()))
 
-    optimizer = getattr(optim, args.optim)(m.parameters(), lr=args.lr)
-    scheduler = optim.lr_scheduler.StepLR(optimizer, 1, 0.5)
+    optimizer = getattr(optim, args.optim)(
+        m.parameters(), lr=args.lr, betas=(0., 0.99), eps=1e-5)
+    # scheduler = optim.lr_scheduler.StepLR(
+    #     optimizer, args.lr_schedule_epochs, args.lr_schedule_factor)
+    scheduler = None
 
     # create trainer
     trainer = Trainer(
@@ -176,25 +199,33 @@ if __name__ == '__main__':
         max_norm=args.max_norm, scheduler=scheduler)
 
     # hooks
+    # - general hook
     early_stopping = None
-    if args.early_stopping > 0:
-        early_stopping = EarlyStopping(args.early_stopping)
+    if args.patience > 0:
+        early_stopping = EarlyStopping(10, args.patience)
     model_hook = u.make_lm_hook(
-        d, method=args.decoding_method, temperature=args.temperature,
-        max_seq_len=args.max_seq_len, gpu=args.gpu,
-        early_stopping=early_stopping)
+        d, temperature=args.temperature, max_seq_len=args.max_seq_len,
+        gpu=args.gpu, level=args.level, early_stopping=early_stopping)
     trainer.add_hook(model_hook, hooks_per_epoch=args.hooks_per_epoch)
+    # - scheduled sampling hook
+    if args.use_schedule:
+        schedule = inflection_sigmoid(
+            len(train) * args.schedule_inflection, args.schedule_steepness,
+            inverse=True)
+        trainer.add_hook(
+            u.make_schedule_hook(schedule, verbose=True), hooks_per_epoch=10e4)
+    # - lr schedule hook
+    trainer.add_hook(make_lr_hook(optimizer, 0.1, 30), num_checkpoints=4)
 
     # loggers
     trainer.add_loggers(StdLogger())
     if args.visdom:
         visdom_logger = VisdomLogger(
-            log_checkpoints=args.log_checkpoints, env='lm',
-            server='http://' + args.visdom_host)
+            env='lm', server='http://' + args.visdom_host)
         trainer.add_loggers(visdom_logger)
 
     (best_model, valid_loss), test_loss = trainer.train(
-        args.epochs, args.checkpoint)
+        args.epochs, args.checkpoint, use_schedule=args.use_schedule)
 
     if args.save:
         u.save_checkpoint(

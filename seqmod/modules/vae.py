@@ -111,7 +111,7 @@ class VAERNNDecoder(RNNDecoder):
         else:
             return h_0
 
-    def init_state(self, enc_outs, enc_hidden, src_lengths, conds=None):
+    def init_state(self, enc_outs, enc_hidden, src_lengths, conds=None, **kwargs):
         mu, logvar = enc_outs
         z = reparametrize(mu, logvar)
 

@@ -10,7 +10,7 @@ from seqmod.modules.decoder import RNNDecoder
 from seqmod.modules.embedding import Embedding
 from seqmod import utils as u
 
-from seqmod.modules.exposure import schedule_sampling
+from seqmod.modules.exposure import scheduled_sampling
 
 
 class EncoderDecoder(nn.Module):
@@ -92,7 +92,7 @@ class EncoderDecoder(nn.Module):
         dec_outs = []
         for step, t in enumerate(dec_trg):
             if use_schedule and step > 0 and self.exposure_rate < 1.0:
-                t = schedule_sampling(
+                t = scheduled_sampling(
                     t, dec_outs[-1],
                     self.decoder.project,
                     self.exposure_rate)

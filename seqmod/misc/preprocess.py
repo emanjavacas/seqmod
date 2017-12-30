@@ -10,7 +10,7 @@ import pickle as p
 def segmenter(sent, level='char'):
     if level == 'char':
         return list(sent)
-    elif level == 'token':
+    elif level == 'token' or level == 'word':
         return sent.split()
     else:
         raise ValueError

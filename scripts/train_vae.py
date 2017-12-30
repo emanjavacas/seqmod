@@ -17,7 +17,7 @@ from seqmod.loaders import load_twisty, load_split_data
 
 def kl_weight_hook(trainer, epoch, batch, checkpoints):
     weight = trainer.model.encoder.kl_weight
-    trainer.log("info", "kl weight: [{:.3f}]".format(weight))
+    trainer.log("info", "KL weight: [{:.3f}]".format(weight))
 
 
 def make_generate_hook(level, n=2, samples=2, beam_width=5):
@@ -33,11 +33,12 @@ def make_generate_hook(level, n=2, samples=2, beam_width=5):
         src = src[:, idxs.cuda() if src.data.is_cuda else idxs]
         # dict
         d = trainer.model.decoder.embeddings.d
-        sep = ' ' if level == 'word' else ''
+        sep = ' ' if level == 'word' or level == 'token' else ''
 
         for idx, src in enumerate(src.chunk(src.size(1), 1)):
-            report = '{}\nSource: '.format(idx)
+            report = '{}\nSource: '.format(idx + 1)
             report += sep.join(d.vocab[char.data[0]] for char in src)
+            report += '\n'
             
             for sample in range(samples):
                 scores, hyps, _ = trainer.model.translate_beam(
@@ -46,14 +47,12 @@ def make_generate_hook(level, n=2, samples=2, beam_width=5):
                 scores, hyps = [scores[0]], [hyps[0]]
 
                 # report
-                report += '\nSample {}'.format(sample + 1)
-
+                report += 'Sample {}:'.format(sample + 1)
                 # report best n hypotheses
-                report += '\nHypotheses:'
-                formatted = [u.format_hyp(scores[i], hyps[i], i, d, level)
-                             for i in range(len(hyps))]
-                report += "".join(formatted)
-                report += '\n\n'
+                report += "".join(
+                    u.format_hyp(scores[i], hyps[i], i, d, level)
+                    for i in range(len(hyps))
+                ) + '\n'
 
             trainer.log("info", report)
 
@@ -93,9 +92,8 @@ if __name__ == '__main__':
     parser.add_argument('--deepout_layers', type=int, default=0)
     parser.add_argument('--deepout_act', default='ReLU')
     parser.add_argument('--dont_add_z', action='store_true')
-    parser.add_argument('--load_embeddings', action='store_true')
+    parser.add_argument('--init_embeddings', action='store_true')
     parser.add_argument('--embeddings_path')
-    parser.add_argument('--embeddings_file')
     # training
     parser.add_argument('--optim', default='RMSprop')
     parser.add_argument('--lr', default=0.005, type=float)
@@ -107,7 +105,9 @@ if __name__ == '__main__':
     parser.add_argument('--batch_size', type=int, default=100)
     parser.add_argument('--gpu', action='store_true')
     parser.add_argument('--outputfile', default=None)
+    parser.add_argument('--use_schedule', action='store_true')
     parser.add_argument('--checkpoints', default=50, type=int)
+    parser.add_argument('--hooks_per_epoch', default=2, type=int)
     # dataset
     parser.add_argument('--source', default='enwiki8',
                         help='Directory with split data')
@@ -179,9 +179,9 @@ if __name__ == '__main__':
 
     u.initialize_model(model)
 
-    if args.load_embeddings:
-        path = os.path.join(args.embeddings_path, args.embeddings_file)
-        model.encoder.embeddings.init_embeddings_from_file(path, 'glove')
+    if args.init_embeddings:
+        model.encoder.embeddings.init_embeddings_from_file(
+            args.embeddings_path, verbose=True)
 
     if args.gpu:
         model.cuda()
@@ -208,15 +208,19 @@ if __name__ == '__main__':
         losses=losses, early_stopping=EarlyStopping(5, patience=args.patience),
         max_norm=args.max_norm, scheduler=scheduler)
 
-    trainer.add_hook(make_generate_hook(args.level), hooks_per_epoch=100)
+    # hooks
+    trainer.add_hook(make_generate_hook(args.level),
+                     hooks_per_epoch=args.hooks_per_epoch)
     trainer.add_hook(kl_weight_hook, hooks_per_epoch=100)
-    hook = u.make_schedule_hook(
-        inflection_sigmoid(len(train) * 2, 1.75, inverse=True), verbose=True)
-    trainer.add_hook(hook, hooks_per_epoch=1000)
+    if args.use_schedule:
+        hook = u.make_schedule_hook(
+            inflection_sigmoid(len(train) * 2, 1.75, inverse=True))
+        trainer.add_hook(hook, hooks_per_epoch=1000)
+
     trainer.add_loggers(
         StdLogger(),
         # VisdomLogger(env='vae', losses=('rec', 'kl'), max_y=600)
     )
 
-    trainer.train(
-        args.epochs, args.checkpoints, shuffle=True, use_schedule=True)
+    trainer.train(args.epochs, args.checkpoints,
+                  shuffle=True, use_schedule=args.use_schedule)

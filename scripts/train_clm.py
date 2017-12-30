@@ -150,7 +150,7 @@ if __name__ == '__main__':
         m = u.load_model(args.model_path)
     else:
         print('Building model...')
-        m = LM(len(lang_d), args.emb_dim, args.hid_dim, lang_d,
+        m = LM(args.emb_dim, args.hid_dim, lang_d,
                num_layers=args.layers, cell=args.cell,
                dropout=args.dropout, tie_weights=args.tie_weights,
                deepout_layers=args.deepout_layers,
