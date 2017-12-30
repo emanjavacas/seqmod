@@ -46,25 +46,118 @@ def word_dropout(inp, target, p=0.0, training=True, reserved_codes=()):
     return inp.masked_fill(Variable(mask), target)
 
 
+class PositionalEncoding(nn.Module):
+    """
+    Implements the sinusoidal positional encoding for non-recurrent neural
+    networks. Implementation based on https://arxiv.org/abs/1706.03762
+
+    Based on: https://github.com/OpenNMT/OpenNMT-py/onmt/modules/Embeddings.py
+
+    Parameters:
+    -----------
+
+    - emb_dim: int, embedding size
+    - max_len: int (optional), default to 5000
+    """
+
+    def __init__(self, emb_dim, max_len=5000):
+        self.emb_dim = emb_dim
+
+        # precompute the sin and cos values into pe
+        # pe is of shape (max_len x 1 x emb_dim)
+        # even and odd entries along the 3th dimensions correspond
+        # to sin and cos waves over i (index along the 1st dim)
+        # divided by 10000^(2*i/emb_dim)
+        pe = torch.arange(0, max_len) \
+                  .unsqueeze(1).expand(max_len, emb_dim)
+        power = torch.arange(0, emb_dim * 2, 2) / emb_dim
+        pe = pe * (1 / torch.pow(10000, power)).expand_as(pe)
+        pe[:, 0::2] = torch.sin(pe[:, 0::2])
+        pe[:, 1::2] = torch.cos(pe[:, 1::2])
+        pe = pe.unsqueeze(1)
+
+        super(PositionalEncoding, self).__init__()
+        self.register_buffer('pe', pe)
+
+    def forward(self, emb):
+        """
+        Parameters:
+        -----------
+
+        - emb: FloatTensor (seq_len, batch, emb_dim)
+        """
+        emb = emb + Variable(
+            self.pe[:emb.size(0), :1, :emb.size(2)].expand_as(emb),
+            requires_grad=False)
+
+        return emb
+
+
 class Embedding(nn.Embedding):
+    """
+    Custom Embedding class with all bells and whistles as well as
+    seqmod Dict integration.
+    """
+
+    # ignore this
+    _SECRET = 'this is super secret'
+
+    def __init__(self, *args, _secret=None, **kwargs):
+        if _secret != Embedding._SECRET:
+            raise ValueError("This class must be instantiated "
+                             "with the `from_dict` classmethod")
+
+        super(Embedding, self).__init__(*args, **kwargs)
+
     @classmethod
-    def from_dict(cls, d, emb_dim, p=0.0, padding_idx=None, **kwargs):
+    def from_dict(cls, d, emb_dim, p=0.0,
+                  add_positional=False, max_len=5000,
+                  padding_idx=None, **kwargs):
+        """
+        Instantiate an Embedding module from a fitted Dict.
+
+        Parameters:
+        -----------
+
+        d: Dict
+        emb_dim: int
+        p: float, word dropout rate (reset input symbols to unknowns)
+        add_positional: bool, whether to add positional encoding 
+            information to the embedding activations.
+        max_len: int, see PositionalEncoding
+        kwargs: rest nn.Embedding parameters
+        """
+
         if p > 0.0 and d.get_unk() is None:
             raise ValueError("Word dropout requires unknown token")
 
-        inst = cls(len(d), emb_dim, padding_idx=d.get_pad(), **kwargs)
+        inst = cls(len(d), emb_dim, padding_idx=d.get_pad(),
+                   _secret=Embedding._SECRET, **kwargs)
         inst.d, inst.p, inst.target_code = d, p, d.get_unk()
         codes = [d.get_eos(), d.get_bos(), d.get_pad()]
         inst.reserved_codes = tuple([c for c in codes if c is not None])
 
+        if add_positional:
+            inst.add_positional(max_len)
+
         return inst
+
+    def add_positional(self, max_len):
+        positional = PositionalEncoding(self.embedding_dim, max_len=max_len)
+        self.add_module('positional', positional)
+        self.positional = positional
 
     def forward(self, inp):
         inp = word_dropout(inp, self.target_code, p=self.p,
                            reserved_codes=self.reserved_codes,
                            training=self.training)
 
-        return super(Embedding, self).forward(inp)
+        inp = super(Embedding, self).forward(inp)
+
+        if hasattr(self, 'positional'):
+            inp = self.positional(inp)
+
+        return inp
 
     def init_embeddings(self, weight, words):
         """
