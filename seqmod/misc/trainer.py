@@ -129,7 +129,7 @@ class Trainer(object):
             logger.log(event, payload, verbose=self.verbose)
 
     # hooks
-    def add_hook(self, hook, hooks_per_epoch=None, clear=False):
+    def add_hook(self, hook, hooks_per_epoch=None, num_checkpoints=None):
         """
         Add a trainer hook that gets executed after a number of checkpoints.
         The number of times a hook gets executed per epoch can be specified
@@ -138,19 +138,32 @@ class Trainer(object):
         -----------
         hook: fn(trainer, epoch, batch_num, checkpoint)
         """
-        self.hooks = [] if clear else self.hooks
-        self.hooks.append({'hook': hook, 'hooks_per_epoch': hooks_per_epoch})
+        if hooks_per_epoch is not None and num_checkpoints is not None:
+            raise ValueError("Only one of `hooks_per_epoch` or "
+                             "`num_checkpoints` can be passed to ``add_hook``")
+        if hooks_per_epoch is None and num_checkpoints is None:
+            raise ValueError("Either `num_checkpoints` or `hooks_per_epoch` "
+                             "must be passed to ``add_hook``")
+        hook = {'hook': hook}
+        if hooks_per_epoch is not None:
+            hook['hooks_per_epoch'] = hooks_per_epoch
+        else:
+            hook['num_checkpoints'] = num_checkpoints
+
+        self.hooks.append(hook)
 
     def run_hooks(self, epoch, batch_num, checkpoint):
-        batches = len(self.datasets['train'])
         for hook in self.hooks:
-            num_checkpoints = batch_num // checkpoint  # checkpoints in epoch
-            if hook['hooks_per_epoch'] is not None:
+            num_checkpoints = batch_num // checkpoint
+            if 'hooks_per_epoch' in hook:
+                # get repetition frequency
+                batches = len(self.datasets['train'])
                 rep = max(1, batches // (checkpoint * hook['hooks_per_epoch']))
-            else:
-                rep = 1
-            if rep > 0 and num_checkpoints % rep == 0:
-                hook['hook'](self, epoch, batch_num, num_checkpoints)
+                if num_checkpoints % rep == 0:
+                    hook['hook'](self, epoch, batch_num, num_checkpoints)
+            else:  # assume num_checkpoints
+                if num_checkpoints % hook['num_checkpoints'] == 0:
+                    hook['hook'](self, epoch, batch_num, num_checkpoints)
 
     # callbacks
     def on_batch_end(self, epoch, batch, loss):
@@ -342,6 +355,7 @@ class Trainer(object):
                 # valid
                 if self.valid_name in self.datasets:
                     self.model.eval()
+                    self.on_validation_begin(e)
                     valid_loss = self.validate_model(**kwargs)
                     self.on_validation_end(e, valid_loss)
                     self.model.train()
