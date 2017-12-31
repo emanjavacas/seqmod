@@ -91,6 +91,7 @@ if __name__ == '__main__':
     parser.add_argument('--emb_dim', default=24, type=int)
     parser.add_argument('--hid_dim', default=64, type=int)
     parser.add_argument('--att_type', default='general', type=str)
+    parser.add_argument('--encoder_summary', default='full')
     parser.add_argument('--deepout_layers', default=0, type=int)
     parser.add_argument('--tie_weights', action='store_true')
     # training
@@ -104,6 +105,7 @@ if __name__ == '__main__':
     parser.add_argument('--use_schedule', action='store_true')
     parser.add_argument('--patience', default=5, type=int)
     parser.add_argument('--gpu', action='store_true')
+    parser.add_argument('--reverse', action='store_true')
     parser.add_argument('--checkpoint', default=50, type=int)
     parser.add_argument('--hooks_per_epoch', default=2, type=int)
     parser.add_argument('--target', default='redrum', type=str)
@@ -132,7 +134,7 @@ if __name__ == '__main__':
         src_dict.fit(src, trg)
         train, valid = PairedDataset(
             src, trg, {'src': src_dict, 'trg': src_dict},
-            batch_size=args.batch_size, gpu=args.gpu
+            batch_size=args.batch_size, gpu=args.gpu, align_right=args.reverse
         ).splits(dev=args.dev, test=None, sort=True)
 
     print(' * vocabulary size. {}'.format(len(src_dict)))
@@ -143,9 +145,11 @@ if __name__ == '__main__':
 
     model = make_rnn_encoder_decoder(
         args.layers, args.emb_dim, args.hid_dim, src_dict, cell=args.cell,
-        bidi=True, encoder_summary='full', att_type=args.att_type,
-        dropout=args.dropout, input_feed=True, word_dropout=args.word_dropout,
-        deepout_layers=args.deepout_layers, tie_weights=args.tie_weights)
+        bidi=True, encoder_summary=args.encoder_summary, att_type=args.att_type,
+        reuse_hidden=args.att_type.lower() != 'none',
+        dropout=args.dropout, input_feed=args.att_type.lower() != 'none',
+        word_dropout=args.word_dropout, deepout_layers=args.deepout_layers,
+        tie_weights=args.tie_weights, reverse=args.reverse)
 
     # model.freeze_submodule('encoder')
     # model.encoder.register_backward_hook(u.log_grad)
