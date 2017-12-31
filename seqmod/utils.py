@@ -241,7 +241,7 @@ def flip(x, dim):
     xsize, dev = x.size(), ('cpu', 'cuda')[x.is_cuda]
     dim = x.dim() + dim if dim < 0 else dim
     x = x.view(-1, *xsize[dim:])
-    index = getattr(torch.arange(x.size(1)-1, -1), dev)().long()
+    index = getattr(torch.arange(x.size(1)-1, -1, -1), dev)().long()
     x = x.view(x.size(0), x.size(1), -1)[:, index, :]
     return x.view(xsize)
 

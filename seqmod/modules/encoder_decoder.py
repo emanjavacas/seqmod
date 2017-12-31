@@ -91,6 +91,11 @@ class EncoderDecoder(nn.Module):
             weight = weight.cuda()
 
         # remove <eos> from decoder targets, remove <bos> from loss targets
+        if self.reverse:
+            # assume right aligned data: [pad pad <bos> ... <eos>]
+            trg = u.flip(trg, 0)
+
+        # [<bos> ... <eos> pad pad]
         dec_trg, loss_trg = trg[:-1], trg[1:]
 
         # compute model output
@@ -99,7 +104,6 @@ class EncoderDecoder(nn.Module):
             enc_outs, enc_hidden, src_lengths, conds=trg_conds)
 
         dec_outs = []
-        dec_trg = u.flip(dec_trg, 0) if self.reverse else dec_trg
         for step, t in enumerate(dec_trg):
             if use_schedule and step > 0 and self.exposure_rate < 1.0:
                 t = scheduled_sampling(
@@ -110,7 +114,6 @@ class EncoderDecoder(nn.Module):
             out, _ = self.decoder(t, dec_state)
             dec_outs.append(out)
         dec_outs = torch.stack(dec_outs)
-        dec_outs = u.flip(dec_outs, 0) if self.reverse else dec_outs
 
         # compute loss and backprop
         enc_losses, _ = self.encoder.loss(enc_outs, src_conds, test=test)
@@ -150,8 +153,7 @@ class EncoderDecoder(nn.Module):
         bos = self.decoder.embeddings.d.get_bos()
         if self.reverse:
             _bos = bos
-            bos = eos
-            eos = _bos
+            bos, eos = eos, _bos
         seq_len, batch_size = src.size()
 
         enc_outs, enc_hidden = self.encoder(src)
@@ -183,6 +185,9 @@ class EncoderDecoder(nn.Module):
         if self.decoder.has_attention:
             weights = torch.stack(weights).tolist()
 
+        if self.reverse:
+            hyps = [hyp[::-1] for hyp in hyps]
+
         return scores, hyps, weights
 
     def translate_beam(self, src, lengths, mask=None, conds=None,
@@ -202,8 +207,7 @@ class EncoderDecoder(nn.Module):
         bos = self.decoder.embeddings.d.get_bos()
         if self.reverse:
             _bos = bos
-            bos = eos
-            eos = _bos
+            bos, eos = eos, _bos
         gpu = src.is_cuda
 
         weights = []
@@ -226,6 +230,8 @@ class EncoderDecoder(nn.Module):
             # TODO: add attention weight for decoded steps
 
         scores, hyps = beam.decode(n=beam_width)
+        if self.reverse:
+            hyps = [hyp[::-1] for hyp in hyps]
 
         return scores, hyps, weights
 
