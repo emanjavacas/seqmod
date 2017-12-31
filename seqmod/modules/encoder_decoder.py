@@ -23,15 +23,16 @@ class EncoderDecoder(nn.Module):
     - decoder: BaseDecoder
     - exposure_rate: float (0.0, 1.0), initial exposure to model predictions
         during training.
+    - reverse: bool, whether to run the decoder in reversed order
     """
-    def __init__(self, encoder, decoder, exposure_rate=1., train_data=None):
+    def __init__(self, encoder, decoder, exposure_rate=1., reverse=False):
         super(EncoderDecoder, self).__init__()
 
         self.encoder = encoder
         self.decoder = decoder
 
         self.exposure_rate = exposure_rate
-        self.train_data = train_data
+        self.reverse = reverse
 
         # NLLLoss weight (downweight loss on pad)
         self.nll_weight = torch.ones(len(self.decoder.embeddings.d))
@@ -66,6 +67,14 @@ class EncoderDecoder(nn.Module):
     def loss(self, batch_data, test=False, split=25, use_schedule=False):
         """
         Return batch-averaged loss and examples processed for speed monitoring
+
+        Parameters:
+        -----------
+
+        - split: int, max targets per binned softmax loss computation
+        - use_schedule: bool, whether to use scheduled sampling when computing
+            the decoder loss. The rate of sampling is defined by the
+            instance variable `exposure_rate`.
         """
         # unpack batch data
         (src, trg), (src_conds, trg_conds) = batch_data, (None, None)
@@ -90,6 +99,7 @@ class EncoderDecoder(nn.Module):
             enc_outs, enc_hidden, src_lengths, conds=trg_conds)
 
         dec_outs = []
+        dec_trg = u.flip(dec_trg, 0) if self.reverse else dec_trg
         for step, t in enumerate(dec_trg):
             if use_schedule and step > 0 and self.exposure_rate < 1.0:
                 t = scheduled_sampling(
@@ -100,6 +110,7 @@ class EncoderDecoder(nn.Module):
             out, _ = self.decoder(t, dec_state)
             dec_outs.append(out)
         dec_outs = torch.stack(dec_outs)
+        dec_outs = u.flip(dec_outs, 0) if self.reverse else dec_outs
 
         # compute loss and backprop
         enc_losses, _ = self.encoder.loss(enc_outs, src_conds, test=test)
@@ -137,6 +148,10 @@ class EncoderDecoder(nn.Module):
         """
         eos = self.decoder.embeddings.d.get_eos()
         bos = self.decoder.embeddings.d.get_bos()
+        if self.reverse:
+            _bos = bos
+            bos = eos
+            eos = _bos
         seq_len, batch_size = src.size()
 
         enc_outs, enc_hidden = self.encoder(src)
@@ -185,6 +200,10 @@ class EncoderDecoder(nn.Module):
         """
         eos = self.decoder.embeddings.d.get_eos()
         bos = self.decoder.embeddings.d.get_bos()
+        if self.reverse:
+            _bos = bos
+            bos = eos
+            eos = _bos
         gpu = src.is_cuda
 
         weights = []
@@ -243,7 +262,7 @@ def make_rnn_encoder_decoder(
         add_init_jitter=False,
         cond_dims=None,
         cond_vocabs=None,
-        train_data=None
+        reverse=False
 ):
     """
     - num_layers: int, Number of layers for both the encoder and the decoder.
@@ -295,7 +314,7 @@ def make_rnn_encoder_decoder(
     if decoder.has_attention and encoder_summary != 'full':
         raise ValueError("Attentional decoder needs full encoder summary")
 
-    return EncoderDecoder(encoder, decoder, train_data=train_data)
+    return EncoderDecoder(encoder, decoder, reverse=reverse)
 
 
 def make_grl_rnn_encoder_decoder(
@@ -317,7 +336,7 @@ def make_grl_rnn_encoder_decoder(
         add_init_jitter=False,
         cond_dims=None,
         cond_vocabs=None,
-        train_data=None
+        reverse=False
 ):
 
     if encoder_summary == 'full':
@@ -344,4 +363,4 @@ def make_grl_rnn_encoder_decoder(
                          add_init_jitter=add_init_jitter,
                          cond_dims=cond_dims, cond_vocabs=cond_vocabs)
 
-    return EncoderDecoder(encoder, decoder, train_data=train_data)
+    return EncoderDecoder(encoder, decoder, reverse=reverse)

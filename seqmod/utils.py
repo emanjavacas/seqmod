@@ -232,6 +232,20 @@ def swap(x, dim, perm):
     return x.index_select(dim, torch.autograd.Variable(perm))
 
 
+def flip(x, dim):
+    """
+    Flip (reverse) a tensor along a given dimension
+
+    Taken from: https://github.com/pytorch/pytorch/issues/229
+    """
+    xsize, dev = x.size(), ('cpu', 'cuda')[x.is_cuda]
+    dim = x.dim() + dim if dim < 0 else dim
+    x = x.view(-1, *xsize[dim:])
+    index = getattr(torch.arange(x.size(1)-1, -1), dev)().long()
+    x = x.view(x.size(0), x.size(1), -1)[:, index, :]
+    return x.view(xsize)
+
+
 def map_index(t, source_idx, target_idx):
     """
     Map a source integer to a target integer across all dims of a LongTensor.
