@@ -211,8 +211,10 @@ def make_vae_encoder_decoder(
                             train_init=train_init,
                             add_init_jitter=add_init_jitter)
 
+    _, encoding_size = encoder.encoding_size
+
     decoder = VAERNNDecoder(z_dim, trg_embeddings, hid_dim, num_layers,
-                            cell, add_z=add_z, dropout=dropout,
+                            cell, encoding_size, add_z=add_z, dropout=dropout,
                             deepout_layers=deepout_layers, deepout_act=deepout_act,
                             tie_weights=tie_weights, train_init=train_init,
                             add_init_jitter=add_init_jitter, cond_dims=cond_dims,

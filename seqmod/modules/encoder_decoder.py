@@ -302,7 +302,9 @@ def make_rnn_encoder_decoder(
                          bidi=bidi, dropout=dropout, summary=encoder_summary,
                          train_init=False, add_init_jitter=False)
 
-    decoder = RNNDecoder(trg_embeddings, hid_dim, num_layers, cell=cell,
+    encoder_dims, encoder_size = encoder.encoding_size
+
+    decoder = RNNDecoder(trg_embeddings, hid_dim, num_layers, cell, encoder_size,
                          dropout=dropout, input_feed=input_feed,
                          att_type=att_type, deepout_layers=deepout_layers,
                          deepout_act=deepout_act,
@@ -311,8 +313,12 @@ def make_rnn_encoder_decoder(
                          add_init_jitter=add_init_jitter,
                          cond_dims=cond_dims, cond_vocabs=cond_vocabs)
 
-    if decoder.has_attention and encoder_summary != 'full':
-        raise ValueError("Attentional decoder needs full encoder summary")
+    if decoder.has_attention:
+        if encoder_summary != 'full':
+            raise ValueError("Attentional decoder needs full encoder summary")
+    else:
+        if encoder_dims != 2:
+            raise ValueError("Non attentional decoder needs 2D encoding")
 
     return EncoderDecoder(encoder, decoder, reverse=reverse)
 
@@ -354,13 +360,13 @@ def make_grl_rnn_encoder_decoder(
                             summary=encoder_summary,
                             train_init=False, add_init_jitter=True)
 
-    decoder = RNNDecoder(trg_embeddings, hid_dim, num_layers, cell=cell,
+    _, encoding_size = encoder.encoding_size
+
+    decoder = RNNDecoder(trg_embeddings, hid_dim, num_layers, cell, encoding_size,
                          dropout=dropout, input_feed=input_feed,
-                         deepout_layers=deepout_layers,
-                         deepout_act=deepout_act,
+                         deepout_layers=deepout_layers, deepout_act=deepout_act,
                          tie_weights=tie_weights, reuse_hidden=False,
-                         train_init=train_init,
-                         add_init_jitter=add_init_jitter,
+                         train_init=train_init, add_init_jitter=add_init_jitter,
                          cond_dims=cond_dims, cond_vocabs=cond_vocabs)
 
     return EncoderDecoder(encoder, decoder, reverse=reverse)

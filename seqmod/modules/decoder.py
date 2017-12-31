@@ -15,24 +15,21 @@ class BaseDecoder(nn.Module):
     """
     Base abstract class
     """
-    def init_state(self, context, enc_outs, **kwargs):
+    def init_state(self, context, hidden, **kwargs):
         """
         Parameters:
         -----------
         context: summary output from the decoder
-        enc_outs: extra encoder output (e.g. sequential last layer activations
-            for the RNN encoder)
+        hidden: encoder hidden state (e.g. for the RNN encoder)
         """
         raise NotImplementedError
 
-    def forward(self, inp, enc_out, enc_hidden, lengths, **kwargs):
+    def forward(self, inp, state, **kwargs):
         """
         Parameters:
         -----------
         inp: torch.LongTensor(seq_len x batch)
-        enc_out: summary vector from the encoder
-        enc_hidden: hidden state of encoder (needed when initializing RNN
-            decoder with last RNN encoder hidden step)
+        state: DecoderState
         """
         raise NotImplementedError
 
@@ -98,7 +95,7 @@ class RNNDecoder(BaseDecoder):
         to current rnn input. (See Luong et al. 2015). Mostly useful
         for attentional models.
     """
-    def __init__(self, embeddings, hid_dim, num_layers, cell,
+    def __init__(self, embeddings, hid_dim, num_layers, cell, encoding_size,
                  dropout=0.0, input_feed=False, att_type=None,
                  deepout_layers=0, deepout_act='ReLU', tie_weights=False,
                  train_init=False, add_init_jitter=False, reuse_hidden=True,
@@ -120,9 +117,15 @@ class RNNDecoder(BaseDecoder):
         self.add_init_jitter = add_init_jitter
         self.reuse_hidden = reuse_hidden
 
+        self.has_attention = False
+        if self.att_type is not None and self.att_type.lower() != 'none':
+            self.has_attention = True
+
         in_dim = self.embeddings.embedding_dim
         if input_feed:
             in_dim += hid_dim
+        if not self.has_attention:
+            in_dim += encoding_size
 
         # conditions
         self.has_conditions = False
@@ -142,10 +145,9 @@ class RNNDecoder(BaseDecoder):
             self.h_0 = nn.Parameter(torch.Tensor(*init_size).zero_())
 
         # attention network (optional)
-        if self.att_type is not None and self.att_type.lower() != 'none':
+        if self.has_attention:
             self.attn = attention.Attention(
                 self.hid_dim, self.hid_dim, scorer=self.att_type)
-        self.has_attention = hasattr(self, 'attn')
 
         # output projection
         self.proj = self.build_output(
@@ -208,14 +210,14 @@ class RNNDecoder(BaseDecoder):
 
         return Variable(output, volatile=not self.training)
 
-    def init_state(self, outs, hidden, lengths, conds=None, mask=None):
+    def init_state(self, context, hidden, lengths, conds=None, mask=None):
         """
         Must be call at the beginning of the decoding
 
         Parameters:
         -----------
 
-        outs: torch.FloatTensor, summary vector(s) from the Encoder.
+        context: torch.FloatTensor, summary vector(s) from the Encoder.
         hidden: torch.FloatTensor, previous hidden decoder state.
         conds: (optional) tuple of (batch) with conditions
         mask: (optional) precomputed attention mask. If passed, lengths
@@ -228,7 +230,7 @@ class RNNDecoder(BaseDecoder):
             if mask is None:
                 mask = u.make_length_mask(lengths)
             if self.att_type.lower() == 'bahdanau':
-                enc_att = self.attn.scorer.project_enc_outs(outs)
+                enc_att = self.attn.scorer.project_enc_outs(context)
 
         input_feed = None
         if self.input_feed:
@@ -240,7 +242,7 @@ class RNNDecoder(BaseDecoder):
             conds = torch.cat(
                 [emb(c) for c, emb in zip(conds, self.cond_embs)], 1)
 
-        return RNNDecoderState(hidden, outs, mask=mask, enc_att=enc_att,
+        return RNNDecoderState(hidden, context, mask=mask, enc_att=enc_att,
                                input_feed=input_feed, conds=conds)
 
     def forward(self, inp, state):
@@ -256,6 +258,10 @@ class RNNDecoder(BaseDecoder):
         if self.input_feed:
             inp = torch.cat([inp, state.input_feed], 1)
 
+        # condition on encoder summary for non attentional decoders
+        if not self.has_attention:
+            inp = torch.cat([inp, state.context], 1)
+
         if self.conditional:
             inp = torch.cat([inp, *state.conds], 1)
 
@@ -264,7 +270,7 @@ class RNNDecoder(BaseDecoder):
         weight = None
         if self.has_attention:
             out, weight = self.attn(
-                out, state.enc_outs, enc_att=state.enc_att, mask=state.mask)
+                out, state.context, enc_att=state.enc_att, mask=state.mask)
 
         # update state
         state.hidden = hidden
@@ -291,10 +297,10 @@ class RNNDecoderState(State):
     """
     DecoderState implementation for RNN-based decoders.
     """
-    def __init__(self, dec_hidden, enc_outs,
+    def __init__(self, hidden, context,
                  input_feed=None, enc_att=None, mask=None, conds=None):
-        self.hidden = dec_hidden
-        self.enc_outs = enc_outs
+        self.hidden = hidden
+        self.context = context
         self.input_feed = input_feed
         self.enc_att = enc_att
         self.mask = mask
@@ -310,7 +316,7 @@ class RNNDecoderState(State):
         else:
             hidden = self.hidden.repeat(1, width, 1)
         self.hidden = hidden
-        self.enc_outs = self.enc_outs.repeat(1, width, 1)
+        self.context = self.context.repeat(1, width, 1)
 
         if self.input_feed is not None:
             self.input_feed = self.input_feed.repeat(width, 1)
