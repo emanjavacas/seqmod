@@ -2,7 +2,7 @@
 import math
 import logging
 import random
-from collections import Counter, Sequence, OrderedDict
+from collections import Counter, Sequence, OrderedDict, defaultdict
 
 import torch
 import torch.utils.data
@@ -574,6 +574,51 @@ class PairedDataset(Dataset):
             ix = argsort([key(i) for i in self.data[sort_by]], reverse=reverse)
             self.data['src'] = [self.data['src'][i] for i in ix]
             self.data['trg'] = [self.data['trg'][i] for i in ix]
+
+        return self
+
+    def stratify_(self, target='trg', key=lambda data: data):
+        """
+        Froce balanced batch data according to an input field.
+
+        Parameters:
+        -----------
+        - target: str, either 'src' or 'trg' to take as reference
+        - key: in case of multi-input data a function is needed to retrieve
+            the actual target.
+        """
+        if self.autoregressive:
+            logging.warn("Omitting `target` value in autoregressive dataset")
+            target = 'src'
+        if target not in ('src', 'trg'):
+            raise ValueError('`target` must be "src" or "trg"')
+        if isinstance(self.data[target], tuple):
+            if key is None:
+                raise ValueError('Got multi-input dataset but no input `key`')
+
+        # group lables by value
+        data = key(self.data[target])
+        grouped = defaultdict(list)
+        for idx, val in enumerate(data):
+            grouped[val].append(idx)
+
+        total = len(data)
+        probs = {key: len(vals)/total for key, vals in grouped.items()}
+        # sample according to distribution to generate index
+        index = []
+        for _ in range(len(self)):
+            batch = []
+            for key, prob in probs.items():
+                prop = math.floor(self.batch_size * prob)
+                batch.extend([grouped[key].pop() for _ in range(prop)])
+            index.extend(batch)
+        for _, vals in grouped.items():
+            index.extend(vals)
+
+        # reorder according to sampled index
+        self.data['src'] = [self.data['src'][i] for i in index]
+        if not self.autoregressive:
+            self.data['trg'] = [self.data['trg'][i] for i in index]
 
         return self
 
