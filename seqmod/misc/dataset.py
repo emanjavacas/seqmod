@@ -99,7 +99,7 @@ def get_splits(length, test, dev=None):
     return cumsum(int(length * i) for i in [train, dev, test] if i)
 
 
-def pad_pack_batch(examples, pad, return_lengths):
+def pad_pack_batch(examples, pad, return_lengths, align_right):
     """
     Transform a list of examples into a proper torch.LongTensor batch
     """
@@ -109,9 +109,11 @@ def pad_pack_batch(examples, pad, return_lengths):
         raise ValueError("Variable length without padding")
 
     # create batch
-    out = torch.LongTensor(len(examples), max(lengths)).fill_(pad or 0)
+    maxlen = max(lengths)
+    out = torch.LongTensor(len(examples), maxlen).fill_(pad or 0)
     for i, example in enumerate(examples):
-        out[i].narrow(0, 0, len(example)).copy_(torch.Tensor(example))
+        left = 0 if not align_right else maxlen - len(example)
+        out[i].narrow(0, left, len(example)).copy_(torch.Tensor(example))
 
     # turn to batch second
     out = out.t().contiguous()
@@ -303,7 +305,7 @@ class Dict(object):
             else:
                 yield self.index(example)
 
-    def pack(self, batch_data, return_lengths=False):
+    def pack(self, batch_data, return_lengths=False, align_right=False):
         """
         Convert transformed data into torch batch. Output type is LongTensor.
         This could be adapted to return other types as well.
@@ -315,7 +317,8 @@ class Dict(object):
             and list with sequence lengths in the batch
         """
         if self.sequential:
-            return pad_pack_batch(batch_data, self.get_pad(), return_lengths)
+            return pad_pack_batch(
+                batch_data, self.get_pad(), return_lengths, align_right)
         else:
             return torch.LongTensor(batch_data)
 
@@ -470,7 +473,7 @@ class PairedDataset(Dataset):
     """
     def __init__(self, src, trg, d, batch_size=1,
                  fitted=False, gpu=False, evaluation=False,
-                 return_lengths=True):
+                 return_lengths=True, align_right=False):
         self.autoregressive, self.data, self.d = False, {}, d
 
         # prepare src data
@@ -494,6 +497,7 @@ class PairedDataset(Dataset):
         self.gpu = gpu
         self.evaluation = evaluation
         self.return_lengths = return_lengths
+        self.align_right = align_right
         self.num_batches = src_len // batch_size
 
     def _fit(self, data, dicts):
@@ -525,10 +529,12 @@ class PairedDataset(Dataset):
             batches = list(zip(*batch))  # unpack batches
             if isinstance(dicts, MultiDict):
                 dicts = dicts.dicts.values()
-            out = tuple(d.pack(b, return_lengths=self.return_lengths)
+            out = tuple(d.pack(b, return_lengths=self.return_lengths,
+                               align_right=self.align_right)
                         for (d, b) in zip(dicts, batches))
         else:
-            out = dicts.pack(batch, return_lengths=self.return_lengths)
+            out = dicts.pack(batch, return_lengths=self.return_lengths,
+                             align_right=self.align_right)
 
         return wrap_variables(out, volatile=self.evaluation, gpu=self.gpu)
 
@@ -653,7 +659,8 @@ class PairedDataset(Dataset):
 
             subset = PairedDataset(
                 src, trg, self.d, self.batch_size, fitted=True, gpu=self.gpu,
-                evaluation=evaluation)
+                return_lengths=self.return_lengths, evaluation=evaluation,
+                align_right=self.align_right)
 
             if sort:
                 subset.sort_(**kwargs)
