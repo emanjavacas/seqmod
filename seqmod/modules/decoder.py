@@ -316,7 +316,10 @@ class RNNDecoderState(State):
         else:
             hidden = self.hidden.repeat(1, width, 1)
         self.hidden = hidden
-        self.context = self.context.repeat(1, width, 1)
+        if self.context.dim() == 2:
+            self.context = self.context.repeat(width, 1)
+        else:
+            self.context = self.context.repeat(1, width, 1)
 
         if self.input_feed is not None:
             self.input_feed = self.input_feed.repeat(width, 1)
