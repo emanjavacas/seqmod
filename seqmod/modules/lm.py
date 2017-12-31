@@ -413,9 +413,9 @@ class BaseLM(nn.Module):
         log_probs = outs.transpose(2, 0, 1)[index, seq_len, batch].T
 
         # normalize by length
-        log_probs = np.exp(log_probs).sum(1) / log_probs.shape[1]
+        log_probs = log_probs.sum(1) / log_probs.shape[1]
 
-        return log_probs
+        return np.exp(log_probs)
 
 
 class LM(BaseLM):
