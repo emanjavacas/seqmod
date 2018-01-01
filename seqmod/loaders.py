@@ -2,9 +2,90 @@
 import os
 import re
 import json
+import time
 
 from seqmod.misc import Dict, PairedDataset, text_processor
 from seqmod import utils as u
+
+
+class EmbeddingLoader(object):
+
+    MODES = ('glove', 'fasttext')
+
+    def __init__(self, fname, mode):
+        if not os.path.isfile(fname):
+            raise ValueError("Couldn't find file {}".format(fname))
+
+        if mode.lower() not in EmbeddingLoader.MODES:
+            raise ValueError("Unknown file mode {}".format(mode))
+
+        self.fname = fname
+        self.mode = mode.lower()
+
+        self.has_header, self.use_model = False, False
+        if self.mode == 'fasttext':
+            self.has_header = True
+            if fname.endswith('.bin'):
+                self.use_model = True # for fasttext inference OOV
+
+    def reader(self):
+        with open(self.fname, 'r') as f:
+
+            if self.has_header:
+                next(f)
+
+            for line in f:
+                w, *vec = line.split(' ')
+
+                yield w, vec
+
+    def load_from_model(self, words, verbose=False):
+        import numpy as np
+        try:
+            from fastText import load_model # defaul to official python bindings
+        except ImportError:
+            if verbose:
+                print("Couldn't load official fasttext python bindings... "
+                      "Defaulting to fasttext package")
+            from fasttext import load_model
+
+        start = time.time()
+        model = load_model(self.fname)
+        if verbose:
+            print("Loaded model in {:.3f} secs".format(time.time()-start))
+
+        vectors = np.array([model.get_word_vector(word) for word in words])
+        return vectors, words
+
+    def load(self, words=None, verbose=False):
+        vectors, outwords, start = [], [], time.time()
+
+        if words is not None:
+            words = set(words)
+
+            if verbose:
+                print("Loading {} embeddings".format(len(words)))
+
+        if words is not None and self.mode == 'fasttext' and self.use_model:
+            vectors, outwords = self.load_from_model(words, verbose)
+
+        else:
+            for idx, (word, vec) in enumerate(self.reader()):
+                if words is not None and word not in words:
+                    continue
+
+                try:
+                    vec = list(map(float, vec))
+                    vectors.append(vec)
+                    outwords.append(word)
+                except ValueError as e:
+                    raise ValueError(str(e) + ' at {}:{}'.format(self.fname, idx))
+
+        if verbose:
+            print("Loaded {} embeddings in {:.3f}".format(
+                len(outwords), time.time()-start))
+
+        return vectors, outwords
 
 
 def load_lines(path, max_len=None, processor=text_processor()):
