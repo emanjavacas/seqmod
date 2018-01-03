@@ -91,7 +91,7 @@ class EncoderDecoder(nn.Module):
             weight = weight.cuda()
 
         # remove <eos> from decoder targets, remove <bos> from loss targets
-        if self.reverse:
+        if hasattr(self, 'reverse') and self.reverse:
             # assume right aligned data: [pad pad <bos> ... <eos>]
             trg = u.flip(trg, 0)
 
@@ -151,9 +151,8 @@ class EncoderDecoder(nn.Module):
         """
         eos = self.decoder.embeddings.d.get_eos()
         bos = self.decoder.embeddings.d.get_bos()
-        if self.reverse:
-            _bos = bos
-            bos, eos = eos, _bos
+        if hasattr(self, 'reverse') and self.reverse:
+            bos, eos = eos, bos
         seq_len, batch_size = src.size()
 
         enc_outs, enc_hidden = self.encoder(src)
@@ -185,7 +184,7 @@ class EncoderDecoder(nn.Module):
         if self.decoder.has_attention:
             weights = torch.stack(weights).tolist()
 
-        if self.reverse:
+        if hasattr(self, 'reverse') and self.reverse:
             hyps = [hyp[::-1] for hyp in hyps]
 
         return scores, hyps, weights
@@ -205,16 +204,15 @@ class EncoderDecoder(nn.Module):
         """
         eos = self.decoder.embeddings.d.get_eos()
         bos = self.decoder.embeddings.d.get_bos()
-        if self.reverse:
-            _bos = bos
-            bos, eos = eos, _bos
+        if hasattr(self, 'reverse') and self.reverse:
+            bos, eos = eos, bos
         gpu = src.is_cuda
 
         weights = []
 
         enc_outs, enc_hidden = self.encoder(src)
         dec_state = self.decoder.init_state(
-            enc_outs, enc_hidden, lengths, conds=conds, mask=mask)
+            enc_outs, enc_hidden, lengths, conds=conds)
 
         dec_state.expand_along_beam(beam_width)
 
@@ -230,7 +228,7 @@ class EncoderDecoder(nn.Module):
             # TODO: add attention weight for decoded steps
 
         scores, hyps = beam.decode(n=beam_width)
-        if self.reverse:
+        if hasattr(self, 'reverse') and self.reverse:
             hyps = [hyp[::-1] for hyp in hyps]
 
         return scores, hyps, weights
