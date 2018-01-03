@@ -81,8 +81,8 @@ class EarlyStopping(pqueue):
 
     """
 
-    def __init__(self, maxsize, tolerance=1e-4,
-                 patience=None, reset_patience=True):
+    def __init__(self, maxsize, patience=None, tolerance=1e-4,
+                 reset_patience=True):
         """Set params."""
         self.tolerance = tolerance
         self.patience, self.fails = patience or maxsize - 1, 0
@@ -96,7 +96,7 @@ class EarlyStopping(pqueue):
         super(EarlyStopping, self).__init__(maxsize, heapmax=True)
 
     def find_smallest(self):
-        return sorted(enumerate(self.checks), key=lambda i: i[1])[0][0]
+        return sorted(enumerate(self.checks), key=lambda i: i[1])[0][0] + 1
 
     def add_checkpoint(self, checkpoint, model=None):
         """Add loss to queue and stop if patience is exceeded."""
@@ -118,8 +118,8 @@ class EarlyStopping(pqueue):
         self.checks.append(checkpoint)
 
         if self.is_full():
-            checkpoint, model = self.get_min()
+            checkpoint, best_model = self.get_min()
             self.queue = []
             if self.reset_patience:
                 self.fails = 0
-            self.add_checkpoint(checkpoint, model)
+            self.add_checkpoint(checkpoint, model=best_model)

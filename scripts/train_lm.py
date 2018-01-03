@@ -199,7 +199,7 @@ if __name__ == '__main__':
     # - general hook
     early_stopping = None
     if args.patience > 0:
-        early_stopping = EarlyStopping(10, args.patience)
+        early_stopping = EarlyStopping(10, patience=args.patience)
     model_hook = u.make_lm_hook(
         d, temperature=args.temperature, max_seq_len=args.max_seq_len,
         gpu=args.gpu, level=args.level, early_stopping=early_stopping)
@@ -213,10 +213,7 @@ if __name__ == '__main__':
             u.make_schedule_hook(schedule, verbose=True), hooks_per_epoch=10e4)
     # - lr schedule hook
     hook = make_lr_hook(
-        optimizer,
-        0.1,  # args.lr_schedule_factor,
-        5,  # args.lr_schedule_checkpoints
-    )
+        optimizer, args.lr_schedule_factor, args.lr_schedule_checkpoints)
     # run a hook args.checkpoint * 4 batches
     trainer.add_hook(hook, num_checkpoints=4)
 
