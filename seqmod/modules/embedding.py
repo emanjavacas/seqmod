@@ -143,6 +143,9 @@ class Embedding(nn.Embedding):
         return inst
 
     def add_positional(self, max_len):
+        """
+        Add elementwise positional embeddings to the output
+        """
         positional = PositionalEncoding(self.embedding_dim, max_len=max_len)
         self.add_module('positional', positional)
         self.positional = positional
@@ -200,15 +203,6 @@ class Embedding(nn.Embedding):
             it will be guessed based on the filename.
         """
         words = self.d.vocab
-
-        if mode is None:
-            if 'glove' in os.path.basename(filepath).lower():
-                mode = 'glove'
-            elif 'fasttext' in os.path.basename(filepath).lower():
-                mode = 'fasttext'
-            else:
-                raise ValueError("Unrecognized embedding type")
-
         weight, words = EmbeddingLoader(filepath, mode).load(words, **kwargs)
         self.init_embeddings(weight, words)
 

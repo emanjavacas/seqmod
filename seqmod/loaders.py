@@ -12,9 +12,17 @@ class EmbeddingLoader(object):
 
     MODES = ('glove', 'fasttext')
 
-    def __init__(self, fname, mode):
+    def __init__(self, fname, mode=None):
         if not os.path.isfile(fname):
             raise ValueError("Couldn't find file {}".format(fname))
+
+        if mode is None:
+            if 'glove' in os.path.basename(fname).lower():
+                mode = 'glove'
+            elif 'fasttext' in os.path.basename(fname).lower():
+                mode = 'fasttext'
+            else:
+                raise ValueError("Unrecognized embedding type")
 
         if mode.lower() not in EmbeddingLoader.MODES:
             raise ValueError("Unknown file mode {}".format(mode))
