@@ -105,7 +105,7 @@ class Attention(nn.Module):
         self.linear_out = nn.Linear(
             hid_dim * 2, hid_dim, bias=scorer.lower() == 'bahdanau')
 
-    def forward(self, dec_out, enc_outs, enc_att=None, mask=None):
+    def forward(self, dec_out, enc_outs, enc_att=None):
         """
         Parameters:
         -----------
@@ -113,7 +113,6 @@ class Attention(nn.Module):
         - dec_out: torch.Tensor(batch_size x hid_dim)
         - enc_outs: torch.Tensor(seq_len x batch_size x hid_dim)
         - enc_att: (optional), torch.Tensor(seq_len x batch_size x att_dim)
-        - mask: (optional), torch.ByteTensor(batch_size x seq_len)
         """
         # (batch x seq_len)
         weights = self.scorer(dec_out, enc_outs, enc_att=enc_att)

@@ -210,7 +210,7 @@ class RNNDecoder(BaseDecoder):
 
         return Variable(output, volatile=not self.training)
 
-    def init_state(self, context, hidden, lengths, conds=None, mask=None):
+    def init_state(self, context, hidden, lengths, conds=None):
         """
         Must be call at the beginning of the decoding
 
@@ -225,10 +225,9 @@ class RNNDecoder(BaseDecoder):
         """
         hidden = self.init_hidden_for(hidden)
 
-        enc_att = None
+        enc_att, mask = None, None
         if self.has_attention:
-            if mask is None:
-                mask = u.make_length_mask(lengths)
+            mask = u.make_length_mask(lengths)
             if self.att_type.lower() == 'bahdanau':
                 enc_att = self.attn.scorer.project_enc_outs(context)
 
