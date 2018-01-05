@@ -66,14 +66,6 @@ def make_att_hook(target, gpu, beam=False):
     return hook
 
 
-def make_criterion(vocab_size, pad):
-    weight = torch.ones(vocab_size)
-    weight[pad] = 0
-    # don't average batches since num words is variable (depending on padding)
-    criterion = nn.NLLLoss(weight, size_average=False)
-    return criterion
-
-
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
@@ -161,14 +153,12 @@ if __name__ == '__main__':
 
     optimizer = getattr(optim, args.optim)(model.parameters(), lr=args.lr)
 
-    criterion = make_criterion(len(src_dict), src_dict.get_pad())
-
     print(model)
     print()
     print('* number of parameters: {}'.format(model.n_params()))
 
     if args.gpu:
-        model.cuda(), criterion.cuda()
+        model.cuda()
 
     early_stopping = EarlyStopping(args.patience)
     trainer = Trainer(
