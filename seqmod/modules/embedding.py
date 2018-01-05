@@ -79,18 +79,23 @@ class PositionalEncoding(nn.Module):
         super(PositionalEncoding, self).__init__()
         self.register_buffer('pe', pe)
 
-    def forward(self, emb):
+    def forward(self, emb, pos=None):
         """
         Parameters:
         -----------
 
-        - emb: FloatTensor (seq_len, batch, emb_dim)
+        - emb: FloatTensor ((seq_len, ), batch, emb_dim)
         """
-        emb = emb + Variable(
-            self.pe[:emb.size(0), :1, :emb.size(2)].expand_as(emb),
-            requires_grad=False)
+        if emb.dim() == 3:
+            pos_emb = self.pe[:emb.size(0), :1, :emb.size(2)]
+        else:
+            if pos is None:
+                raise ValueError(
+                    "2D input to positional encoding needs `pos` input")
 
-        return emb
+            pos_emb = self.pe[pos, :1, :emb.size(1)]
+
+        return emb + Variable(pos_emb.expand_as(emb), requires_grad=False)
 
 
 class Embedding(nn.Embedding):
@@ -150,7 +155,7 @@ class Embedding(nn.Embedding):
         self.add_module('positional', positional)
         self.positional = positional
 
-    def forward(self, inp):
+    def forward(self, inp, pos=None):
         inp = word_dropout(inp, self.target_code, p=self.p,
                            reserved_codes=self.reserved_codes,
                            training=self.training)
@@ -158,7 +163,7 @@ class Embedding(nn.Embedding):
         inp = super(Embedding, self).forward(inp)
 
         if hasattr(self, 'positional'):
-            inp = self.positional(inp)
+            inp = self.positional(inp, pos=pos)
 
         return inp
 

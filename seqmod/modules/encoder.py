@@ -43,8 +43,6 @@ class RNNEncoder(BaseEncoder):
 
         super(BaseEncoder, self).__init__()
 
-        super(BaseEncoder, self).__init__()
-
         if bidi and hid_dim % 2 != 0:
             raise ValueError("Hidden dimension must be even for BiRNNs")
 
@@ -66,6 +64,9 @@ class RNNEncoder(BaseEncoder):
         if self.train_init:
             init_size = self.num_layers * self.num_dirs, 1, self.hid_dim
             self.h_0 = nn.Parameter(torch.Tensor(*init_size).zero_())
+
+        if self.summary not in ('mean', 'mean-concat', 'full', 'inner-attention'):
+            raise ValueError("Unknown summary type [{}]".format(self.summary))
 
         if self.summary == 'inner-attention':
             # Challenges with Variational Autoencoders for Text
@@ -185,27 +186,38 @@ class RNNEncoder(BaseEncoder):
         elif self.summary == 'inner-attention':
             return 2, self.hid_dim * self.num_dirs
 
+
+class CNNEncoder(BaseEncoder):
+
+    def __init__(self, embeddings, filter_sizes, ):
+        super(CNNEncoder, self).__init__()
+
+    def forward(inp):
+        pass
+
     @property
-    def conditional(self):
-        return False
+    def encoding_size(self):
+        pass
 
 
-class GRLRNNEncoder(BaseEncoder):
-    def __init__(self, *args, cond_dims, cond_vocabs, **kwargs):
-
-        super(GRLRNNEncoder, self).__init__(*args, **kwargs)
-
-        if self.encoding_size > 2:
-            raise ValueError("GRLRNNEncoder can't regularize 3D summaries")
+def GRLWrapper(EncoderBaseClass):
+    def __init__(self, cond_dims, cond_vocabs, *args, **kwargs):
+        EncoderBaseClass.__init__(self, *args, **kwargs)
 
         if len(cond_dims) != len(cond_vocabs):
             raise ValueError("cond_dims & cond_vocabs must be same length")
 
+        encoding_dim, _ = self.encoding_size
+        if encoding_dim > 2:
+            raise ValueError("GRLRNNEncoder can't regularize 3D summaries")
+
         # MLPs regularizing on input conditions
-        self.grls = nn.ModuleList()
+        grls = nn.ModuleList()
         _, hid_dim = self.encoding_size  # size of the encoder output
         for cond_vocab, cond_dim in zip(cond_vocabs, cond_dims):
-            self.grls.append(MLP(hid_dim, hid_dim, cond_vocab))
+            grls.append(MLP(hid_dim, hid_dim, cond_vocab))
+
+        self.add_module('grls', grls)
 
     def loss(self, out, conds, test=False):
         grl_loss = []
@@ -218,6 +230,23 @@ class GRLRNNEncoder(BaseEncoder):
 
         return [l.data[0] for l in grl_loss]
 
-    @property
-    def conditional(self):
-        return True
+    GRLEncoder = type('GRL{}'.format(EncoderBaseClass.__name__),
+                      (EncoderBaseClass,),
+                      {'__init__': __init__,
+                       'loss': loss,
+                       'conditional': property(lambda self: True)})
+
+    return GRLEncoder
+
+
+GRLRNNEncoder = GRLWrapper(RNNEncoder)
+GRLCNNEncoder = GRLWrapper(CNNEncoder)
+
+
+if __name__ == '__main__':
+    import os
+    from seqmod.misc import Dict
+    from seqmod.modules.embedding import Embedding
+    text = open(os.path.realpath(__file__)).read().split()
+    emb = Embedding.from_dict(Dict().fit(text), 100)
+    GRLRNNEncoder([10], [10], emb, 10, 1, 'LSTM', summary='mean')

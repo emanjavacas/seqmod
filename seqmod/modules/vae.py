@@ -88,7 +88,7 @@ class VAERNNDecoder(RNNDecoder):
             # rebuild rnn
             self.rnn = self.build_rnn(
                 self.num_layers,
-                self.rnn.in_dim + z_dim, # append z dim to input
+                self.rnn.in_dim + z_dim,  # append z dim to input
                 self.hid_dim,
                 self.cell,
                 self.dropout)
