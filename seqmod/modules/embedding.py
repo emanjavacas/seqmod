@@ -7,7 +7,7 @@ from torch.autograd import Variable
 
 import numpy as np
 
-from seqmod import utils as u
+from seqmod.loaders import EmbeddingLoader
 
 
 def word_dropout_mask(X, dropout_rate, reserved_codes=()):
@@ -214,7 +214,7 @@ class Embedding(nn.Embedding):
             else:
                 raise ValueError("Unrecognized embedding type")
 
-        weight, words = u.EmbeddingLoader(filepath, mode).load(words, **kwargs)
+        weight, words = EmbeddingLoader(filepath, mode).load(words, **kwargs)
         self.init_embeddings(weight, words)
 
 
@@ -234,7 +234,7 @@ if __name__ == '__main__':
     filepath = 'test/data/glove.test1000.100d.txt'
     emb.init_embeddings_from_file(filepath, 'glove')
 
-    weights, words = u.EmbeddingLoader(filepath, 'glove').load()
+    weights, words = EmbeddingLoader(filepath, 'glove').load()
     weights = torch.Tensor(weights)
     by_word = dict(zip(words, weights))
 

@@ -96,61 +96,6 @@ def save_checkpoint(parent, model, args, d=None, ppl=None, suffix=None):
     return dirpath
 
 
-class EmbeddingLoader(object):
-
-    MODES = ('glove', 'fasttext')
-
-    def __init__(self, fname, mode):
-        if not os.path.isfile(fname):
-            raise ValueError("Couldn't find file {}".format(fname))
-
-        if mode.lower() not in EmbeddingLoader.MODES:
-            raise ValueError("Unknown file mode {}".format(mode))
-
-        self.fname = fname
-        self.mode = mode.lower()
-
-        self.has_header = False
-        if self.mode == 'fasttext':
-            self.has_header = True
-
-    def reader(self):
-        with open(self.fname, 'r') as f:
-
-            if self.has_header:
-                next(f)
-
-            for line in f:
-                w, *vec = line.split(' ')
-
-                yield w, vec
-
-    def load(self, words=None, verbose=False):
-        vectors, outwords, start = [], [], time.time()
-
-        if words is not None:
-            words = set(words)
-
-            if verbose:
-                print("Loading {} embeddings".format(len(words)))
-
-        for idx, (word, vec) in enumerate(self.reader()):
-            if words is not None and word not in words:
-                continue
-
-            try:
-                vectors.append(list(map(float, vec)))
-                outwords.append(word)
-            except ValueError as e:
-                raise ValueError(str(e) + ' at {}:{}'.format(self.fname, idx))
-
-        if verbose:
-            print("Loaded {} embeddings in {:.3f}".format(
-                len(outwords), time.time() - start))
-
-        return vectors, outwords
-
-
 # Pytorch utils
 def merge_states(state_dict1, state_dict2, merge_map):
     """
