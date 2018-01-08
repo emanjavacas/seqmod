@@ -14,21 +14,23 @@ def generic_sigmoid(a=1, b=1, c=1, inverse=False):
     - c: steepness
     """
     if inverse:
-        return lambda x: 1 - (a / (1 + b * math.exp(-x * c)))
+        return lambda x: a - (a / (1 + b * math.exp(-x * c)))
     else:
         return lambda x: a / (1 + b * math.exp(-x * c))
 
 
-def inflection_sigmoid(inflection, steepness, inverse=False):
+def inflection_sigmoid(inflection, steepness, a=1, inverse=False):
     """
     A particular sigmoid as a function of inflection point
     (x value for which the second derivative is 0) and the
     steepness of the curve. Typical smooth steepness values are below 4.
     To invert it, just substract the output value from 1.
+
+    - a: max value (target value, if inverse is False or initial otherwise)
     """
     b = 10 ** steepness
     c = math.log(b) / inflection
-    return generic_sigmoid(a=1, b=b, c=c, inverse=inverse)
+    return generic_sigmoid(a=a, b=b, c=c, inverse=inverse)
 
 
 def linear(convergence):
