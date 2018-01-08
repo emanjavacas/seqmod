@@ -376,6 +376,8 @@ class Trainer(object):
 
         self.log("info", "Trained for [{:.3f} secs]".format(time.time()-start))
 
+        best_model = best_model or copy.deepcopy(self.model)
+
         # test
         if run_test and self.test_name in self.datasets:
             self.model.eval()
@@ -385,7 +387,6 @@ class Trainer(object):
             self.on_test_end(test_loss)
             test_loss = sum(test_loss.pack())
 
-        best_model = best_model or copy.deepcopy(self.model)
 
         return (best_model.cpu(), valid_loss), test_loss
 
