@@ -104,6 +104,7 @@ if __name__ == '__main__':
     parser.add_argument('--bptt', default=35, type=int)
     parser.add_argument('--gpu', action='store_true')
     parser.add_argument('--use_schedule', action='store_true')
+    parser.add_argument('--schedule_init', type=float, default=1.0)
     parser.add_argument('--schedule_inflection', type=int, default=2)
     parser.add_argument('--schedule_steepness', type=float, default=1.75)
     # - optimizer
@@ -168,7 +169,7 @@ if __name__ == '__main__':
     print(' * number of train batches. {}'.format(len(train)))
 
     print('Building model...')
-    m = LM(args.emb_dim, args.hid_dim, d,
+    m = LM(args.emb_dim, args.hid_dim, d, exposure_rate=args.schedule_init,
            num_layers=args.num_layers, cell=args.cell, dropout=args.dropout,
            att_dim=args.att_dim, tie_weights=args.tie_weights,
            deepout_layers=args.deepout_layers, train_init=args.train_init,
@@ -208,7 +209,7 @@ if __name__ == '__main__':
     if args.use_schedule:
         schedule = inflection_sigmoid(
             len(train) * args.schedule_inflection, args.schedule_steepness,
-            inverse=True)
+            a=args.schedule_init, inverse=True)
         trainer.add_hook(
             u.make_schedule_hook(schedule, verbose=True), hooks_per_epoch=10e4)
     # - lr schedule hook

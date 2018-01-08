@@ -278,10 +278,10 @@ class BaseLM(nn.Module):
     """
     Abstract LM Class
     """
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, exposure_rate=1.0, **kwargs):
         # LM training data
         self.hidden_state = {}
-        self.exposure_rate = 1.0
+        self.exposure_rate = exposure_rate
 
         super(BaseLM, self).__init__()
 
