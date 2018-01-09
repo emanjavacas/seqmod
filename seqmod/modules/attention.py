@@ -105,7 +105,7 @@ class Attention(nn.Module):
         self.linear_out = nn.Linear(
             hid_dim * 2, hid_dim, bias=scorer.lower() == 'bahdanau')
 
-    def forward(self, dec_out, enc_outs, enc_att=None):
+    def forward(self, dec_out, enc_outs, enc_att=None, mask=None):
         """
         Parameters:
         -----------
