@@ -8,7 +8,7 @@ from torch.autograd import Variable
 from seqmod.modules.rnn import StackedGRU, StackedLSTM
 from seqmod.modules.ff import Highway
 from seqmod.modules import attention
-from seqmod import utils as u
+from seqmod.modules import utils as u
 
 
 class BaseDecoder(nn.Module):

@@ -8,7 +8,7 @@ from seqmod.misc.beam_search import Beam
 from seqmod.modules.encoder import RNNEncoder, GRLRNNEncoder
 from seqmod.modules.decoder import RNNDecoder
 from seqmod.modules.embedding import Embedding
-from seqmod import utils as u
+from seqmod.modules import utils as u
 
 from seqmod.modules.exposure import scheduled_sampling
 

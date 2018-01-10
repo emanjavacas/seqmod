@@ -7,7 +7,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 
-from seqmod import utils as u
+from seqmod.modules import utils as u
+from seqmod.modules.utils import init_hidden_for
 from seqmod.modules.embedding import Embedding
 from seqmod.modules import rnn
 from seqmod.modules.ff import MaxOut, Highway
@@ -554,21 +555,10 @@ class LM(BaseLM):
         return output
 
     def init_hidden_for(self, inp):
-        size = (self.num_layers, inp.size(1), self.hid_dim)
-        # create h_0
-        if self.train_init:
-            h_0 = self.h_0.repeat(1, inp.size(1), 1)
-        else:
-            h_0 = Variable(inp.data.new(*size).zero_(),
-                           volatile=not self.training)
-        # eventualy add jitter
-        if self.add_init_jitter:
-            h_0 = h_0 + torch.normal(torch.zeros_like(h_0), 0.3)
-        # return
-        if self.cell.startswith('LSTM'):
-            return h_0, h_0.zeros_like(h_0)
-        else:
-            return h_0
+        return init_hidden_for(
+            inp, 1, self.num_layers, self.hid_dim, self.cell,
+            h_0=self.h_0, add_init_jitter=self.add_init_jitter,
+            training=self.training)
 
     def forward(self, inp, hidden=None, conds=None, **kwargs):
         """
@@ -631,7 +621,7 @@ class LM(BaseLM):
                         t, outs[-1], self.project, self.exposure_rate)
                     t = Variable(t, volatile=not self.training)
                 out, hidden, _ = self(t.unsqueeze(0), hidden=hidden, conds=conds)
-                outs.append(out.squeeze(0)) # remove seq_len dim
+                outs.append(out.squeeze(0))  # remove seq_len dim
             outs = torch.stack(outs, 0)
         else:
             outs, hidden, _ = self(source, hidden=hidden, conds=conds)

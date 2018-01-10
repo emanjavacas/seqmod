@@ -3,8 +3,7 @@ import torch
 import torch.nn as nn
 from torch.autograd import Variable
 
-import seqmod.utils as u
-
+from seqmod.modules import utils as u
 from seqmod.modules.ff import Highway
 from seqmod.misc import inflection_sigmoid, linear
 from seqmod.modules.encoder_decoder import RNNEncoder

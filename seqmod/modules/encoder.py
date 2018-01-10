@@ -2,12 +2,11 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.autograd import Variable
-from seqmod.utils import pack_sort
 from torch.nn.utils.rnn import pad_packed_sequence as unpack
 
-import seqmod.utils as u
+from seqmod.modules.utils import init_hidden_for
 from seqmod.modules.ff import grad_reverse, MLP
+from seqmod.modules import utils as u
 
 
 class BaseEncoder(nn.Module):
@@ -83,25 +82,10 @@ class RNNEncoder(BaseEncoder):
             raise NotImplementedError
 
     def init_hidden_for(self, inp):
-        batch_size = inp.size(1)
-        size = (self.num_dirs * self.num_layers, batch_size, self.hid_dim)
-
-        if self.train_init:
-            h_0 = self.h_0.repeat(1, batch_size, 1)
-        else:
-            h_0 = inp.data.new(*size).zero_()
-            h_0 = Variable(h_0, volatile=not self.training)
-
-        if self.add_init_jitter:
-            h_0 = h_0 + torch.normal(torch.zeros_like(h_0), 0.3)
-
-        if self.cell.startswith('LSTM'):
-            # compute memory cell
-            c_0 = inp.data.new(*size).zero_()
-            c_0 = Variable(c_0, volatile=not self.training)
-            return h_0, c_0
-        else:
-            return h_0
+        return init_hidden_for(
+            inp, self.num_dirs, self.num_layers, self.hid_dim, self.cell,
+            h_0=self.h_0, add_init_jitter=self.add_init_jitter,
+            training=self.training)
 
     def forward(self, inp, lengths=None):
         """
@@ -128,7 +112,7 @@ class RNNEncoder(BaseEncoder):
 
         rnn_inp = inp
         if lengths is not None:  # pack if lengths given
-            rnn_inp, unsort = pack_sort(rnn_inp, lengths)
+            rnn_inp, unsort = u.pack_sort(rnn_inp, lengths)
 
         outs, hidden = self.rnn(rnn_inp, hidden)
 
@@ -230,13 +214,11 @@ def GRLWrapper(EncoderBaseClass):
 
         return [l.data[0] for l in grl_loss]
 
-    GRLEncoder = type('GRL{}'.format(EncoderBaseClass.__name__),
-                      (EncoderBaseClass,),
-                      {'__init__': __init__,
-                       'loss': loss,
-                       'conditional': property(lambda self: True)})
-
-    return GRLEncoder
+    return type('GRL{}'.format(EncoderBaseClass.__name__),
+                (EncoderBaseClass,),
+                {'__init__': __init__,
+                 'loss': loss,
+                 'conditional': property(lambda self: True)})
 
 
 GRLRNNEncoder = GRLWrapper(RNNEncoder)
