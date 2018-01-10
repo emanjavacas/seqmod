@@ -7,7 +7,7 @@ from collections import Counter, Sequence, OrderedDict, defaultdict
 import torch
 import torch.utils.data
 
-from seqmod import utils as u
+from seqmod.utils import UNK, wrap_variables
 
 
 def bucketing(*args):
@@ -173,7 +173,7 @@ class Dict(object):
         they are None).
     """
     def __init__(self, pad_token=None, eos_token=None, bos_token=None,
-                 unk_token=u.UNK, force_unk=False, max_size=None, min_freq=1,
+                 unk_token=UNK, force_unk=False, max_size=None, min_freq=1,
                  sequential=True, max_len=None, use_vocab=True,
                  preprocessing=None):
         force_unk = force_unk or sequential  # force unk for sequential dicts
@@ -479,7 +479,9 @@ class PairedDataset(Dataset):
         self.data['src'] = src if fitted else self._fit(src, self.d['src'])
         src_len = len(self.data['src'])
         if src_len < batch_size:
-            raise ValueError("Not enough input examples: {}".format(src_len))
+            raise ValueError(
+                "Not enough input examples for selected batch_size. "
+                "Got {} but batch_size is {}".format(src_len, batch_size))
 
         # prepare trg data
         if trg is None:         # autoregressive dataset
@@ -535,7 +537,7 @@ class PairedDataset(Dataset):
             out = dicts.pack(batch, return_lengths=self.return_lengths,
                              align_right=self.align_right)
 
-        return u.wrap_variables(out, volatile=self.evaluation, gpu=self.gpu)
+        return wrap_variables(out, volatile=self.evaluation, gpu=self.gpu)
 
     def __len__(self):
         return self.num_batches
@@ -725,7 +727,8 @@ class BlockDataset(Dataset):
                 raise ValueError("Not enough data for batch [{}]"
                                  .format(batch_size))
 
-            fitted = dicts.transform(examples) if dicts.use_vocab else examples
+            fitted = [d.transform(e) if d.use_vocab else e
+                      for d, e in zip(dicts, examples)]
             fitted = ([i for seq in subset for i in seq] for subset in fitted)
             return tuple(fitted)
 
@@ -746,8 +749,8 @@ class BlockDataset(Dataset):
         idx *= self.bptt
         seq_len = min(self.bptt, len(data) - 1 - idx)
         src_data, trg_data = data[idx:idx+seq_len], data[idx+1:idx+seq_len+1]
-        src = u.wrap_variables(src_data, self.evaluation, self.gpu)
-        trg = u.wrap_variables(trg_data, self.evaluation, self.gpu)
+        src = wrap_variables(src_data, self.evaluation, self.gpu)
+        trg = wrap_variables(trg_data, self.evaluation, self.gpu)
         return src, trg
 
     def __len__(self):
@@ -779,12 +782,12 @@ class BlockDataset(Dataset):
             if self.table is not None:
                 # source
                 src_pre, src_target, src_post = destruct(src, self.table_idx)
-                src_target = tuple(u.wrap_variables(t, self.evaluation, self.gpu)
+                src_target = tuple(wrap_variables(t, self.evaluation, self.gpu)
                                    for t in self.table.expand(src_target.data))
                 src = tuple(src_pre + src_target + src_post)
                 # target
                 trg_pre, trg_target, trg_post = destruct(trg, self.table_idx)
-                trg_target = tuple(u.wrap_variables(t, self.evaluation, self.gpu)
+                trg_target = tuple(wrap_variables(t, self.evaluation, self.gpu)
                                    for t in self.table.expand(trg_target.data))
                 trg = tuple(trg_pre + trg_target + trg_post)
         # single-input
