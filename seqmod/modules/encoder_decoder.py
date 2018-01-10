@@ -8,7 +8,7 @@ from seqmod.misc.beam_search import Beam
 from seqmod.modules.encoder import RNNEncoder, GRLRNNEncoder
 from seqmod.modules.decoder import RNNDecoder
 from seqmod.modules.embedding import Embedding
-from seqmod.modules import utils as u
+from seqmod.modules.torch_utils import flip, shards
 
 from seqmod.modules.exposure import scheduled_sampling
 
@@ -93,7 +93,7 @@ class EncoderDecoder(nn.Module):
         # remove <eos> from decoder targets, remove <bos> from loss targets
         if hasattr(self, 'reverse') and self.reverse:
             # assume right aligned data: [pad pad <bos> ... <eos>]
-            trg = u.flip(trg, 0)
+            trg = flip(trg, 0)
 
         # [<bos> ... <eos> pad pad]
         dec_trg, loss_trg = trg[:-1], trg[1:]
@@ -122,7 +122,7 @@ class EncoderDecoder(nn.Module):
         shard_data = {'out': dec_outs, 'trg': loss_trg}
         num_examples, loss = trg_lengths.data.sum(), 0
 
-        for shard in u.shards(shard_data, size=split, test=test):
+        for shard in shards(shard_data, size=split, test=test):
             out, true = shard['out'], shard['trg'].view(-1)
             pred = self.decoder.project(out)
             shard_loss = F.nll_loss(pred, true, weight, size_average=False)

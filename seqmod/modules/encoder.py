@@ -4,9 +4,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils.rnn import pad_packed_sequence as unpack
 
-from seqmod.modules.utils import init_hidden_for
+from seqmod.modules.torch_utils import init_hidden_for
 from seqmod.modules.ff import grad_reverse, MLP
-from seqmod.modules import utils as u
+from seqmod.modules.torch_utils import pack_sort, repackage_bidi
 
 
 class BaseEncoder(nn.Module):
@@ -60,6 +60,7 @@ class RNNEncoder(BaseEncoder):
                                      self.hid_dim, num_layers=self.num_layers,
                                      dropout=dropout, bidirectional=self.bidi)
 
+        self.h_0 = None
         if self.train_init:
             init_size = self.num_layers * self.num_dirs, 1, self.hid_dim
             self.h_0 = nn.Parameter(torch.Tensor(*init_size).zero_())
@@ -112,7 +113,7 @@ class RNNEncoder(BaseEncoder):
 
         rnn_inp = inp
         if lengths is not None:  # pack if lengths given
-            rnn_inp, unsort = u.pack_sort(rnn_inp, lengths)
+            rnn_inp, unsort = pack_sort(rnn_inp, lengths)
 
         outs, hidden = self.rnn(rnn_inp, hidden)
 
@@ -128,10 +129,10 @@ class RNNEncoder(BaseEncoder):
             # BiRNN encoder outputs:   (num_layers * 2 x batch x hid_dim)
             # but RNN decoder expects: (num_layers x batch x hid_dim * 2)
             if self.cell.startswith('LSTM'):
-                hidden = (u.repackage_bidi(hidden[0]),
-                          u.repackage_bidi(hidden[1]))
+                hidden = (repackage_bidi(hidden[0]),
+                          repackage_bidi(hidden[1]))
             else:
-                hidden = u.repackage_bidi(hidden)
+                hidden = repackage_bidi(hidden)
 
         if self.summary == 'full':
             outs = outs         # do nothing

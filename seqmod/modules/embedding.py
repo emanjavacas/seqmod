@@ -10,7 +10,7 @@ from torch.autograd import Variable
 from torch.nn.utils.rnn import pad_packed_sequence as unpack
 
 from seqmod.loaders import EmbeddingLoader
-from seqmod.modules.utils import init_hidden_for, pack_sort, split, pad_sequence
+from seqmod.modules.torch_utils import init_hidden_for, pack_sort, split, pad_sequence
 from seqmod.modules.conv_utils import get_padding
 
 

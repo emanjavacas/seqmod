@@ -7,8 +7,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 
-from seqmod.modules import utils as u
-from seqmod.modules.utils import init_hidden_for
+from seqmod.modules.torch_utils import init_hidden_for, repackage_hidden, swap
 from seqmod.modules.embedding import Embedding
 from seqmod.modules import rnn
 from seqmod.modules.ff import MaxOut, Highway
@@ -206,10 +205,10 @@ class Generator(object):
             beam.advance(outs.data)
 
             if self.model.cell.startswith('LSTM'):
-                hidden = (u.swap(hidden[0], 1, beam.get_source_beam()),
-                          u.swap(hidden[1], 1, beam.get_source_beam()))
+                hidden = (swap(hidden[0], 1, beam.get_source_beam()),
+                          swap(hidden[1], 1, beam.get_source_beam()))
             else:
-                hidden = u.swap(hidden, 1, beam.get_source_beam())
+                hidden = swap(hidden, 1, beam.get_source_beam())
 
         scores, hyps = beam.decode(n=width)
 
@@ -233,7 +232,7 @@ class Generator(object):
             outs, hidden, _ = self.model(prev, hidden=hidden, **kwargs)
             outs = self.model.project(outs)
             prev = outs.div_(temperature).exp().multinomial(1).t()
-            score = u.select_cols(outs.data.cpu(), prev.squeeze().data.cpu())
+            score = select_cols(outs.data.cpu(), prev.squeeze().data.cpu())
             hyps.append(prev.squeeze().data.tolist())
 
             if self.eos is not None and not ignore_eos:
@@ -405,7 +404,7 @@ class BaseLM(nn.Module):
 
         # compute output
         outs, *_ = self(inp, **kwargs)
-        outs = self.project(outs, reshape=True) # (seq_len x batch x vocab)
+        outs = self.project(outs, reshape=True)  # (seq_len x batch x vocab)
 
         # select
         outs, index = outs[:-1].data.cpu().numpy(), inp[1:].data.cpu().numpy()
@@ -496,6 +495,7 @@ class LM(BaseLM):
             self.num_layers = 1  # RHN layers don't add to output dims
 
         # train init
+        self.h_0 = None
         if self.train_init:
             init_size = self.num_layers, 1, self.hid_dim
             self.h_0 = nn.Parameter(torch.Tensor(*init_size).zero_())
@@ -627,7 +627,7 @@ class LM(BaseLM):
             outs, hidden, _ = self(source, hidden=hidden, conds=conds)
 
         # store hidden for next batch
-        self.hidden_state['hidden'] = u.repackage_hidden(hidden)
+        self.hidden_state['hidden'] = repackage_hidden(hidden)
 
         # compute loss and backward
         loss = F.nll_loss(

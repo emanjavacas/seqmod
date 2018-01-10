@@ -10,12 +10,6 @@ import torch
 import torch.nn.init as init
 from torch.autograd import Variable
 
-from seqmod.modules.rnn import (
-    StackedLSTM, StackedGRU,
-    StackedNormalizedGRU, NormalizedGRUCell, NormalizedGRU,
-    RHNCoupled, RHN)
-
-
 BOS = '<bos>'
 EOS = '<eos>'
 PAD = '<pad>'
@@ -137,10 +131,13 @@ def make_initializer(
         emb={'type': 'normal', 'args': {'mean': 0, 'std': 1}},
         default={'type': 'uniform', 'args': {'a': -0.05, 'b': 0.05}}):
 
+    from seqmod.modules.rnn import StackedGRU, StackedLSTM, StackedNormalizedGRU
+    from seqmod.modules.rnn import NormalizedGRUCell, NormalizedGRU
+
     rnns = (torch.nn.LSTM, torch.nn.GRU,
             torch.nn.LSTMCell, torch.nn.GRUCell,
-            StackedGRU, StackedLSTM, NormalizedGRU,
-            NormalizedGRUCell, StackedNormalizedGRU)
+            StackedGRU, StackedLSTM, StackedNormalizedGRU,
+            NormalizedGRU, NormalizedGRUCell)
 
     convs = (torch.nn.Conv1d, torch.nn.Conv2d)
 

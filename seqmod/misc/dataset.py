@@ -8,7 +8,6 @@ import torch
 import torch.utils.data
 
 from seqmod import utils as u
-from seqmod.utils import wrap_variables
 
 
 def bucketing(*args):
@@ -99,7 +98,7 @@ def get_splits(length, test, dev=None):
     return cumsum(int(length * i) for i in [train, dev, test] if i)
 
 
-def pad_pack_batch(examples, pad, return_lengths, align_right):
+def pad_batch(examples, pad, return_lengths, align_right):
     """
     Transform a list of examples into a proper torch.LongTensor batch
     """
@@ -317,7 +316,7 @@ class Dict(object):
             and list with sequence lengths in the batch
         """
         if self.sequential:
-            return pad_pack_batch(
+            return pad_batch(
                 batch_data, self.get_pad(), return_lengths, align_right)
         else:
             return torch.LongTensor(batch_data)
@@ -536,7 +535,7 @@ class PairedDataset(Dataset):
             out = dicts.pack(batch, return_lengths=self.return_lengths,
                              align_right=self.align_right)
 
-        return wrap_variables(out, volatile=self.evaluation, gpu=self.gpu)
+        return u.wrap_variables(out, volatile=self.evaluation, gpu=self.gpu)
 
     def __len__(self):
         return self.num_batches
@@ -747,8 +746,8 @@ class BlockDataset(Dataset):
         idx *= self.bptt
         seq_len = min(self.bptt, len(data) - 1 - idx)
         src_data, trg_data = data[idx:idx+seq_len], data[idx+1:idx+seq_len+1]
-        src = wrap_variables(src_data, self.evaluation, self.gpu)
-        trg = wrap_variables(trg_data, self.evaluation, self.gpu)
+        src = u.wrap_variables(src_data, self.evaluation, self.gpu)
+        trg = u.wrap_variables(trg_data, self.evaluation, self.gpu)
         return src, trg
 
     def __len__(self):
@@ -780,12 +779,12 @@ class BlockDataset(Dataset):
             if self.table is not None:
                 # source
                 src_pre, src_target, src_post = destruct(src, self.table_idx)
-                src_target = tuple(wrap_variables(t, self.evaluation, self.gpu)
+                src_target = tuple(u.wrap_variables(t, self.evaluation, self.gpu)
                                    for t in self.table.expand(src_target.data))
                 src = tuple(src_pre + src_target + src_post)
                 # target
                 trg_pre, trg_target, trg_post = destruct(trg, self.table_idx)
-                trg_target = tuple(wrap_variables(t, self.evaluation, self.gpu)
+                trg_target = tuple(u.wrap_variables(t, self.evaluation, self.gpu)
                                    for t in self.table.expand(trg_target.data))
                 trg = tuple(trg_pre + trg_target + trg_post)
         # single-input

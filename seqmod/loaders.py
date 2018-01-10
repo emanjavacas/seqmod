@@ -4,7 +4,8 @@ import re
 import json
 import time
 
-from seqmod.misc import Dict, PairedDataset, text_processor
+from seqmod.misc.preprocess import text_processor
+from seqmod.misc.dataset import Dict, PairedDataset
 from seqmod import utils as u
 
 
@@ -34,7 +35,7 @@ class EmbeddingLoader(object):
         if self.mode == 'fasttext':
             self.has_header = True
             if fname.endswith('.bin'):
-                self.use_model = True # for fasttext inference OOV
+                self.use_model = True  # for fasttext inference OOV
 
     def reader(self):
         with open(self.fname, 'r') as f:
@@ -50,7 +51,7 @@ class EmbeddingLoader(object):
     def load_from_model(self, words, verbose=False):
         import numpy as np
         try:
-            from fastText import load_model # defaul to official python bindings
+            from fastText import load_model  # default to official python bindings
         except ImportError:
             if verbose:
                 print("Couldn't load official fasttext python bindings... "

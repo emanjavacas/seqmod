@@ -1,7 +1,9 @@
-from seqmod.modules import *
-from seqmod.misc import *
-from seqmod.utils import *
-from seqmod.loaders import *
+
+from .misc import *
+from .hyper import *
+from .modules import *
+from . import utils
+from . import loaders
 
 # shortcut (still keep the old import for backward compatibility)
 from seqmod.misc.beam_search import Beam

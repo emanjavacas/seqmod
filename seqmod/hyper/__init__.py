@@ -1,2 +1,3 @@
-from seqmod.hyper.utils import *
-from seqmod.hyper.hyperband import Hyperband
+
+from .hyper_utils import *
+from .hyperband import Hyperband
