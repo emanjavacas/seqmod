@@ -4,6 +4,8 @@ import re
 import json
 import time
 
+import numpy as np
+
 from seqmod.misc.preprocess import text_processor
 from seqmod.misc.dataset import Dict, PairedDataset
 from seqmod import utils as u
@@ -11,17 +13,21 @@ from seqmod import utils as u
 
 class EmbeddingLoader(object):
 
-    MODES = ('glove', 'fasttext')
+    MODES = ('glove', 'fasttext', 'word2vec')
 
     def __init__(self, fname, mode=None):
         if not os.path.isfile(fname):
             raise ValueError("Couldn't find file {}".format(fname))
 
+        basename = os.path.basename(fname).lower()
+
         if mode is None:
-            if 'glove' in os.path.basename(fname).lower():
+            if 'glove' in basename:
                 mode = 'glove'
-            elif 'fasttext' in os.path.basename(fname).lower():
+            elif 'fasttext' in basename:
                 mode = 'fasttext'
+            elif 'word2vec' in basename or 'w2v' in basename:
+                mode = 'word2vec'
             else:
                 raise ValueError("Unrecognized embedding type")
 
@@ -31,11 +37,13 @@ class EmbeddingLoader(object):
         self.fname = fname
         self.mode = mode.lower()
 
-        self.has_header, self.use_model = False, False
+        self.has_header = False
         if self.mode == 'fasttext':
             self.has_header = True
-            if fname.endswith('.bin'):
-                self.use_model = True  # for fasttext inference OOV
+
+        self.use_model = False
+        if fname.endswith('.bin'):
+            self.use_model = True  # for fasttext or w2v
 
     def reader(self):
         with open(self.fname, 'r') as f:
@@ -48,15 +56,18 @@ class EmbeddingLoader(object):
 
                 yield w, vec
 
-    def load_from_model(self, words, verbose=False):
-        import numpy as np
+    def load_from_model_ft(self, words, verbose=False):
         try:
             from fastText import load_model  # default to official python bindings
         except ImportError:
             if verbose:
                 print("Couldn't load official fasttext python bindings... "
                       "Defaulting to fasttext package")
-            from fasttext import load_model
+            try:
+                from fasttext import load_model
+            except ImportError:
+                raise ValueError("No fasttext installation found. Please "
+                                 "install one of `fastText`, `fasttext`")
 
         start = time.time()
         model = load_model(self.fname)
@@ -65,6 +76,27 @@ class EmbeddingLoader(object):
 
         vectors = np.array([model.get_word_vector(word) for word in words])
         return vectors, words
+
+    def load_from_model_w2v(self, words, verbose=False):
+        try:
+            from gensim.models import KeyedVectors
+        except ImportError:
+            raise ValueError("No gensim installation found. Please install "
+                             "`gensim` to load pretrained w2v embeddings.")
+        start = time.time()
+        model = KeyedVectors.load_word2vec_format(self.fname, binary=True)
+        if verbose:
+            print("Loaded model in {:.3f} secs".format(time.time()-start))
+
+        vectors, outwords = [], []
+        for word in words:
+            try:
+                vectors.append(model[word])
+                outwords.append(word)
+            except KeyError:
+                pass
+
+        return np.array(vectors), outwords
 
     def load(self, words=None, verbose=False):
         vectors, outwords, start = [], [], time.time()
@@ -76,7 +108,10 @@ class EmbeddingLoader(object):
                 print("Loading {} embeddings".format(len(words)))
 
         if words is not None and self.mode == 'fasttext' and self.use_model:
-            vectors, outwords = self.load_from_model(words, verbose)
+            vectors, outwords = self.load_from_model_ft(words, verbose)
+
+        elif words is not None and self.mode == 'word2vec' and self.use_model:
+            vectors, outwords = self.load_from_model_w2v(words, verbose)
 
         else:
             for idx, (word, vec) in enumerate(self.reader()):
