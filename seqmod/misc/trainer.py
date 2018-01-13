@@ -133,6 +133,23 @@ class Trainer(object):
         """
         Add a trainer hook that gets executed after a number of checkpoints.
         The number of times a hook gets executed per epoch can be specified
+        in two different ways using either `hooks_per_epoch` or `num_checkpoints`.
+        In either case the basic unit used is a checkpoint, which is a check done
+        every given number of batches (the specific number is user-defined and
+        corresponds to the argument `checkpoint` passed to the `train` method`).
+
+        When using hooks_per_epoch, a heuristic is used to make sure that the
+        hook is evaluated exactly so many times during an epoch in evenly spaced
+        intervals (see the implementation of `run_hooks` for more info).
+
+        When using `num_checkpoints`, the hook is evaluated every so many
+        checkpoints.
+
+        Note that the number of times the hook is evaluated during an epoch is
+        only constant when using `hooks_per_epoch` (for `num_checkpoints` it will
+        vary depending on the size of the batch).
+
+        Only one of the two options can be specified.
 
         Parameters:
         -----------
