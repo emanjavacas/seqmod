@@ -217,7 +217,35 @@ class Embedding(nn.Embedding):
         self.init_embeddings(weight, words)
 
 
-class RNNEmbedding(nn.Module):
+def flatten_batch(inp, lengths, breakpoint_idx):
+    # flatten (char_len x batch x dim) into (max_word_len x num_words x dim)
+    flattened, word_lenghts = [], []
+    # decrease since we are going to use them for indexing
+    lengths = lengths.data - 1
+
+    for idx in range(inp.size(1)):
+        seq = inp[:, idx]
+        breakpoints = (seq.data == breakpoint_idx).nonzero()
+        # remove trailing dim added by nonzero()
+        breakpoints = breakpoints.squeeze(1).tolist()
+        breakpoints.append(lengths[idx])
+        # accumulate sequence lengths in terms of words
+        word_lenghts.append(len(breakpoints))
+        flattened.extend(split(seq, breakpoints))
+
+    return flattened, word_lenghts
+
+
+class ComplexEmbedding(nn.Module):
+    @property
+    def is_complex(self):
+        return True
+
+    def forward(self, inp, lengths):
+        raise NotImplementedError
+
+
+class RNNEmbedding(ComplexEmbedding):
     """
     Use a RNN at the character level to extract word-level features (aka. word
     embeddings).
@@ -226,7 +254,7 @@ class RNNEmbedding(nn.Module):
     # ignore this
     _SECRET = 'secret!'
 
-    def __init__(self, num_embeddings, embedding_size, breakpoint_idx=None,
+    def __init__(self, num_embeddings, embedding_dim, breakpoint_idx,
                  num_layers=1, cell='GRU', bias=True, bidirectional=False,
                  contextual=False, dropout=0.0, _secret=None):
 
@@ -235,7 +263,7 @@ class RNNEmbedding(nn.Module):
                              "with the `from_dict` classmethod")
 
         self.num_embeddings = num_embeddings
-        self.embedding_size = embedding_size
+        self.embedding_dim = embedding_dim
         self.num_layers = num_layers
         self.bidirectional = bidirectional
         self.num_dirs = int(bidirectional) + 1
@@ -244,58 +272,32 @@ class RNNEmbedding(nn.Module):
         self.contextual = contextual
         super(RNNEmbedding, self).__init__()
 
-        self.embedding = nn.Embedding(num_embeddings, embedding_size)
+        self.embedding = nn.Embedding(num_embeddings, embedding_dim)
 
         layers = []
-        hidden_size = embedding_size // self.num_dirs
-        input_size = embedding_size
+        hidden_size = embedding_dim // self.num_dirs
+        input_size = embedding_dim
         for layer in range(num_layers):
             layers.append(getattr(nn, cell)(
                 input_size, hidden_size, bidirectional=bidirectional,
                 bias=bias, dropout=dropout))
-            input_size = hidden_size
+            input_size = hidden_size * self.num_dirs
         self.layers = nn.ModuleList(layers)
 
     @classmethod
-    def from_dict(cls, d, emb_dim, breakpoint_idx=None, **kwargs):
-        return cls(len(d), emb_dim, _secret=RNNEmbedding._SECRET, **kwargs)
-
-    def _forward_with_context(self, inp, lengths):
-        # (char_len x batch x dim)
-        out = self._run_rnn(inp)
-        flattened, word_lenghts = [], []
-        for i in range(len(inp.size(1))):
-            breakpoints = (inp[:, i] == self.breakpoint_idx).nonzero()
-            breakpoints = torch.cat([breakpoints, lengths[i]])
-            word_lenghts.append(len(breakpoints))
-            flattened.append(out[:, i][breakpoints])
-
-        # (max_seq_len x batch x emb_dim)
-        return pad_sequence(flattened), word_lenghts
-
-    def _forward(self, inp, lengths):
-        # flatten (char_len x batch x dim) into (max_word_len x num_words x dim)
-        flattened, word_lenghts = [], []
-        for idx, seq in enumerate(inp.chunk(len(inp), 1)):
-            breakpoints = (seq.data == self.breakpoint_idx).nonzero().tolist()
-            breakpoints.append(lengths[idx].data[0])
-            # accumulate sequence lengths in words
-            word_lenghts.append(len(breakpoints))
-            flattened.extend(split(seq, breakpoints))
-
-        # (max_word_len x num_words x emb_dim)
-        flattened, char_lenghts = pad_sequence(flattened)
-        # take last rnn activation as embedding: (num_words x emb_dim)
-        *_, out = self._run_rnn(flattened, char_lenghts)
-        # reshape to original sequence: (max_seq_len x batch x emb_dim)
-        breakpoints = list(accumulate(word_lenghts))
-        out = pad_sequence(split(out, breakpoints))
-
-        return out, word_lenghts
+    def from_dict(cls, d, emb_dim, breakpoint_token=' ', **kwargs):
+        try:
+            breakpoint_idx = d.s2i[breakpoint_token]
+        except KeyError:
+            raise ValueError("Breakpoint_token `{}` not in vocabulary"
+                             .format(breakpoint_token))
+        return cls(len(d), emb_dim, breakpoint_idx=breakpoint_idx,
+                   _secret=RNNEmbedding._SECRET, **kwargs)
 
     def _run_rnn(self, inp, lengths):
         hidden = init_hidden_for(
-            inp, self.num_dirs, self.num_layers, self.hid_dim, self.cell,
+            inp, self.num_dirs, self.num_layers,
+            self.embedding_dim // self.num_dirs, self.cell,
             training=self.training)
 
         rnn_inp = inp
@@ -308,6 +310,41 @@ class RNNEmbedding(nn.Module):
         rnn_inp = rnn_inp[:, unsort]
 
         return rnn_inp
+
+    def _forward_with_context(self, inp, lengths):
+        # (char_len x batch x dim)
+        out = self._run_rnn(self.embedding(inp), lengths.data)
+        embs = []
+
+        # iterate over batch
+        for i in range(inp.size(1)):
+            breakpoints = (inp[:, i] == self.breakpoint_idx).nonzero()
+            breakpoints = torch.cat([breakpoints.squeeze(1), lengths[i]-1])
+            embs.append(out[:, i][breakpoints])
+
+        embs, lengths = pad_sequence(embs)
+
+        return embs.transpose(0, 1), lengths
+
+    def _forward(self, inp, lengths):
+        # flatten batch to sequence-independent words
+        flattened, word_lenghts = flatten_batch(inp, lengths, self.breakpoint_idx)
+        flattened, char_lenghts = pad_sequence(flattened)
+        flattened = flattened.transpose(0, 1)
+
+        # embed characters (max_word_len x num_words x emb_dim)
+        flattened = self.embedding(flattened)
+
+        # take last rnn activation as embedding: (num_words x emb_dim)
+        char_lenghts = torch.LongTensor(char_lenghts)
+        if flattened.is_cuda:
+            char_lenghts = char_lenghts.cuda()
+        *_, out = self._run_rnn(flattened, char_lenghts)
+
+        # reshape to original sequence: (max_seq_len x batch x emb_dim)
+        embs, _ = pad_sequence(split(out, list(accumulate(word_lenghts))))
+
+        return embs.transpose(0, 1), word_lenghts
 
     def forward(self, inp, lengths):
         """
@@ -338,23 +375,23 @@ class RNNEmbedding(nn.Module):
         #       - pad them into a sequence with torch.nn.utils.rnn.pad_sequence
 
 
-class CNNEmbedding(nn.Module):
+class CNNEmbedding(ComplexEmbedding):
     """
     Use multiple CNN filters at the character level to extract word-level
     features (aka. word embeddings).
 
-    In contrast to the traditional nn.Embedding, the input parameter `embedding_size`
+    In contrast to the traditional nn.Embedding, the input parameter `embedding_dim`
     is used for the character-level embeddings over which the convolutions
     are applied. In contrast to RNNEmbedding, where the output embeddings do have
-    the expected dimensionality, in CNNEmbedding the output embedding_size
+    the expected dimensionality, in CNNEmbedding the output embedding_dim
     corresponds to the sum of the output_channels. For convenience, it can be
-    retrieved accessing the property self.embedding_size.
+    retrieved accessing the property self.embedding_dim.
     """
 
     # ignore this
     _SECRET = 'secret!'
 
-    def __init__(self, num_embeddings, embedding_size, breakpoint_idx=None,
+    def __init__(self, num_embeddings, embedding_dim, breakpoint_idx,
                  kernel_sizes=range(1, 7), output_channels=lambda x: x * 25,
                  _secret=None):
 
@@ -363,7 +400,7 @@ class CNNEmbedding(nn.Module):
                              "with the `from_dict` classmethod")
 
         self.num_embeddings = num_embeddings
-        self._embedding_size = embedding_size
+        self._embedding_dim = embedding_dim
         self.kernel_sizes = kernel_sizes
         self.max_kernel = max(kernel_sizes)
         if callable(output_channels):
@@ -377,76 +414,87 @@ class CNNEmbedding(nn.Module):
             self.output_channels = output_channels
 
         self.breakpoint_idx = breakpoint_idx
-        super(RNNEmbedding, self).__init__()
+        super(CNNEmbedding, self).__init__()
 
-        self.embedding = nn.Embedding(num_embeddings, embedding_size)
+        self.embedding = nn.Embedding(num_embeddings, embedding_dim)
 
         convs = []
         for W, C_o in zip(self.kernel_sizes, self.output_channels):
-            padding = (0, get_padding(W, mode="wide"))
-            convs.append(nn.Conv2d(1, C_o, (self._embedding_size, W), padding))
+            convs.append(
+                nn.Conv2d(1, C_o, (self._embedding_dim, W),
+                          padding=(0, get_padding(W, mode="wide"))))
         self.convs = nn.ModuleList(convs)
 
     @property
-    def embedding_size(self):
+    def embedding_dim(self):
         return sum(self.output_channels)
 
     @classmethod
-    def from_dict(cls, d, emb_dim, breakpoint_idx=None, **kwargs):
-        return cls(len(d), emb_dim, _secret=CNNEmbedding._SECRET, **kwargs)
+    def from_dict(cls, d, emb_dim, breakpoint_token=' ', **kwargs):
+        try:
+            breakpoint_idx = d.s2i[breakpoint_token]
+        except KeyError:
+            raise ValueError("Breakpoint_token `{}` not in vocabulary"
+                             .format(breakpoint_token))
+        return cls(len(d), emb_dim, breakpoint_idx=breakpoint_idx,
+                   _secret=CNNEmbedding._SECRET, **kwargs)
 
     def forward(self, inp, lengths):
-        # flatten (char_len x batch x dim) into (max_word_len x num_words x dim)
-        flattened, word_lenghts = [], []
-        for idx, seq in enumerate(inp.chunk(len(inp), 1)):
-            breakpoints = (seq.data == self.breakpoint_idx).nonzero().tolist()
-            breakpoints.append(lengths[idx].data[0])
-            # accumulate sequence lengths in words
-            word_lenghts.append(len(breakpoints))
-            flattened.extend(split(seq, breakpoints))
+        flattened, word_lenghts = flatten_batch(inp, lengths, self.breakpoint_idx)
 
-        # (max_word_len x num_words x emb_dim)
+        # (num_words x max_word_len)
         flattened, _ = pad_sequence(flattened)
-        if len(flattened) < self.max_kernel:
-            flattened = F.pad(flattened, (0, self.max_kernel - len(flattened)))
+        # (num_words x max_word_len x emb_dim)
+        flattened = self.embedding(flattened)
 
-        # -> (num_words x 1 x emb_dim x max_word_len)
-        flattened = flattened.transpose(0, 1).transpose(1, 2).unsqueeze(1)
+        if flattened.size(1) < self.max_kernel:
+            flattened = F.pad(
+                # pad second dim to the right if necessary
+                flattened, (0, 0, 0, self.max_kernel - flattened.size(1)))
 
-        outs = []
+        # (num_words x 1 x emb_dim x max_word_len)
+        flattened = flattened.transpose(1, 2).unsqueeze(1)
+
+        embs = []
         for conv in self.convs:
-            # (num_words x C_o x 1 x max_word_len)
-            out = F.tanh(conv(flattened))
-            # (num_words x C_o x 1 x 1)
-            out = F.max_pool2d(out, out.size(3))
-            outs.append(out.squeeze(3).squeeze(2))
+            # (num_words x C_o x max_word_len)
+            emb = F.tanh(conv(flattened)).squeeze(2)
+            # (num_words x C_o x 1)
+            emb = F.max_pool1d(emb, emb.size(2)).squeeze(2)
+            embs.append(emb)
 
-        # (num_words x out_emb_dim)
-        return torch.cat(outs, 1)
+        embs = torch.cat(embs, 1)
+        # reshape to original sequence: (max_seq_len x batch x emb_dim)
+        embs, lengths = pad_sequence(split(embs, list(accumulate(word_lenghts))))
+
+        return embs.transpose(0, 1), lengths
 
 
 if __name__ == '__main__':
-    from seqmod.misc.dataset import Dict
-    import inspect
-    import collections
+    from seqmod.misc.dataset import Dict, pad_batch
+    import lorem
 
-    text = []
-    for _, func in inspect.getmembers(collections):
-        doc = func.__doc__
-        if doc is not None:
-            text.extend([l.split() for l in doc.split('\n')])
+    text = [lorem.sentence() for _ in range(100)]
 
-    d = Dict().fit(text)
+    d = Dict(pad_token='<pad>').fit(text)
     emb = Embedding.from_dict(d, 100, p=0.2)
-    filepath = 'test/data/glove.test1000.100d.txt'
-    emb.init_embeddings_from_file(filepath, 'glove')
+    # filepath = 'test/data/glove.test1000.100d.txt'
+    # emb.init_embeddings_from_file(filepath, 'glove')
 
-    weights, words = EmbeddingLoader(filepath, 'glove').load()
-    weights = torch.Tensor(weights)
-    by_word = dict(zip(words, weights))
+    # weights, words = EmbeddingLoader(filepath, 'glove').load()
+    # weights = torch.Tensor(weights)
+    # by_word = dict(zip(words, weights))
 
-    for weight, word in zip(emb.weight.data, emb.d.vocab):
-        if word in by_word:
-            assert torch.equal(weight, by_word[word])
+    # for weight, word in zip(emb.weight.data, emb.d.vocab):
+    #     if word in by_word:
+    #         assert torch.equal(weight, by_word[word])
 
-    inp = Variable(torch.LongTensor(10).random_(emb.num_embeddings))
+    # test RNNEmbedding
+    inp, lengths = pad_batch(list(d.transform(text)), d.get_pad(), True, False)
+    inp, lengths = Variable(torch.LongTensor(inp)), Variable(torch.LongTensor(lengths))
+    print("max_word_len", max([len(w) for s in text for w in s.split()]))
+    print("num_words", sum(len(s.split()) for s in text))
+
+    emb = RNNEmbedding.from_dict(d, 24, bidirectional=True)
+    max_word_len = max([len(s.split()) for s in text])
+    out = emb(inp, lengths)
