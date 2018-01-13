@@ -472,29 +472,107 @@ class CNNEmbedding(ComplexEmbedding):
 
 if __name__ == '__main__':
     from seqmod.misc.dataset import Dict, pad_batch
-    import lorem
+    from seqmod.utils import PAD
+    from string import ascii_letters
+    import random
+    import timeit
 
-    text = [lorem.sentence() for _ in range(100)]
+    def generate_word(n):
+        maxchars = len(ascii_letters) - 1
+        return ''.join(ascii_letters[random.randint(0, maxchars)]
+                       for _ in range(n))
 
-    d = Dict(pad_token='<pad>').fit(text)
-    emb = Embedding.from_dict(d, 100, p=0.2)
-    # filepath = 'test/data/glove.test1000.100d.txt'
-    # emb.init_embeddings_from_file(filepath, 'glove')
+    def generate_sent(maxlen=10):
+        return ' '.join(generate_word(random.randint(1, 15))
+                        for _ in range(random.randint(5, maxlen)))
 
-    # weights, words = EmbeddingLoader(filepath, 'glove').load()
-    # weights = torch.Tensor(weights)
-    # by_word = dict(zip(words, weights))
+    def create_batches(batch_size, corpus, d):
+        corpus = list(d.transform(corpus))
+        inps, lengths = [], []
+        num_batches = len(corpus) // batch_size
+        prev = 0
+        for b in range(num_batches):
+            to = min((b + 1) * batch_size, len(corpus) - 1)
+            inp, length = pad_batch(corpus[prev: to], d.get_pad(), True, False)
+            inps.append(Variable(torch.LongTensor(inp)))
+            lengths.append(Variable(torch.LongTensor(length)))
+            prev = to
 
-    # for weight, word in zip(emb.weight.data, emb.d.vocab):
-    #     if word in by_word:
-    #         assert torch.equal(weight, by_word[word])
+        return inps, lengths
 
-    # test RNNEmbedding
-    inp, lengths = pad_batch(list(d.transform(text)), d.get_pad(), True, False)
-    inp, lengths = Variable(torch.LongTensor(inp)), Variable(torch.LongTensor(lengths))
-    print("max_word_len", max([len(w) for s in text for w in s.split()]))
-    print("num_words", sum(len(s.split()) for s in text))
+    char_text = [generate_sent() for _ in range(100)]
+    word_text = [s.split() for s in char_text]
+    char_d = Dict(pad_token=PAD).fit(char_text)
+    word_d = Dict(pad_token=PAD).fit(word_text)
 
-    emb = RNNEmbedding.from_dict(d, 24, bidirectional=True)
-    max_word_len = max([len(s.split()) for s in text])
-    out = emb(inp, lengths)
+    char_inps, char_lengths = create_batches(10, char_text, char_d)
+    word_inps, word_lengths = create_batches(10, word_text, word_d)
+    n_char_inps = sum(sum(l.data.tolist()) for l in char_lengths)
+    n_word_inps = sum(sum(l.data.tolist()) for l in word_lengths)
+
+    def make_word_embedding_runner(embedding):
+        def runner():
+            for word_inp in word_inps:
+                embedding(word_inp)
+
+        return runner
+
+    def make_char_embedding_runner(embedding):
+        def runner():
+            for char_inp, char_length in zip(char_inps, char_lengths):
+                embedding(char_inp, char_length)
+
+        return runner
+
+    embedding = Embedding.from_dict(word_d, 100, p=0.2)
+    rnn_embedding_context = RNNEmbedding.from_dict(char_d, 100, contextual=True)
+    rnn_embedding = RNNEmbedding.from_dict(char_d, 100)
+    cnn_embedding = CNNEmbedding.from_dict(char_d, 30)
+
+    emb_types = {
+        'embedding': embedding,
+        'rnn_embedding_context': rnn_embedding_context,
+        'rnn_embedding': rnn_embedding,
+        'cnn_embedding': cnn_embedding
+    }
+
+    runners = {
+        'embedding': make_word_embedding_runner(embedding),
+        'rnn_embedding': make_char_embedding_runner(rnn_embedding),
+        'rnn_embedding_context': make_char_embedding_runner(rnn_embedding_context),
+        'cnn_embedding': make_char_embedding_runner(cnn_embedding)
+    }
+
+    for emb_type in emb_types:
+        runner = runners[emb_type]
+        print("Benchmarking {}".format(emb_type))
+        print(" * n parameters: {}".format(
+            sum(p.nelement() for p in emb_types[emb_type].parameters())))
+        total_inps = n_word_inps if emb_type == 'embedding' else n_char_inps
+        print(" * n inputs: {}".format(total_inps))
+        print(min(timeit.repeat(runner, number=10, repeat=10)))
+        print()
+
+    # Benchmarking embedding
+    #  * n parameters: 73500
+    #  * n inputs: 745
+    # 0.006557075001182966
+    #
+
+    # Benchmarking rnn_embedding_context
+    #  * n parameters: 66100
+    #  * n inputs: 6681
+    # 3.367520097999659
+    #
+
+    # Benchmarking rnn_embedding
+    #  * n parameters: 66100
+    #  * n inputs: 6681
+    # 3.2836688839997805
+    #
+
+    # Benchmarking cnn_embedding
+    #  * n parameters: 70425
+    #  * n inputs: 6681
+    # 1.945244102000288
+    #
