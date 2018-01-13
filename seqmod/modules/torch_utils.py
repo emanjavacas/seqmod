@@ -1,5 +1,4 @@
 
-from operator import itemgetter
 from collections import OrderedDict
 
 import torch
@@ -53,6 +52,13 @@ def make_length_mask(lengths):
                 .repeat(batch, 1) \
                 .lt(lengths.data.unsqueeze(1))
     return Variable(mask, volatile=lengths.volatile)
+
+
+def make_dropout_mask(inp, p, size):
+    """
+    Make dropout mask variable
+    """
+    return Variable(inp.data.new(*size).bernoulli_(1 - p).div_(1 - p))
 
 
 def split(inp, breakpoints, include_last=False):
