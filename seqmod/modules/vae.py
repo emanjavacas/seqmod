@@ -53,8 +53,8 @@ class VAERNNEncoder(RNNEncoder):
         self.Q_mu = nn.Linear(enc_dim, self.z_dim)
         self.Q_logvar = nn.Linear(enc_dim, self.z_dim)
 
-    def forward(self, inp, hidden=None, **kwargs):
-        context, _ = super(VAERNNEncoder, self).forward(inp, hidden, **kwargs)
+    def forward(self, inp, **kwargs):
+        context, _ = super(VAERNNEncoder, self).forward(inp, **kwargs)
         mu, logvar = self.Q_mu(context), self.Q_logvar(context)
         return (mu, logvar), None
 
@@ -90,7 +90,7 @@ class VAERNNDecoder(RNNDecoder):
                 self.rnn.in_dim + z_dim,  # append z dim to input
                 self.hid_dim,
                 self.cell,
-                self.dropout)
+                dropout=self.dropout)
 
     def init_hidden_for(self, z):
         batch_size = z.size(0)
@@ -133,11 +133,8 @@ class VAERNNDecoder(RNNDecoder):
         """
         Parameters:
         -----------
-        prev: (batch x emb_dim). Conditioning item at current step.
-        hidden: (batch x hid_dim). Hidden state at current step.
-        z: None or (batch x z_dim). Latent code for the input sequence.
-            If it is provided, it will be used to condition the generation
-            of each item in the sequence.
+        inp: (batch). Current input batch.
+        state: VAEDecoderState
         """
         inp = self.embeddings(inp)
 
@@ -147,7 +144,8 @@ class VAERNNDecoder(RNNDecoder):
         if self.conditional:
             inp = torch.cat([inp, *state.conds], 1)
 
-        out, hidden = self.rnn(inp, state.hidden, dropout_mask=state.dropout_mask)
+        out, hidden = self.rnn(
+            inp, state.hidden, dropout_mask=state.dropout_mask)
 
         # update state
         state.hidden = hidden
@@ -194,6 +192,7 @@ def make_vae_encoder_decoder(
         bidi=True,
         encoder_summary='inner-attention',
         dropout=0.0,
+        variational=False,
         word_dropout=0.0,
         add_z=True,
         deepout_layers=0,
@@ -220,7 +219,9 @@ def make_vae_encoder_decoder(
 
     decoder = VAERNNDecoder(z_dim, trg_embeddings, hid_dim, num_layers,
                             cell, encoding_size, add_z=add_z, dropout=dropout,
+                            variational=variational,
                             deepout_layers=deepout_layers, deepout_act=deepout_act,
+                            input_feed=False, context_feed=False,
                             tie_weights=tie_weights, train_init=train_init,
                             add_init_jitter=add_init_jitter, cond_dims=cond_dims,
                             cond_vocabs=cond_vocabs)

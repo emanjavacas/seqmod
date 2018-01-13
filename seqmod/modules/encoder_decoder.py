@@ -325,7 +325,8 @@ def make_rnn_encoder_decoder(
     encoder_dims, encoder_size = encoder.encoding_size
 
     decoder = RNNDecoder(trg_embeddings, hid_dim, num_layers, cell, encoder_size,
-                         dropout=dropout, input_feed=input_feed,
+                         dropout=dropout, variational=variational, input_feed=input_feed,
+                         context_feed=att_type is None or att_type.lower() == 'none',
                          att_type=att_type, deepout_layers=deepout_layers,
                          deepout_act=deepout_act,
                          tie_weights=tie_weights, reuse_hidden=reuse_hidden,
@@ -355,7 +356,9 @@ def make_grl_rnn_encoder_decoder(
         bidi=True,
         encoder_summary='full',
         dropout=0.0,
+        variational=False,
         input_feed=True,
+        context_feed=True,
         word_dropout=0.0,
         deepout_layers=0,
         deepout_act='ReLU',
@@ -385,7 +388,8 @@ def make_grl_rnn_encoder_decoder(
     _, encoding_size = encoder.encoding_size
 
     decoder = RNNDecoder(trg_embeddings, hid_dim, num_layers, cell, encoding_size,
-                         dropout=dropout, input_feed=input_feed,
+                         dropout=dropout, variational=variational,
+                         input_feed=input_feed, context_feed=context_feed,
                          deepout_layers=deepout_layers, deepout_act=deepout_act,
                          tie_weights=tie_weights, reuse_hidden=False,
                          train_init=train_init, add_init_jitter=add_init_jitter,

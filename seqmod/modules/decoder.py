@@ -94,9 +94,13 @@ class RNNDecoder(BaseDecoder):
     - input_feed: bool, whether to concatenate last attentional vector
         to current rnn input. (See Luong et al. 2015). Mostly useful
         for attentional models.
+    - context_feed: bool, whether to concatenate the encoding to the
+        rnn input to facilitate gradient flow from the encoder to each
+        decoder step. (Useful for non-attentive decoders.)
     """
     def __init__(self, embeddings, hid_dim, num_layers, cell, encoding_size,
                  dropout=0.0, variational=False, input_feed=False,
+                 context_feed=False,
                  att_type=None, deepout_layers=0, deepout_act='ReLU',
                  tie_weights=False, train_init=False, add_init_jitter=False,
                  reuse_hidden=True, cond_dims=None, cond_vocabs=None):
@@ -113,6 +117,7 @@ class RNNDecoder(BaseDecoder):
         self.dropout = dropout
         self.variational = variational
         self.input_feed = input_feed
+        self.context_feed = context_feed
         self.att_type = att_type
         self.train_init = train_init
         self.add_init_jitter = add_init_jitter
@@ -125,7 +130,7 @@ class RNNDecoder(BaseDecoder):
         in_dim = self.embeddings.embedding_dim
         if input_feed:
             in_dim += hid_dim
-        if not self.has_attention:
+        if context_feed:
             in_dim += encoding_size
 
         # conditions
@@ -138,7 +143,8 @@ class RNNDecoder(BaseDecoder):
                 in_dim += cond_dim
 
         # rnn layer
-        self.rnn = self.build_rnn(num_layers, in_dim, hid_dim, cell, dropout)
+        self.rnn = self.build_rnn(
+            num_layers, in_dim, hid_dim, cell, dropout=dropout)
 
         # train init
         self.h_0 = None
@@ -155,9 +161,9 @@ class RNNDecoder(BaseDecoder):
         self.proj = self.build_output(
             hid_dim, deepout_layers, deepout_act, tie_weights, dropout)
 
-    def build_rnn(self, num_layers, in_dim, hid_dim, cell, dropout):
+    def build_rnn(self, num_layers, in_dim, hid_dim, cell, **kwargs):
         stacked = StackedLSTM if cell == 'LSTM' else StackedGRU
-        return stacked(num_layers, in_dim, hid_dim, dropout=dropout)
+        return stacked(num_layers, in_dim, hid_dim, **kwargs)
 
     @property
     def conditional(self):
@@ -266,8 +272,8 @@ class RNNDecoder(BaseDecoder):
         if self.input_feed:
             inp = torch.cat([inp, state.input_feed], 1)
 
-        # condition on encoder summary for non attentional decoders
-        if not self.has_attention:
+        # condition on encoder summary for non-attentive decoders
+        if self.context_feed:
             inp = torch.cat([inp, state.context], 1)
 
         if self.conditional:
