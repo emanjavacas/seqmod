@@ -1,4 +1,5 @@
 
+from operator import itemgetter
 from collections import OrderedDict
 
 import torch
@@ -72,29 +73,31 @@ def split(inp, breakpoints, include_last=False):
     output, prev = [], 0
     for breakpoint in breakpoints:
         output.append(inp[prev: breakpoint])
+        prev = breakpoint
 
     return output
 
 
 def pad_sequence(seqs):
     """
-    Apply padding to a sequence of 2D variables (seq_len x dim).
-    The seq_len dim is padded up to the longest sequence in the input.
+    Apply padding to a sequence of 1D or 2D variables (seq_len [x dim]).
+    The seq_len dim is padded up to the longest sequence in the input
+    according to the first dimension.
 
-    Example:
-
-    inp = torch.Tensor(10, 30)
-    breakpoints = [2, 5, 8]
-    split_pad(inp, breakpoints).size()
-    >>> torch.Size([3, 4, 30])
+    Returns: (num_words x max_seq_len x dim)
     """
     lengths = [len(s) for s in seqs]
     max_len = max(lengths)
 
-    seqs = [F.pad(seqs[i].t(), (0, max_len - lengths[i])).t()
-            for i in range(len(seqs))]
+    padded = []
+    for seq, length in zip(seqs, lengths):
+        if seq.dim() == 1:
+            padded_seq = F.pad(seq, (0, max_len - length))
+        else:
+            padded_seq = F.pad(seq.t(), (0, max_len - length)).t()
+        padded.append(padded_seq)
 
-    return torch.stack(seqs), lengths
+    return torch.stack(padded), lengths
 
 
 def repackage_bidi(h_or_c):
