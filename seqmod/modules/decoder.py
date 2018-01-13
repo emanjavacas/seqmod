@@ -8,7 +8,7 @@ from torch.autograd import Variable
 from seqmod.modules.rnn import StackedGRU, StackedLSTM
 from seqmod.modules.ff import Highway
 from seqmod.modules import attention
-from seqmod.modules.torch_utils import make_length_mask, swap
+from seqmod.modules.torch_utils import make_length_mask, make_dropout_mask, swap
 
 
 class BaseDecoder(nn.Module):
@@ -96,10 +96,10 @@ class RNNDecoder(BaseDecoder):
         for attentional models.
     """
     def __init__(self, embeddings, hid_dim, num_layers, cell, encoding_size,
-                 dropout=0.0, input_feed=False, att_type=None,
-                 deepout_layers=0, deepout_act='ReLU', tie_weights=False,
-                 train_init=False, add_init_jitter=False, reuse_hidden=True,
-                 cond_dims=None, cond_vocabs=None):
+                 dropout=0.0, variational=False, input_feed=False,
+                 att_type=None, deepout_layers=0, deepout_act='ReLU',
+                 tie_weights=False, train_init=False, add_init_jitter=False,
+                 reuse_hidden=True, cond_dims=None, cond_vocabs=None):
 
         if train_init and reuse_hidden:
             logging.warn("Decoder `train_init` is True therefore "
@@ -111,6 +111,7 @@ class RNNDecoder(BaseDecoder):
         self.num_layers = num_layers
         self.cell = cell
         self.dropout = dropout
+        self.variational = variational
         self.input_feed = input_feed
         self.att_type = att_type
         self.train_init = train_init
@@ -242,8 +243,15 @@ class RNNDecoder(BaseDecoder):
             conds = torch.cat(
                 [emb(c) for c, emb in zip(conds, self.cond_embs)], 1)
 
-        return RNNDecoderState(hidden, context, mask=mask, enc_att=enc_att,
-                               input_feed=input_feed, conds=conds)
+        # sample variational mask if needed
+        dropout_mask = None
+        if hasattr(self, 'variational') and self.variational:
+            size = (lengths.size(0), self.hid_dim)
+            dropout_mask = make_dropout_mask(context, self.dropout, size)
+
+        return RNNDecoderState(
+            hidden, context, mask=mask, enc_att=enc_att,
+            input_feed=input_feed, conds=conds, dropout_mask=dropout_mask)
 
     def forward(self, inp, state):
         """
@@ -265,7 +273,7 @@ class RNNDecoder(BaseDecoder):
         if self.conditional:
             inp = torch.cat([inp, *state.conds], 1)
 
-        out, hidden = self.rnn(inp, state.hidden)
+        out, hidden = self.rnn(inp, state.hidden, dropout_mask=state.dropout_mask)
 
         weight = None
         if self.has_attention:
@@ -297,14 +305,15 @@ class RNNDecoderState(State):
     """
     DecoderState implementation for RNN-based decoders.
     """
-    def __init__(self, hidden, context,
-                 input_feed=None, enc_att=None, mask=None, conds=None):
+    def __init__(self, hidden, context, input_feed=None, enc_att=None,
+                 mask=None, conds=None, dropout_mask=None):
         self.hidden = hidden
         self.context = context
         self.input_feed = input_feed
         self.enc_att = enc_att
         self.mask = mask
         self.conds = conds
+        self.dropout_mask = dropout_mask
 
     def expand_along_beam(self, width):
         """

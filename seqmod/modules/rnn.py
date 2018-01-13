@@ -15,10 +15,7 @@ class BaseStackedRNN(nn.Module):
         super(BaseStackedRNN, self).__init__()
         self.in_dim = in_dim
         self.hid_dim = hid_dim
-        self.has_dropout = False
-        if dropout:
-            self.has_dropout = True
-            self.dropout = nn.Dropout(dropout)
+        self.dropout = dropout
         self.num_layers = num_layers
         self.layers = nn.ModuleList()
 
@@ -28,7 +25,7 @@ class BaseStackedRNN(nn.Module):
             self.layers.append(cell(in_dim, hid_dim, **kwargs))
             in_dim = hid_dim
 
-    def forward(self, inp, hidden):
+    def forward(self, inp, hidden, dropout_mask=None):
         """
         Parameters:
         -----------
@@ -38,6 +35,8 @@ class BaseStackedRNN(nn.Module):
         hidden: tuple (h_c, c_0), output of previous step or init hidden at 0,
             h_c: (num_layers x batch x hid_dim)
             n_c: (num_layers x batch x hid_dim)
+        dropout_mask: optional mask for variational dropout
+            FloatTensor()
 
         Returns: output, (h_n, c_n)
         --------
@@ -52,15 +51,18 @@ class StackedLSTM(BaseStackedRNN):
     def __init__(self, *args, **kwargs):
         super(StackedLSTM, self).__init__('LSTMCell', *args, **kwargs)
 
-    def forward(self, inp, hidden):
+    def forward(self, inp, hidden, dropout_mask=None):
         h_0, c_0 = hidden
         h_1, c_1 = [], []
         for i, layer in enumerate(self.layers):
             h_1_i, c_1_i = layer(inp, (h_0[i], c_0[i]))
             inp = h_1_i
             # dropout on all but last layer
-            if i + 1 != self.num_layers and self.has_dropout:
-                inp = self.dropout(inp)
+            if i + 1 != self.num_layers:
+                if dropout_mask is not None:
+                    inp = inp * dropout_mask
+                else:
+                    inp = F.dropout(inp, p=self.dropout, training=self.training)
             h_1 += [h_1_i]
             c_1 += [c_1_i]
 
@@ -71,14 +73,17 @@ class StackedGRU(BaseStackedRNN):
     def __init__(self, *args, **kwargs):
         super(StackedGRU, self).__init__('GRUCell', *args, **kwargs)
 
-    def forward(self, inp, hidden):
+    def forward(self, inp, hidden, dropout_mask=None):
         h_1 = []
         for i, layer in enumerate(self.layers):
             h_1_i = layer(inp, hidden[i])
             inp = h_1_i
             # dropout on all but last layer
-            if i + 1 != self.num_layers and self.has_dropout:
-                inp = self.dropout(inp)
+            if i + 1 != self.num_layers:
+                if dropout_mask is not None:
+                    inp = inp * dropout_mask
+                else:
+                    inp = F.dropout(inp, p=self.dropout, training=self.training)
             h_1 += [h_1_i]
 
         return inp, torch.stack(h_1)
@@ -89,14 +94,17 @@ class StackedNormalizedGRU(BaseStackedRNN):
         super(StackedNormalizedGRU, self).__init__(
             NormalizedGRUCell, *args, **kwargs)
 
-    def forward(self, inp, hidden):
+    def forward(self, inp, hidden, dropout_mask=None):
         h_1 = []
         for i, layer in enumerate(self.layers):
             h_1_i = layer(inp, hidden[i])
             inp = h_1_i
             # dropout on all but last layer
-            if i + 1 != self.num_layers and self.has_dropout:
-                inp = self.dropout(inp)
+            if i + 1 != self.num_layers:
+                if dropout_mask is not None:
+                    inp = inp * dropout_mask
+                else:
+                    inp = F.dropout(inp, p=self.dropout, training=self.training)
             h_1 += [h_1_i]
 
         return inp, torch.stack(h_1)
@@ -210,16 +218,6 @@ def _custom_rhn_init(module):
         if 'T' in m_name:      # initialize transform gates bias to -3
             if hasattr(m, 'bias') and m.bias is not None:
                 nn.init.constant(m.bias, -3)
-
-
-def make_dropout_mask(inp, p, size):
-    """
-    Make dropout mask variable
-    """
-    keep_p = 1 - p
-    mask = inp.data.new(*size)
-    mask.bernoulli_(keep_p).div_(keep_p)
-    return Variable(mask)
 
 
 class _RHN(nn.Module):

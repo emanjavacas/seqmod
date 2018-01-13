@@ -270,6 +270,7 @@ def make_rnn_encoder_decoder(
         encoder_summary='full',
         att_type=None,
         dropout=0.0,
+        variational=False,
         input_feed=True,
         word_dropout=0.0,
         deepout_layers=0,
@@ -292,7 +293,8 @@ def make_rnn_encoder_decoder(
     - bidi: bool, Whether to use bidirectional encoder.
     - encoder_summary: How to compute summary vector for the decoder.
     - att_type: string, Attention mechanism to use.
-    - dropout: float
+    - dropout: float,
+    - variational: bool, whether to do variational dropout on the decoder
     - input_feed: bool,
         Whether to feed back the previous context as input to the decoder
         for the next step together with the last predicted word embedding.

@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 from torch.autograd import Variable
 
-from seqmod.modules.torch_utils import swap
+from seqmod.modules.torch_utils import swap, make_dropout_mask
 from seqmod.modules.ff import Highway
 from seqmod.misc import inflection_sigmoid, linear
 from seqmod.modules.encoder_decoder import RNNEncoder
@@ -122,7 +122,12 @@ class VAERNNDecoder(RNNDecoder):
             conds = torch.cat(
                 [emb(c) for c, emb in zip(conds, self.cond_embs)], 1)
 
-        return VAEDecoderState(z, hidden, conds=conds)
+        dropout_mask = None
+        if self.variational:
+            size = (z.size(0), self.hid_dim)
+            dropout_mask = make_dropout_mask(z, self.dropout, size)
+
+        return VAEDecoderState(z, hidden, conds=conds, dropout_mask=dropout_mask)
 
     def forward(self, inp, state):
         """
@@ -142,7 +147,7 @@ class VAERNNDecoder(RNNDecoder):
         if self.conditional:
             inp = torch.cat([inp, *state.conds], 1)
 
-        out, hidden = self.rnn(inp, state.hidden)
+        out, hidden = self.rnn(inp, state.hidden, dropout_mask=state.dropout_mask)
 
         # update state
         state.hidden = hidden
@@ -151,10 +156,11 @@ class VAERNNDecoder(RNNDecoder):
 
 
 class VAEDecoderState(State):
-    def __init__(self, z, hidden, conds=None):
+    def __init__(self, z, hidden, conds=None, dropout_mask=None):
         self.z = z
         self.hidden = hidden
         self.conds = conds
+        self.dropout_mask = dropout_mask
 
     def expand_along_beam(self, width):
         self.z = self.z.repeat(width, 1)
