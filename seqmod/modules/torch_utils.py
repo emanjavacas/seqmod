@@ -188,15 +188,21 @@ def pack_sort(inp, lengths, batch_first=False):
     Transform input into PaddedSequence sorting batch by length (as required).
     Also return an index variable that unsorts the output back to the original
     order.
-    """
-    lengths, ix = torch.sort(lengths, descending=True)
-    if batch_first:
-        inp = pack_padded_sequence(inp[ix], lengths.data.tolist())
-    else:
-        inp = pack_padded_sequence(inp[:, ix], lengths.data.tolist())
 
-    unsort = torch.zeros_like(ix)
-    unsort[ix] = torch.arange(len(ix), out=torch.zeros_like(ix.data))
+    Parameters:
+    -----------
+    inp: Variable(seq_len x batch x dim)
+    lengths: list of length ``batch``
+    """
+    lengths, idxs = torch.sort(lengths, descending=True)
+    unsort = inp.data.new(len(lengths)).long()
+
+    if batch_first:
+        inp = pack_padded_sequence(inp[idxs], lengths.tolist())
+    else:
+        inp = pack_padded_sequence(inp[:, idxs], lengths.tolist())
+
+    unsort[idxs] = torch.arange(len(idxs), out=torch.zeros_like(unsort))
 
     return inp, unsort
 

@@ -1,10 +1,7 @@
 
-import math
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.autograd import Variable
 
 from seqmod.modules import conv_utils
 
@@ -57,7 +54,13 @@ class CNNTextEncoder(nn.Module):
 
     def forward(self, inp, lengths=None):
         # Embedding
-        emb = self.embeddings(inp)
+        if hasattr(self.embeddings, 'is_complex'):
+            if lengths is None:
+                raise ValueError("ComplexEmbedding requires char-level length info")
+            emb, lengths = self.embeddings(inp, lengths)
+        else:
+            self.embeddings(inp)
+
         emb = emb.transpose(0, 1)  # (batch x seq_len x emb_dim)
         emb = emb.transpose(1, 2)  # (batch x emb_dim x seq_len)
         emb = emb.unsqueeze(1)     # (batch x 1 x emb_dim x seq_len)

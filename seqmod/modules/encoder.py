@@ -107,7 +107,11 @@ class RNNEncoder(BaseEncoder):
 
         - hidden: (num_layers x batch x hid_dim * num_dirs)
         """
-        inp = self.embeddings(inp)
+        if hasattr(self.embeddings, 'is_complex'):
+            # complex embeddings require and return lengths
+            inp, lengths = self.embeddings(inp, lengths)
+        else:
+            inp = self.embeddings(inp)
 
         hidden = self.init_hidden_for(inp)
 
