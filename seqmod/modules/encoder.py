@@ -113,7 +113,7 @@ class RNNEncoder(BaseEncoder):
 
         rnn_inp = inp
         if lengths is not None:  # pack if lengths given
-            rnn_inp, unsort = pack_sort(rnn_inp, lengths)
+            rnn_inp, unsort = pack_sort(rnn_inp, lengths.data)
 
         outs, hidden = self.rnn(rnn_inp, hidden)
 
