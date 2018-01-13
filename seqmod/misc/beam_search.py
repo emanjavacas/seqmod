@@ -59,10 +59,8 @@ class Beam(object):
         # compute best outputs over a flatten vector of size (width x vocab)
         # i.e. regardless their source beam
         scores, flatten_ids = beam_outs.view(-1).topk(self.width, dim=0)
-        # compute source beam
-        source_beams = flatten_ids / vocab
-        # compute best candidates
-        beam = flatten_ids % vocab
+        # compute source beam, best candidates
+        source_beams, beam = flatten_ids // vocab, flatten_ids % vocab
 
         return scores, source_beams, beam
 
