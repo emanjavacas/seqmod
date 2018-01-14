@@ -211,13 +211,13 @@ def GRLWrapper(EncoderBaseClass):
     def loss(self, out, conds, test=False):
         grl_loss = []
         for cond, grl in zip(conds, self.grls):
-            cond_out = F.log_softmax(grad_reverse(grl(out)), 1)
+            cond_out = F.log_softmax(grl(grad_reverse(out)), 1)
             grl_loss.append(F.nll_loss(cond_out, cond, size_average=True))
 
         if not test:
             (sum(grl_loss) / len(self.grls)).backward(retain_graph=True)
 
-        return [l.data[0] for l in grl_loss]
+        return [l.data[0] for l in grl_loss], cond.size(0)
 
     return type('GRL{}'.format(EncoderBaseClass.__name__),
                 (EncoderBaseClass,),

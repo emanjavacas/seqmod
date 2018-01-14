@@ -354,10 +354,9 @@ def make_grl_rnn_encoder_decoder(
         trg_dict=None,
         cell='LSTM',
         bidi=True,
-        encoder_summary='full',
+        encoder_summary='inner-attention',
         dropout=0.0,
         variational=False,
-        input_feed=True,
         context_feed=True,
         word_dropout=0.0,
         deepout_layers=0,
@@ -379,17 +378,17 @@ def make_grl_rnn_encoder_decoder(
     src_embeddings, trg_embeddings = make_embeddings(
         src_dict, trg_dict, emb_dim, word_dropout)
 
-    encoder = GRLRNNEncoder(src_embeddings, hid_dim, num_layers, cell,
-                            cond_dims=cond_dims, cond_vocabs=cond_vocabs,
+    encoder = GRLRNNEncoder(cond_dims, cond_vocabs,
+                            src_embeddings, hid_dim, num_layers, cell,
                             bidi=bidi, dropout=dropout,
                             summary=encoder_summary,
                             train_init=False, add_init_jitter=True)
 
     _, encoding_size = encoder.encoding_size
 
-    decoder = RNNDecoder(trg_embeddings, hid_dim, num_layers, cell, encoding_size,
+    decoder = RNNDecoder(src_embeddings, hid_dim, num_layers, cell, encoding_size,
                          dropout=dropout, variational=variational,
-                         input_feed=input_feed, context_feed=context_feed,
+                         input_feed=False, context_feed=context_feed,
                          deepout_layers=deepout_layers, deepout_act=deepout_act,
                          tie_weights=tie_weights, reuse_hidden=False,
                          train_init=train_init, add_init_jitter=add_init_jitter,

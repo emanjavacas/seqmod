@@ -277,7 +277,7 @@ class RNNDecoder(BaseDecoder):
             inp = torch.cat([inp, state.context], 1)
 
         if self.conditional:
-            inp = torch.cat([inp, *state.conds], 1)
+            inp = torch.cat([inp, state.conds], 1)
 
         out, hidden = self.rnn(inp, state.hidden, dropout_mask=state.dropout_mask)
 
