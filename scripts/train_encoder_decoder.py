@@ -13,7 +13,7 @@ except:
 from torch import nn, optim
 
 from seqmod.modules.encoder_decoder import make_rnn_encoder_decoder
-from seqmod import utils as u
+import seqmod.utils as u
 
 from seqmod.misc import EarlyStopping, Trainer
 from seqmod.misc import StdLogger, VisdomLogger, TensorboardLogger

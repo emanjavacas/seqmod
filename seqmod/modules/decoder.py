@@ -8,7 +8,7 @@ from torch.autograd import Variable
 from seqmod.modules.rnn import StackedGRU, StackedLSTM
 from seqmod.modules.ff import Highway
 from seqmod.modules import attention
-from seqmod import utils as u
+from seqmod.modules.torch_utils import make_length_mask, swap
 
 
 class BaseDecoder(nn.Module):
@@ -140,6 +140,7 @@ class RNNDecoder(BaseDecoder):
         self.rnn = self.build_rnn(num_layers, in_dim, hid_dim, cell, dropout)
 
         # train init
+        self.h_0 = None
         if self.train_init:
             init_size = self.num_layers, 1, self.hid_dim
             self.h_0 = nn.Parameter(torch.Tensor(*init_size).zero_())
@@ -227,7 +228,7 @@ class RNNDecoder(BaseDecoder):
 
         enc_att, mask = None, None
         if self.has_attention:
-            mask = u.make_length_mask(lengths)
+            mask = make_length_mask(lengths)
             if self.att_type.lower() == 'bahdanau':
                 enc_att = self.attn.scorer.project_enc_outs(context)
 
@@ -334,10 +335,10 @@ class RNNDecoderState(State):
         Reorder state attributes to match the previously decoded beam order
         """
         if self.input_feed is not None:
-            self.input_feed = u.swap(self.input_feed, 0, beam_ids)
+            self.input_feed = swap(self.input_feed, 0, beam_ids)
         if isinstance(self.hidden, tuple):
-            hidden = (u.swap(self.hidden[0], 1, beam_ids),
-                      u.swap(self.hidden[1], 1, beam_ids))
+            hidden = (swap(self.hidden[0], 1, beam_ids),
+                      swap(self.hidden[1], 1, beam_ids))
         else:
-            hidden = u.swap(self.hidden, 1, beam_ids)
+            hidden = swap(self.hidden, 1, beam_ids)
         self.hidden = hidden

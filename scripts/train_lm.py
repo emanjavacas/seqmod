@@ -216,10 +216,11 @@ if __name__ == '__main__':
         trainer.add_hook(
             u.make_schedule_hook(schedule, verbose=True), hooks_per_epoch=10e4)
     # - lr schedule hook
-    hook = make_lr_hook(
-        optimizer, args.lr_schedule_factor, args.lr_schedule_checkpoints)
-    # run a hook args.checkpoint * 4 batches
-    trainer.add_hook(hook, num_checkpoints=4)
+    if args.lr_schedule_factor < 1.0:
+        hook = make_lr_hook(
+            optimizer, args.lr_schedule_factor, args.lr_schedule_checkpoints)
+        # run a hook args.checkpoint * 4 batches
+        trainer.add_hook(hook, num_checkpoints=4)
 
     # loggers
     trainer.add_loggers(StdLogger())

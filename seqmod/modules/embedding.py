@@ -1,13 +1,17 @@
 
-import os
+import numpy as np
+
+from itertools import accumulate
 
 import torch
 import torch.nn as nn
+from torch.nn import functional as F
 from torch.autograd import Variable
-
-import numpy as np
+from torch.nn.utils.rnn import pad_packed_sequence as unpack
 
 from seqmod.loaders import EmbeddingLoader
+from seqmod.modules.torch_utils import init_hidden_for, pack_sort, split, pad_sequence
+from seqmod.modules.conv_utils import get_padding
 
 
 def word_dropout_mask(X, dropout_rate, reserved_codes=()):
@@ -105,7 +109,7 @@ class Embedding(nn.Embedding):
     """
 
     # ignore this
-    _SECRET = 'this is super secret'
+    _SECRET = 'secret!'
 
     def __init__(self, *args, _secret=None, **kwargs):
         if _secret != Embedding._SECRET:
@@ -127,9 +131,10 @@ class Embedding(nn.Embedding):
         d: Dict
         emb_dim: int
         p: float, word dropout rate (reset input symbols to unknowns)
-        add_positional: bool, whether to add positional encoding 
+        add_positional: bool, whether to add positional encoding
             information to the embedding activations.
         max_len: int, see PositionalEncoding
+        padding_idx: None, will get ignored in favor of the Dict's own pad token
         kwargs: rest nn.Embedding parameters
         """
 
@@ -210,6 +215,214 @@ class Embedding(nn.Embedding):
         words = self.d.vocab
         weight, words = EmbeddingLoader(filepath, mode).load(words, **kwargs)
         self.init_embeddings(weight, words)
+
+
+class RNNEmbedding(nn.Module):
+    """
+    Use a RNN at the character level to extract word-level features (aka. word
+    embeddings).
+    """
+
+    # ignore this
+    _SECRET = 'secret!'
+
+    def __init__(self, num_embeddings, embedding_size, breakpoint_idx=None,
+                 num_layers=1, cell='GRU', bias=True, bidirectional=False,
+                 contextual=False, dropout=0.0, _secret=None):
+
+        if _secret != Embedding._SECRET:
+            raise ValueError("This class must be instantiated "
+                             "with the `from_dict` classmethod")
+
+        self.num_embeddings = num_embeddings
+        self.embedding_size = embedding_size
+        self.num_layers = num_layers
+        self.bidirectional = bidirectional
+        self.num_dirs = int(bidirectional) + 1
+        self.cell = cell
+        self.breakpoint_idx = breakpoint_idx
+        self.contextual = contextual
+        super(RNNEmbedding, self).__init__()
+
+        self.embedding = nn.Embedding(num_embeddings, embedding_size)
+
+        layers = []
+        hidden_size = embedding_size // self.num_dirs
+        input_size = embedding_size
+        for layer in range(num_layers):
+            layers.append(getattr(nn, cell)(
+                input_size, hidden_size, bidirectional=bidirectional,
+                bias=bias, dropout=dropout))
+            input_size = hidden_size
+        self.layers = nn.ModuleList(layers)
+
+    @classmethod
+    def from_dict(cls, d, emb_dim, breakpoint_idx=None, **kwargs):
+        return cls(len(d), emb_dim, _secret=RNNEmbedding._SECRET, **kwargs)
+
+    def _forward_with_context(self, inp, lengths):
+        # (char_len x batch x dim)
+        out = self._run_rnn(inp)
+        flattened, word_lenghts = [], []
+        for i in range(len(inp.size(1))):
+            breakpoints = (inp[:, i] == self.breakpoint_idx).nonzero()
+            breakpoints = torch.cat([breakpoints, lengths[i]])
+            word_lenghts.append(len(breakpoints))
+            flattened.append(out[:, i][breakpoints])
+
+        # (max_seq_len x batch x emb_dim)
+        return pad_sequence(flattened), word_lenghts
+
+    def _forward(self, inp, lengths):
+        # flatten (char_len x batch x dim) into (max_word_len x num_words x dim)
+        flattened, word_lenghts = [], []
+        for idx, seq in enumerate(inp.chunk(len(inp), 1)):
+            breakpoints = (seq.data == self.breakpoint_idx).nonzero().tolist()
+            breakpoints.append(lengths[idx].data[0])
+            # accumulate sequence lengths in words
+            word_lenghts.append(len(breakpoints))
+            flattened.extend(split(seq, breakpoints))
+
+        # (max_word_len x num_words x emb_dim)
+        flattened, char_lenghts = pad_sequence(flattened)
+        # take last rnn activation as embedding: (num_words x emb_dim)
+        *_, out = self._run_rnn(flattened, char_lenghts)
+        # reshape to original sequence: (max_seq_len x batch x emb_dim)
+        breakpoints = list(accumulate(word_lenghts))
+        out = pad_sequence(split(out, breakpoints))
+
+        return out, word_lenghts
+
+    def _run_rnn(self, inp, lengths):
+        hidden = init_hidden_for(
+            inp, self.num_dirs, self.num_layers, self.hid_dim, self.cell,
+            training=self.training)
+
+        rnn_inp = inp
+        rnn_inp, unsort = pack_sort(rnn_inp, lengths)
+
+        for layer in self.layers:
+            rnn_inp, hidden = layer(rnn_inp, hidden)
+
+        rnn_inp, _ = unpack(rnn_inp)
+        rnn_inp = rnn_inp[:, unsort]
+
+        return rnn_inp
+
+    def forward(self, inp, lengths):
+        """
+        Parameters:
+        -----------
+
+        - inp: torch.Variable(seq_len x batch_size) where seq_len is given
+            in terms of character length.
+        - lengths: list of number of real characters (besides pad symbols)
+            in the input batch.
+        """
+        if self.contextual:
+            return self._forward_with_context(inp, lengths)
+        else:
+            return self._forward(inp, lengths)
+
+        # extract hidden outputs at breakpoints along the first dim (seq_len)
+        # - warning: currently the challenge is to do this without copying data
+        #     into a new variable given that it assumes different lengths per
+        #     batch. Perhaps the easiest way is:
+        #       - mask out all items not corresponding to breakpoint
+        #       - permute to get all embeddings to the beginning of the batch
+        #       - crop down to max length
+        #     Another way of doing this would be:
+        #       - conflate seq_len and batch dims (seq_len * batch, emb_dim)
+        #       - select the embeddings corresponding to breakpoints
+        #       - split by batch length (determined by the number of breakpoints)
+        #       - pad them into a sequence with torch.nn.utils.rnn.pad_sequence
+
+
+class CNNEmbedding(nn.Module):
+    """
+    Use multiple CNN filters at the character level to extract word-level
+    features (aka. word embeddings).
+
+    In contrast to the traditional nn.Embedding, the input parameter `embedding_size`
+    is used for the character-level embeddings over which the convolutions
+    are applied. In contrast to RNNEmbedding, where the output embeddings do have
+    the expected dimensionality, in CNNEmbedding the output embedding_size
+    corresponds to the sum of the output_channels. For convenience, it can be
+    retrieved accessing the property self.embedding_size.
+    """
+
+    # ignore this
+    _SECRET = 'secret!'
+
+    def __init__(self, num_embeddings, embedding_size, breakpoint_idx=None,
+                 kernel_sizes=range(1, 7), output_channels=lambda x: x * 25,
+                 _secret=None):
+
+        if _secret != Embedding._SECRET:
+            raise ValueError("This class must be instantiated "
+                             "with the `from_dict` classmethod")
+
+        self.num_embeddings = num_embeddings
+        self._embedding_size = embedding_size
+        self.kernel_sizes = kernel_sizes
+        self.max_kernel = max(kernel_sizes)
+        if callable(output_channels):
+            self.output_channels = [output_channels(k) for k in kernel_sizes]
+        else:
+            if not isinstance(output_channels, (tuple, list)):
+                raise ValueError("`output_channels` must be tuple or func")
+            if not len(output_channels) == len(kernel_sizes):
+                raise ValueError(
+                    "needs same number of `output_channels` and `kernel_sizes`")
+            self.output_channels = output_channels
+
+        self.breakpoint_idx = breakpoint_idx
+        super(RNNEmbedding, self).__init__()
+
+        self.embedding = nn.Embedding(num_embeddings, embedding_size)
+
+        convs = []
+        for W, C_o in zip(self.kernel_sizes, self.output_channels):
+            padding = (0, get_padding(W, mode="wide"))
+            convs.append(nn.Conv2d(1, C_o, (self._embedding_size, W), padding))
+        self.convs = nn.ModuleList(convs)
+
+    @property
+    def embedding_size(self):
+        return sum(self.output_channels)
+
+    @classmethod
+    def from_dict(cls, d, emb_dim, breakpoint_idx=None, **kwargs):
+        return cls(len(d), emb_dim, _secret=CNNEmbedding._SECRET, **kwargs)
+
+    def forward(self, inp, lengths):
+        # flatten (char_len x batch x dim) into (max_word_len x num_words x dim)
+        flattened, word_lenghts = [], []
+        for idx, seq in enumerate(inp.chunk(len(inp), 1)):
+            breakpoints = (seq.data == self.breakpoint_idx).nonzero().tolist()
+            breakpoints.append(lengths[idx].data[0])
+            # accumulate sequence lengths in words
+            word_lenghts.append(len(breakpoints))
+            flattened.extend(split(seq, breakpoints))
+
+        # (max_word_len x num_words x emb_dim)
+        flattened, _ = pad_sequence(flattened)
+        if len(flattened) < self.max_kernel:
+            flattened = F.pad(flattened, (0, self.max_kernel - len(flattened)))
+
+        # -> (num_words x 1 x emb_dim x max_word_len)
+        flattened = flattened.transpose(0, 1).transpose(1, 2).unsqueeze(1)
+
+        outs = []
+        for conv in self.convs:
+            # (num_words x C_o x 1 x max_word_len)
+            out = F.tanh(conv(flattened))
+            # (num_words x C_o x 1 x 1)
+            out = F.max_pool2d(out, out.size(3))
+            outs.append(out.squeeze(3).squeeze(2))
+
+        # (num_words x out_emb_dim)
+        return torch.cat(outs, 1)
 
 
 if __name__ == '__main__':

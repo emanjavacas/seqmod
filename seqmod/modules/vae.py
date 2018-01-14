@@ -3,8 +3,7 @@ import torch
 import torch.nn as nn
 from torch.autograd import Variable
 
-import seqmod.utils as u
-
+from seqmod.modules.torch_utils import swap
 from seqmod.modules.ff import Highway
 from seqmod.misc import inflection_sigmoid, linear
 from seqmod.modules.encoder_decoder import RNNEncoder
@@ -172,10 +171,10 @@ class VAEDecoderState(State):
 
     def reorder_beam(self, beam_ids):
         if isinstance(self.hidden, tuple):
-            hidden = (u.swap(self.hidden[0], 1, beam_ids),
-                      u.swap(self.hidden[1], 1, beam_ids))
+            hidden = (swap(self.hidden[0], 1, beam_ids),
+                      swap(self.hidden[1], 1, beam_ids))
         else:
-            hidden = u.swap(self.hidden, 1, beam_ids)
+            hidden = swap(self.hidden, 1, beam_ids)
         self.hidden = hidden
 
 

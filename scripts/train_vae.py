@@ -39,7 +39,7 @@ def make_generate_hook(level, n=2, samples=2, beam_width=5):
             report = '{}\nSource: '.format(idx + 1)
             report += sep.join(d.vocab[char.data[0]] for char in src)
             report += '\n'
-            
+
             for sample in range(samples):
                 scores, hyps, _ = trainer.model.translate_beam(
                     src, lengths=lengths, beam_width=beam_width)

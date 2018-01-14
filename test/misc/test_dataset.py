@@ -1,34 +1,28 @@
 
-import hashlib
+from hashlib import sha1, md5
 from collections import Counter
 import unittest
 
+import lorem
+
 import torch
 
-from seqmod.misc import dataset
+from seqmod.misc import Dict, BlockDataset, PairedDataset, CompressionTable
 from seqmod import utils as u
 
 
-test_corpus = [
-    "Lorem ipsum dolor sit amet, consectetur adipiscing elit.", "Curabitur scelerisque cursus lectus, ac efficitur felis congue vehicula.", "Etiam non fringilla mi.", "Curabitur blandit turpis id tellus pellentesque, nec pellentesque erat placerat.", "Duis fringilla mauris justo, ornare luctus lectus aliquam eget.", "Nullam egestas, velit eget hendrerit scelerisque, tellus nisl fringilla massa, sollicitudin ultricies lectus ante sed velit.", "Nullam malesuada hendrerit metus, vel auctor turpis tincidunt vel.", "Donec massa ipsum, fringilla a pharetra id, imperdiet nec metus.", "Aenean interdum nisi sed nunc congue tempor.", "Nullam nisi mi, vestibulum ac nunc ut, imperdiet interdum ligula.", "Pellentesque sed elementum neque.", "Pellentesque condimentum aliquet neque quis tincidunt.", "Vestibulum ante ipsum primis in faucibus orci luctus et ultrices posuere cubilia Curae; Phasellus consectetur augue sit amet enim hendrerit, ac tincidunt nisl viverra.", "Ut at velit id mi pharetra tristique.", "Nam ut lacus sed orci consectetur venenatis.", "Aliquam viverra in enim sit amet pulvinar.",
-
-    "Nunc a hendrerit velit.", "Suspendisse placerat condimentum sodales.", "Cras quis erat ac arcu eleifend ultrices vulputate quis ante.", "Nulla facilisi.", "Sed a vestibulum orci.", "Quisque porttitor leo vitae nisl tempor, in malesuada dolor volutpat.", "Nam vitae nisl dolor.", "Cras id rhoncus ante.", "Nulla hendrerit elementum maximus.", "Proin ac turpis sodales, suscipit erat nec, cursus justo.", "Donec finibus, ex eu consectetur ullamcorper, tortor ligula sollicitudin mauris, tincidunt molestie erat est sed tellus.", "Aenean tincidunt erat ut tempus sodales.",
-
-    "Vivamus malesuada egestas mi in porttitor.", "Duis tincidunt neque vel feugiat finibus.", "Quisque eros erat, imperdiet eget sollicitudin id, cursus eu ex.", "Mauris sit amet velit at mi viverra tincidunt ac eget arcu.", "Suspendisse pulvinar molestie tempus.", "Duis eget lacinia massa.", "Aliquam sed risus scelerisque orci lacinia fermentum eget posuere nunc.", "Donec sed quam non mauris placerat pulvinar.",
-
-    "Etiam vel molestie mauris.", "Quisque non posuere massa.", "Suspendisse cursus hendrerit dolor, vel molestie magna cursus at.", "Nulla maximus diam dolor.", "Nam id quam consectetur, consequat velit sed, varius orci.", "In accumsan nec ex id fringilla.", "Interdum et malesuada fames ac ante ipsum primis in faucibus.", "Donec a turpis rhoncus, sodales leo nec, sodales lacus.", "Nunc a odio quis ligula imperdiet maximus.", "Nulla scelerisque convallis quam ut ultrices.", "Fusce vel leo eget mi faucibus."
-]
-
-test_corpus = [s.split() for s in test_corpus]
+def fake_tags(w):
+    return (w, md5(w.encode('utf-8')), sha1(w.encode('utf-8')))
 
 
 class TestDict(unittest.TestCase):
     def setUp(self):
-        self.seq_vocab = Counter(w for s in test_corpus for w in s)
-        self.seq_d = dataset.Dict(eos_token=u.EOS, bos_token=u.BOS,
-                                  force_unk=True, sequential=True)
-        self.seq_d.fit(test_corpus)
-        self.seq_transformed = list(self.seq_d.transform(test_corpus))
+        self.corpus = [lorem.sentence().split() for _ in range(100)]
+        self.seq_vocab = Counter(w for s in self.corpus for w in s)
+        self.seq_d = Dict(eos_token=u.EOS, bos_token=u.BOS,
+                          force_unk=True, sequential=True)
+        self.seq_d.fit(self.corpus)
+        self.seq_transformed = list(self.seq_d.transform(self.corpus))
 
     def test_vocab(self):
         self.assertEqual(
@@ -41,48 +35,43 @@ class TestDict(unittest.TestCase):
 
     def test_transform(self):
         self.assertEqual(
-            test_corpus,
+            self.corpus,
             # remove <bos>, <eos> from transformed corpus
             [[self.seq_d.vocab[w] for w in s[1:-1]]
-             for s in self.seq_d.transform(test_corpus)],
+             for s in self.seq_d.transform(self.corpus)],
             "Transformed corpus matches word by word")
 
 
 class TestBlockDataset(unittest.TestCase):
     def setUp(self):
-        # dicts
-        self.seq_d = dataset.Dict(eos_token=u.EOS, bos_token=u.BOS,
-                                  force_unk=True, sequential=True)
-        self.seq_d.fit(test_corpus)
-        self.tag1_d = dataset.Dict(eos_token=u.EOS, bos_token=u.BOS,
-                                   force_unk=True, sequential=True)
-        self.tagged_corpus = \
-            [[self._fake_tags(w) for w in s] for s in test_corpus]
+        self.corpus = [lorem.sentence().split() for _ in range(100)]
+        self.tagged_corpus = [[fake_tags(w) for w in s] for s in self.corpus]
         self.tag1_corpus = [[tup[1] for tup in s] for s in self.tagged_corpus]
-        self.tag1_d.fit(self.tag1_corpus)
-        self.tag2_d = dataset.Dict(eos_token=u.EOS, bos_token=u.BOS,
-                                   force_unk=True, sequential=True)
         self.tag2_corpus = [[tup[2] for tup in s] for s in self.tagged_corpus]
+        # dicts
+        self.seq_d = Dict(eos_token=u.EOS, bos_token=u.BOS,
+                          force_unk=True, sequential=True)
+        self.seq_d.fit(self.corpus)
+        self.tag1_d = Dict(eos_token=u.EOS, bos_token=u.BOS,
+                           force_unk=True, sequential=True)
+        self.tag1_d.fit(self.tag1_corpus)
+        self.tag2_d = Dict(eos_token=u.EOS, bos_token=u.BOS,
+                           force_unk=True, sequential=True)
         self.tag2_d.fit(self.tag2_corpus)
         # props
         self.batch_size = 10
         self.bptt = 5
         # datasets
-        self.simple_dataset = dataset.BlockDataset(
-            test_corpus, self.seq_d, self.batch_size, self.bptt)
+        self.simple_dataset = BlockDataset(
+            self.corpus, self.seq_d, self.batch_size, self.bptt)
         words, tags1, tags2 = [], [], []
         for s in self.tagged_corpus:
             words.append([tup[0] for tup in s])
             tags1.append([tup[1] for tup in s])
             tags2.append([tup[2] for tup in s])
-        self.multi_dataset = dataset.BlockDataset(
+        self.multi_dataset = BlockDataset(
             (words, tags1, tags2), (self.seq_d, self.tag1_d, self.tag2_d),
             self.batch_size, self.bptt)
-
-    def _fake_tags(self, w):
-        return (w,
-                hashlib.md5(w.encode('utf-8')),
-                hashlib.sha1(w.encode('utf-8')))
 
     def test_target(self):
         for src, trg in self.simple_dataset:
@@ -107,7 +96,7 @@ class TestBlockDataset(unittest.TestCase):
 
     def _test_possibly_cropped_corpus(self, sents, msg):
         "compare recovered transformed dataset with original dataset"
-        for idx, (sent1, sent2) in enumerate(zip(sents, test_corpus)):
+        for idx, (sent1, sent2) in enumerate(zip(sents, self.corpus)):
             if idx == len(sents) - 1:
                 # sent1 might be short if at end of the corpus
                 self.assertListEqual(sent1, sent2[:len(sent1)], msg)
@@ -168,17 +157,26 @@ class TestBlockDataset(unittest.TestCase):
             flattened[:len(words)],
             "Batch-accessed transformed data conforms to flattened data")
 
+    def test_splits(self):
+        total = len(self.simple_dataset)
+        train, test, valid = self.simple_dataset.splits(test=0.1, dev=0.1)
+        places = len(self.corpus) * 0.1
+        self.assertTrue(abs(int(total * 0.8) - len(train)) <= places, "train split")
+        self.assertTrue(int(total * 0.1) - len(test) <= places, "test split")
+        self.assertTrue(int(total * 0.1) - len(valid) <= places, "valid split")
+
 
 class TestCompressionTable(unittest.TestCase):
     def setUp(self):
         # corpus
+        self.corpus = [lorem.sentence().split() for _ in range(100)]
         self.nvals, self.batch_size = 3, 15
         self.tagged_corpus = \
             [[tuple([w, *self._encode_variables(self.nvals)]) for w in s]
-             for s in test_corpus]
+             for s in self.corpus]
         self.conds = [conds for s in self.tagged_corpus for (w, *conds) in s]
         # compression table
-        self.table = dataset.CompressionTable(self.nvals)
+        self.table = CompressionTable(self.nvals)
         self.hashed = [self.table.hash_vals(tuple(v)) for v in self.conds]
 
     def _encode_variables(self, nvals, card=3):
@@ -206,3 +204,25 @@ class TestCompressionTable(unittest.TestCase):
         conds = [c.view(-1) for c in conds]
         conds = [list(c) for c in zip(*conds)]
         self.assertEqual(self.conds, conds[:len(as_tensor)])
+
+
+class TestPairedDataset(unittest.TestCase):
+    def setUp(self):
+        self.corpus = [lorem.sentence().split() for _ in range(100)]
+        self.tagged_corpus = [[fake_tags(w) for w in s] for s in self.corpus]
+        self.tag1_corpus = [[tup[1] for tup in s] for s in self.tagged_corpus]
+        self.tag2_corpus = [[tup[1] for tup in s] for s in self.tagged_corpus]
+        self.seq_d = Dict(eos_token=u.EOS, bos_token=u.BOS,
+                          force_unk=True, sequential=True)
+        self.seq_d.fit(self.corpus)
+        self.tag1_d = Dict(eos_token=u.EOS, bos_token=u.BOS,
+                           force_unk=True, sequential=True)
+        self.tag1_d.fit(self.tag1_corpus)
+        self.tag2_d = Dict(eos_token=u.EOS, bos_token=u.BOS,
+                           force_unk=True, sequential=True)
+        self.tag2_d.fit(self.tag2_corpus)
+
+    def test_conditions(self):
+        self.dataset = PairedDataset(
+            self.corpus, (self.tag1_corpus, self.tag2_corpus),
+            {'src': self.seq_d, 'trg': (self.tag1_d, self.tag2_d)})

@@ -7,8 +7,7 @@ from collections import Counter, Sequence, OrderedDict, defaultdict
 import torch
 import torch.utils.data
 
-from seqmod import utils as u
-from seqmod.utils import wrap_variables
+from seqmod.utils import UNK, wrap_variables
 
 
 def bucketing(*args):
@@ -99,7 +98,7 @@ def get_splits(length, test, dev=None):
     return cumsum(int(length * i) for i in [train, dev, test] if i)
 
 
-def pad_pack_batch(examples, pad, return_lengths, align_right):
+def pad_batch(examples, pad, return_lengths, align_right):
     """
     Transform a list of examples into a proper torch.LongTensor batch
     """
@@ -174,7 +173,7 @@ class Dict(object):
         they are None).
     """
     def __init__(self, pad_token=None, eos_token=None, bos_token=None,
-                 unk_token=u.UNK, force_unk=False, max_size=None, min_freq=1,
+                 unk_token=UNK, force_unk=False, max_size=None, min_freq=1,
                  sequential=True, max_len=None, use_vocab=True,
                  preprocessing=None):
         force_unk = force_unk or sequential  # force unk for sequential dicts
@@ -317,7 +316,7 @@ class Dict(object):
             and list with sequence lengths in the batch
         """
         if self.sequential:
-            return pad_pack_batch(
+            return pad_batch(
                 batch_data, self.get_pad(), return_lengths, align_right)
         else:
             return torch.LongTensor(batch_data)
@@ -480,7 +479,9 @@ class PairedDataset(Dataset):
         self.data['src'] = src if fitted else self._fit(src, self.d['src'])
         src_len = len(self.data['src'])
         if src_len < batch_size:
-            raise ValueError("Not enough input examples: {}".format(src_len))
+            raise ValueError(
+                "Not enough input examples for selected batch_size. "
+                "Got {} but batch_size is {}".format(src_len, batch_size))
 
         # prepare trg data
         if trg is None:         # autoregressive dataset
@@ -726,7 +727,8 @@ class BlockDataset(Dataset):
                 raise ValueError("Not enough data for batch [{}]"
                                  .format(batch_size))
 
-            fitted = dicts.transform(examples) if dicts.use_vocab else examples
+            fitted = [d.transform(e) if d.use_vocab else e
+                      for d, e in zip(dicts, examples)]
             fitted = ([i for seq in subset for i in seq] for subset in fitted)
             return tuple(fitted)
 

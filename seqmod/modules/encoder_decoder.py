@@ -8,7 +8,7 @@ from seqmod.misc.beam_search import Beam
 from seqmod.modules.encoder import RNNEncoder, GRLRNNEncoder
 from seqmod.modules.decoder import RNNDecoder
 from seqmod.modules.embedding import Embedding
-from seqmod import utils as u
+from seqmod.modules.torch_utils import flip, shards
 
 from seqmod.modules.exposure import scheduled_sampling
 
@@ -93,7 +93,7 @@ class EncoderDecoder(nn.Module):
         # remove <eos> from decoder targets, remove <bos> from loss targets
         if hasattr(self, 'reverse') and self.reverse:
             # assume right aligned data: [pad pad <bos> ... <eos>]
-            trg = u.flip(trg, 0)
+            trg = flip(trg, 0)
 
         # [<bos> ... <eos> pad pad]
         dec_trg, loss_trg = trg[:-1], trg[1:]
@@ -122,7 +122,7 @@ class EncoderDecoder(nn.Module):
         shard_data = {'out': dec_outs, 'trg': loss_trg}
         num_examples, loss = trg_lengths.data.sum(), 0
 
-        for shard in u.shards(shard_data, size=split, test=test):
+        for shard in shards(shard_data, size=split, test=test):
             out, true = shard['out'], shard['trg'].view(-1)
             pred = self.decoder.project(out)
             shard_loss = F.nll_loss(pred, true, weight, size_average=False)
@@ -145,9 +145,9 @@ class EncoderDecoder(nn.Module):
 
         Returns (scores, hyps, atts):
         --------
-        scores: (batch_size)
-        hyps: (batch_size x trg_seq_len)
-        atts: (batch_size x trg_seq_len x source_seq_len)
+        scores: list of floats (batch_size)
+        hyps: (list of) list of ints (batch_size x trg_seq_len)
+        atts: ((list of) list of) floats (batch_size x trg_seq_len x source_seq_len)
         """
         eos = self.decoder.embeddings.d.get_eos()
         bos = self.decoder.embeddings.d.get_bos()
@@ -189,8 +189,8 @@ class EncoderDecoder(nn.Module):
 
         return scores, hyps, weights
 
-    def translate_beam(self, src, lengths, mask=None, conds=None,
-                       beam_width=5, max_decode_len=2):
+    def translate_beam(self, src, lengths, conds=None, beam_width=5,
+                       max_decode_len=2):
         """
         Translate a single input sequence using beam search.
 
@@ -199,9 +199,23 @@ class EncoderDecoder(nn.Module):
 
         src: torch.LongTensor (seq_len x 1)
         lengths: torch.LongTensor (1)
-        mask: (optional) see Decoder.init_state
         conds: (optional) conditions for the decoder
+        beam_width: int, width of the beam
+        max_decode_len: int, limit to the length of the output sequence
+            in terms of the size of the input sequence
+
+        Returns:
+        --------
+        scores: list of floats (beam_width), corresponding to the decoded hypotheses
+            in descending order.
+        hyps: (list of) list of ints (beam_width x max_seq_len), corresponding to the
+            decoded hypotheses in descending order. `max_seq_len` corresponds to the
+            size of the longest decoded hypotheses up to `max_decode_len` * the length
+            of the input sequence.
+        atts: None (WIP)
         """
+        if src.size(1) > 1:
+            raise ValueError("Beam search currently only supports size 1 batches")
         eos = self.decoder.embeddings.d.get_eos()
         bos = self.decoder.embeddings.d.get_bos()
         if hasattr(self, 'reverse') and self.reverse:
@@ -322,7 +336,9 @@ def make_rnn_encoder_decoder(
             raise ValueError("Attentional decoder needs full encoder summary")
     else:
         if encoder_dims != 2:
-            raise ValueError("Non attentional decoder needs 2D encoding")
+            raise ValueError("Attentionless decoder can't work with `full` "
+                             "summaries, set `encoder_summary` to a different "
+                             "value")
 
     return EncoderDecoder(encoder, decoder, reverse=reverse)
 

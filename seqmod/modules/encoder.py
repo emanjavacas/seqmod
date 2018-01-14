@@ -2,12 +2,11 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.autograd import Variable
-from seqmod.utils import pack_sort
 from torch.nn.utils.rnn import pad_packed_sequence as unpack
 
-import seqmod.utils as u
+from seqmod.modules.torch_utils import init_hidden_for
 from seqmod.modules.ff import grad_reverse, MLP
+from seqmod.modules.torch_utils import pack_sort, repackage_bidi
 
 
 class BaseEncoder(nn.Module):
@@ -61,6 +60,7 @@ class RNNEncoder(BaseEncoder):
                                      self.hid_dim, num_layers=self.num_layers,
                                      dropout=dropout, bidirectional=self.bidi)
 
+        self.h_0 = None
         if self.train_init:
             init_size = self.num_layers * self.num_dirs, 1, self.hid_dim
             self.h_0 = nn.Parameter(torch.Tensor(*init_size).zero_())
@@ -83,25 +83,10 @@ class RNNEncoder(BaseEncoder):
             raise NotImplementedError
 
     def init_hidden_for(self, inp):
-        batch_size = inp.size(1)
-        size = (self.num_dirs * self.num_layers, batch_size, self.hid_dim)
-
-        if self.train_init:
-            h_0 = self.h_0.repeat(1, batch_size, 1)
-        else:
-            h_0 = inp.data.new(*size).zero_()
-            h_0 = Variable(h_0, volatile=not self.training)
-
-        if self.add_init_jitter:
-            h_0 = h_0 + torch.normal(torch.zeros_like(h_0), 0.3)
-
-        if self.cell.startswith('LSTM'):
-            # compute memory cell
-            c_0 = inp.data.new(*size).zero_()
-            c_0 = Variable(c_0, volatile=not self.training)
-            return h_0, c_0
-        else:
-            return h_0
+        return init_hidden_for(
+            inp, self.num_dirs, self.num_layers, self.hid_dim, self.cell,
+            h_0=self.h_0, add_init_jitter=self.add_init_jitter,
+            training=self.training)
 
     def forward(self, inp, lengths=None):
         """
@@ -144,10 +129,10 @@ class RNNEncoder(BaseEncoder):
             # BiRNN encoder outputs:   (num_layers * 2 x batch x hid_dim)
             # but RNN decoder expects: (num_layers x batch x hid_dim * 2)
             if self.cell.startswith('LSTM'):
-                hidden = (u.repackage_bidi(hidden[0]),
-                          u.repackage_bidi(hidden[1]))
+                hidden = (repackage_bidi(hidden[0]),
+                          repackage_bidi(hidden[1]))
             else:
-                hidden = u.repackage_bidi(hidden)
+                hidden = repackage_bidi(hidden)
 
         if self.summary == 'full':
             outs = outs         # do nothing
@@ -230,13 +215,11 @@ def GRLWrapper(EncoderBaseClass):
 
         return [l.data[0] for l in grl_loss]
 
-    GRLEncoder = type('GRL{}'.format(EncoderBaseClass.__name__),
-                      (EncoderBaseClass,),
-                      {'__init__': __init__,
-                       'loss': loss,
-                       'conditional': property(lambda self: True)})
-
-    return GRLEncoder
+    return type('GRL{}'.format(EncoderBaseClass.__name__),
+                (EncoderBaseClass,),
+                {'__init__': __init__,
+                 'loss': loss,
+                 'conditional': property(lambda self: True)})
 
 
 GRLRNNEncoder = GRLWrapper(RNNEncoder)

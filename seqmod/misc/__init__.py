@@ -1,9 +1,11 @@
-from seqmod.misc.beam_search import Beam
-from seqmod.misc.dataset import Dict, MultiDict, PairedDataset, BlockDataset, CyclicBlockDataset
-from seqmod.misc.early_stopping import EarlyStopping, EarlyStoppingException
-from seqmod.misc.loggers import StdLogger, VisdomLogger, TensorboardLogger
-from seqmod.misc.preprocess import text_processor
-from seqmod.misc.trainer import Trainer
-from seqmod.misc.schedules import inflection_sigmoid
-from seqmod.misc.schedules import linear, inverse_linear
-from seqmod.misc.schedules import exponential, inverse_exponential
+
+from .dataset import *
+from .beam_search import Beam
+from .dataset import Dict, MultiDict, PairedDataset, BlockDataset, CyclicBlockDataset
+from .early_stopping import EarlyStopping, EarlyStoppingException
+from .loggers import StdLogger, VisdomLogger, TensorboardLogger
+from .preprocess import text_processor
+from .trainer import Trainer
+from .schedules import inflection_sigmoid
+from .schedules import linear, inverse_linear
+from .schedules import exponential, inverse_exponential
