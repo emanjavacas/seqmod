@@ -393,17 +393,16 @@ class Trainer(object):
 
         self.log("info", "Trained for [{:.3f} secs]".format(time.time()-start))
 
-        best_model = best_model or copy.deepcopy(self.model)
+        if best_model is None:  # use current model
+            best_model = copy.deepcopy(self.model)
 
         # test
         if run_test and self.test_name in self.datasets:
             self.model.eval()
             self.on_test_begin(self.batch_run)
-            test_loss = self.validate_model(
-                test=True, model=best_model or self.model, **kwargs)
+            test_loss = self.validate_model(test=True, model=best_model, **kwargs)
             self.on_test_end(test_loss)
             test_loss = sum(test_loss.pack())
-
 
         return (best_model.cpu(), valid_loss), test_loss
 

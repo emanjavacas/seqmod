@@ -19,6 +19,22 @@ class TestEarlyStopping(unittest.TestCase):
         priority, _ = self.e_s.get_min()
         self.assertEqual(priority, min(run))
 
+    def test_check(self):
+        run = [3.0, 2.5, 2.0, 1.5, 0.9, 1.0, 1.1, 1.2, 1.0]
+        # best is 0.99 at position 4, error at previous to last position
+        run_test = False
+        for idx, checkpoint in enumerate(run):
+            try:
+                self.e_s.add_checkpoint(checkpoint, model=idx)
+            except early_stopping.EarlyStoppingException as e:
+                run_test = True
+                message, data = e.args
+                self.assertEqual(len(self.e_s.checks), len(run) - 1)
+                self.assertEqual(data['model'] + 1, 5)  # 0-index
+                self.assertEqual(self.e_s.find_smallest(), 5)
+                self.assertEqual(data['smallest'], 0.9)
+        self.assertTrue(run_test)
+
     def test_early_stopping1(self):
         des_run, asc_run = [3.0, 2.5, 2.0, 1.5, 1.0], [1.1, 1.2, 1.3, 1.4, 1.5]
         run_test = False

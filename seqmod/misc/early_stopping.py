@@ -1,5 +1,6 @@
 
 import heapq
+from operator import itemgetter
 
 
 class pqueue(object):
@@ -96,7 +97,8 @@ class EarlyStopping(pqueue):
         super(EarlyStopping, self).__init__(maxsize, heapmax=True)
 
     def find_smallest(self):
-        return sorted(enumerate(self.checks), key=lambda i: i[1])[0][0] + 1
+        (index, _), *_ = sorted(enumerate(self.checks), key=itemgetter(1))
+        return index + 1   # 1-index
 
     def add_checkpoint(self, checkpoint, model=None):
         """Add loss to queue and stop if patience is exceeded."""
