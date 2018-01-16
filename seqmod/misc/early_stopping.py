@@ -132,7 +132,9 @@ class EarlyStopping(pqueue):
             self.queue = []
             if self.reset_on_emptied:
                 self.fails = 0
-            self.add_checkpoint(checkpoint, model=best_model, add_check=False)
+            if self.patience > 1:
+                self.add_checkpoint(
+                    checkpoint, model=best_model, add_check=False)
 
         if (checkpoint + self.tolerance) > smallest:
             self.fails += 1
