@@ -5,6 +5,11 @@ from seqmod.misc import early_stopping
 
 
 tests = [
+    # Add tests here with the expected behaviour:
+    # If the exception should be raised, add a field 'should_raise' and
+    # set it to True, otherwise False.
+    # You can overwrite default params 'maxsize', 'reset_patience' and
+    # 'reset_on_emptied'. See `make_es` for further defaults.
     {
         'run': [2.5, 3.0, 2.0, 1.5],
         'should_raise': False
@@ -20,6 +25,10 @@ tests = [
         'run': [3, 4, 5, 2, 3, 4],
         'reset_patience': False,
         'patience': 3,
+        'should_raise': True
+    }, {
+        'run': [5, 4, 3, 2, 3],
+        'patience': 1,
         'should_raise': True
     }
 ]
@@ -74,11 +83,13 @@ def get_checkpoints(test):
     return checkpoints
 
 
-def make_es(test, default_patience=5, default_maxsize=10):
+def make_es(test, patience=5, maxsize=10,
+            reset_patience=True, reset_on_emptied=False):
     return early_stopping.EarlyStopping(
-        test.get('patience', default_patience),
-        maxsize=test.get('maxsize', default_maxsize),
-        reset_patience=test.get('reset_patience', True))
+        test.get('patience', patience),
+        maxsize=test.get('maxsize', maxsize),
+        reset_on_emptied=test.get('reset_on_emptied', reset_on_emptied),
+        reset_patience=test.get('reset_patience', reset_patience))
 
 
 class TestEarlyStopping(unittest.TestCase):
