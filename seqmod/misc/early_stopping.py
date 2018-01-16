@@ -12,13 +12,14 @@ class pqueue(object):
     def push(self, item, priority):
         if self.heapmax:
             priority = -priority
-        heapq.heappush(self.queue, (priority, item))
+        # add current queue length to break ties
+        heapq.heappush(self.queue, (priority, len(self.queue), item))
         if len(self.queue) > self.maxsize:
             # print("Popped {}".format(self.pop()))
             self.pop()
 
     def pop(self):
-        p, x = heapq.heappop(self.queue)
+        p, _, x = heapq.heappop(self.queue)
         if self.heapmax:
             return -p, x
         return p, x
@@ -28,18 +29,18 @@ class pqueue(object):
 
     def get_min(self):
         if self.heapmax:
-            p, x = max(self.queue)
+            p, _, x = max(self.queue)
             return -p, x
         else:
-            p, x = min(self.queue)
+            p, _, x = min(self.queue)
             return p, x
 
     def get_max(self):
         if self.heapmax:
-            p, x = min(self.queue)
+            p, _, x = min(self.queue)
             return -p, x
         else:
-            p, x = max(self.queue)
+            p, _, x = max(self.queue)
             return p, x
 
     def is_full(self):

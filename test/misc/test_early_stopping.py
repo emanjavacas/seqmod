@@ -50,6 +50,13 @@ test_reset = {
     'patience': 3
 }
 
+test_equal = {
+    'run': [3, 2, 2],
+    'patience': 2,
+    # unorderable types
+    'models': [{'a': 1}, {'b': 2}, {'c': 3}]
+}
+
 
 def get_best_idx(run):
     "get position of the smallest checkpoint"
@@ -183,3 +190,14 @@ class TestEarlyStopping(unittest.TestCase):
 
         self.assertEqual(run_test, test_reset['should_raise'],
                          'should raise')
+
+    def test_equal(self):
+        es = make_es(test_equal)
+
+        for checkpoint, model in zip(test_equal['run'], test_equal['models']):
+            # shouldn't throw TypeError (unorderable)
+            es.add_checkpoint(checkpoint, model=model)
+
+        smallest, model = es.get_min()
+        self.assertEqual(smallest, min(test_equal['run']))
+        self.assertEqual(model, test_equal['models'][-1])
