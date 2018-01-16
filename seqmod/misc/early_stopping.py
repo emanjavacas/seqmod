@@ -67,19 +67,24 @@ class EarlyStopping(pqueue):
 
     Parameters
     ----------
-    maxsize: int, buffer size
-        Only consider so many previous checkpoints before raising the
-        Exception, buffer will be freed after `maxsize` checkpoints are
-        introduced. After freeing the buffer the previously best checkpoint is
-        kept in the buffer to allow for comparisons with checkpoints that are
-        far in the past. The number of failed attempts will however be freed
-        alongside the buffer.
-
     patience: int (optional, default to maxsize)
         Number of failed attempts to wait until finishing training.
 
-    reset_patience: bool, default True
+    maxsize: int, buffer size,
+        Number of checks after which the queue gets emptied. (After emptying
+        the best model and its corresponding checkpoint are still kept).
+        Useful to control the amount of models that are stored in memory.
 
+    tolerance: float, minimum improvement needed for a checkpoint to not be
+        considered a failure.
+
+    reset_patience: bool, default True,
+        Whether to reset the number of registered failures when encountering
+        a new lowest checkpoint.
+
+    reset_on_emptied: bool, default False,
+        Whether to reset the number of registered failures after emptying the
+        queue.
     """
 
     def __init__(self, patience, maxsize=10, tolerance=1e-4,
