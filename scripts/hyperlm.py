@@ -170,7 +170,7 @@ if __name__ == '__main__':
 
             optimizer = getattr(optim, args.optim)(m.parameters(), lr=args.lr)
 
-            self.early_stopping = EarlyStopping(5, patience=3)
+            self.early_stopping = EarlyStopping(args.patience)
 
             def early_stop_hook(trainer, epoch, batch_num, num_checkpoints):
                 valid_loss = trainer.validate_model()

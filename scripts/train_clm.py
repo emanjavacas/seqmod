@@ -167,7 +167,7 @@ if __name__ == '__main__':
 
     optimizer = getattr(optim, args.optim)(m.parameters(), lr=args.lr)
     scheduler = optim.lr_scheduler.StepLR(optimizer, 1, 0.5)
-    early_stopping = EarlyStopping(max(args.patience, 10), patience=args.patience)
+    early_stopping = EarlyStopping(args.patience)
 
     # hook
     check_hook = u.make_clm_hook(

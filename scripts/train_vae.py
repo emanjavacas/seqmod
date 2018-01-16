@@ -205,7 +205,7 @@ if __name__ == '__main__':
 
     trainer = VAETrainer(
         model, {'train': train, 'valid': valid, 'test': test}, optimizer,
-        losses=losses, early_stopping=EarlyStopping(5, patience=args.patience),
+        losses=losses, early_stopping=EarlyStopping(args.patience),
         max_norm=args.max_norm, scheduler=scheduler)
 
     # hooks

@@ -51,7 +51,7 @@ class pqueue(object):
 
 class EarlyStoppingException(Exception):
     def __init(self, message, data={}):
-        super(EarlyStopping, self).__init__(message)
+        super(EarlyStoppingException, self).__init__(message)
         self.message = message
         self.data = data
 
@@ -82,46 +82,63 @@ class EarlyStopping(pqueue):
 
     """
 
-    def __init__(self, maxsize, patience=None, tolerance=1e-4,
-                 reset_patience=True):
+    def __init__(self, patience, maxsize=10, tolerance=1e-4,
+                 reset_patience=False, reset_on_emptied=True):
         """Set params."""
+        self.patience = patience
+        self.maxsize = maxsize
         self.tolerance = tolerance
-        self.patience, self.fails = patience or maxsize - 1, 0
         self.reset_patience = reset_patience
+        self.reset_on_emptied = reset_on_emptied
+        # data
         self.stopped = False
+        self.fails = 0
         self.checks = []  # register losses over checkpoints
 
-        if self.patience >= maxsize:
-            raise ValueError("patience must be smaller than maxsize")
+        if self.reset_on_emptied and patience >= maxsize:
+            raise ValueError(
+                "`patience` must be smaller than maxsize when resetting"
+                " patience on full queue (`reset_on_emptied`)")
 
-        super(EarlyStopping, self).__init__(maxsize, heapmax=True)
+        super(EarlyStopping, self).__init__(self.maxsize, heapmax=True)
 
-    def find_smallest(self):
+    def _find_smallest(self):
         (index, _), *_ = sorted(enumerate(self.checks), key=itemgetter(1))
-        return index + 1   # 1-index
+        return index + 1        # 1-index
 
-    def add_checkpoint(self, checkpoint, model=None):
+    def _build_message(self, smallest):
+        msg = "Stop after {} checkpoints. ".format(len(self.checks))
+        msg += "Best score {:.4f} ".format(smallest)
+        msg += "at checkpoint {} ".format(self._find_smallest())
+        msg += "with patience {}.".format(self.patience)
+        return msg
+
+    def add_checkpoint(self, checkpoint, model=None, add_check=True):
         """Add loss to queue and stop if patience is exceeded."""
-        if not self.is_empty():
-            smallest, best_model = self.get_min()
-            if (checkpoint + self.tolerance) > smallest:
-                self.fails += 1
+        if add_check:
+            self.checks.append(checkpoint)
 
-            if self.fails == self.patience:
-                self.stopped = True
-                msg = "Stop after {} checkpoints. ".format(len(self.checks))
-                msg += "Best score {:.4f} ".format(smallest)
-                msg += "at checkpoint {} ".format(self.find_smallest())
-                msg += "with patience {}.".format(self.patience)
-                raise EarlyStoppingException(
-                    msg, {'model': best_model, 'smallest': smallest})
+        if self.is_empty():
+            self.push(model, checkpoint)
+            return
 
-        self.push(model, checkpoint)
-        self.checks.append(checkpoint)
-
+        smallest, best_model = self.get_min()
         if self.is_full():
-            checkpoint, best_model = self.get_min()
             self.queue = []
+            if self.reset_on_emptied:
+                self.fails = 0
+            self.add_checkpoint(checkpoint, model=best_model, add_check=False)
+
+        if (checkpoint + self.tolerance) > smallest:
+            self.fails += 1
+        else:
             if self.reset_patience:
                 self.fails = 0
-            self.add_checkpoint(checkpoint, model=best_model)
+
+        if self.fails == self.patience:
+            self.stopped = True
+            raise EarlyStoppingException(
+                self._build_message(smallest),
+                {'model': best_model, 'smallest': smallest})
+
+        self.push(model, checkpoint)

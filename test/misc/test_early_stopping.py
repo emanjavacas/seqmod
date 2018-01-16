@@ -4,72 +4,171 @@ import unittest
 from seqmod.misc import early_stopping
 
 
+tests = [
+    {
+        'run': [2.5, 3.0, 2.0, 1.5],
+        'should_raise': False
+    }, {
+        'run': [3.0, 2.5, 2.0, 1.5, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5],
+        'patience': 4,
+        'should_raise': True
+    }, {
+        'run': [3.0, 2.5, 2.0, 1.5, 0.9, 1.0, 1.1, 1.2, 1.0],
+        'patience': 4,
+        'should_raise': True
+    }, {
+        'run': [3, 4, 5, 2, 3, 4],
+        'reset_patience': False,
+        'patience': 3,
+        'should_raise': True
+    }
+]
+
+test_emptying = {
+    'run': [2.5, 3.0, 2.0, 1.5],
+    'patience': 2,
+    'maxsize': 3,
+    'should_raise': False,
+}
+
+test_queue = {
+    'run': [2.5, 3.0, 2.0, 1.5],
+    'should_raise': False
+}
+
+test_reset = {
+    'run': [3, 2.8, 2.9, 3.0, 2.7, 3.1],
+    'patience': 3
+}
+
+
+def get_best_idx(run):
+    "get position of the smallest checkpoint"
+    return sorted(enumerate(run), reverse=False, key=lambda i: i[1])[0][0]
+
+
+def get_checkpoints(test):
+    "get the number of checkpoints that should be run for a test"
+    es = make_es(test)
+    best = get_best_idx(test['run'])
+
+    if test['should_raise']:
+        if es.reset_patience:
+            # run until the smallest plus patience (best is 0-index)
+            checkpoints = es.patience + best + 1
+        else:
+            # find the actual number of checkpoints before failing
+            checkpoints, fails, best = 0, 0, float('inf')
+            for i in test['run']:
+                checkpoints += 1
+                if i < best:
+                    best = i
+                else:
+                    fails += 1
+                if fails >= es.patience:
+                    break
+    else:
+        # run through
+        checkpoints = len(test['run'])
+
+    return checkpoints
+
+
+def make_es(test, default_patience=5, default_maxsize=10):
+    return early_stopping.EarlyStopping(
+        test.get('patience', default_patience),
+        maxsize=test.get('maxsize', default_maxsize),
+        reset_patience=test.get('reset_patience', True))
+
+
 class TestEarlyStopping(unittest.TestCase):
-    def setUp(self):
-        self.maxsize = 5
-        self.patience = 3
-        self.e_s = early_stopping.EarlyStopping(self.maxsize, self.patience)
+    def _test_early_stopping(self, test, test_id):
+        es = make_es(test)
+        best = get_best_idx(test['run'])
+        checkpoints = get_checkpoints(test)
+
+        run_test = False
+
+        for idx, checkpoint in enumerate(test['run']):
+            try:
+                es.add_checkpoint(checkpoint, model=idx)
+            except early_stopping.EarlyStoppingException as e:
+                run_test = True
+                message, data = e.args
+                self.assertEqual(
+                    len(es.checks), checkpoints,
+                    "check number of registered checkpoints: {}".format(test_id))
+                self.assertEqual(
+                    data['model'], best,
+                    "check best registered id/model: {}".format(test_id))
+                # _find_smallest is 1-index
+                self.assertEqual(
+                    es._find_smallest(), best + 1,
+                    "check smallest registered checkpoint id: {}".format(test_id))
+                self.assertEqual(
+                    data['smallest'], test['run'][best],
+                    "check smallest registered checkpoint: {}".format(test_id))
+
+        self.assertEqual(
+            run_test, test['should_raise'],
+            "check raised: {}".format(test_id))
+
+    def test_early_stopping(self):
+        for idx, test in enumerate(tests):
+            self._test_early_stopping(test, idx + 1)
 
     def test_queue(self):
-        run = [2.5, 3.0, 2.0, 1.5]
-        for checkpoint in run:
-            self.e_s.add_checkpoint(checkpoint)
-        priority, _ = self.e_s.pop()  # EarlyStopping is just a queue
-        self.assertEqual(priority, max(run))
-        priority, _ = self.e_s.get_min()
-        self.assertEqual(priority, min(run))
+        es = make_es(test_queue)
 
-    def test_check(self):
-        run = [3.0, 2.5, 2.0, 1.5, 0.9, 1.0, 1.1, 1.2, 1.0]
-        # best is 0.99 at position 4, error at previous to last position
-        run_test = False
-        for idx, checkpoint in enumerate(run):
-            try:
-                self.e_s.add_checkpoint(checkpoint, model=idx)
-            except early_stopping.EarlyStoppingException as e:
-                run_test = True
-                message, data = e.args
-                self.assertEqual(len(self.e_s.checks), len(run) - 1)
-                self.assertEqual(data['model'] + 1, 5)  # 0-index
-                self.assertEqual(self.e_s.find_smallest(), 5)
-                self.assertEqual(data['smallest'], 0.9)
-        self.assertTrue(run_test)
+        for checkpoint in test_queue['run']:
+            es.add_checkpoint(checkpoint)
 
-    def test_early_stopping1(self):
-        des_run, asc_run = [3.0, 2.5, 2.0, 1.5, 1.0], [1.1, 1.2, 1.3, 1.4, 1.5]
-        run_test = False
-        for checkpoint in des_run + asc_run:
-            try:
-                self.e_s.add_checkpoint(checkpoint)
-            except early_stopping.EarlyStoppingException as e:
-                message, data = e.args
-                self.assertEqual(data['smallest'], min(des_run))
-                self.assertEqual(checkpoint, asc_run[self.patience-1])
-                run_test = True
-                break
-        self.assertTrue(run_test)
+        # EarlyStopping is just a queue
+        priority, _ = es.pop()  # popping first item added (also largest check)
+        self.assertEqual(priority, max(test_queue['run']))
+        priority, _ = es.get_min()
+        self.assertEqual(priority, min(test_queue['run']))
 
-    def test_early_stopping2(self):
-        run = [3.0, 2.5, 2.0, 1.5, 1.0, 1.1, 1.2, 0.9]
-        for checkpoint in run:
-            self.e_s.add_checkpoint(checkpoint)
-        priority, _ = self.e_s.get_min()
-        self.assertEqual(priority, min(run))
+    def test_emptying(self):
+        es = make_es(test_emptying)
+
+        for checkpoint in test_emptying['run']:
+            es.add_checkpoint(checkpoint)
+
+        # EarlyStopping is just a queue
+        priority, _ = es.pop()
+        # only item in the queue, since it got emptied after adding the 4th check
+        self.assertEqual(priority, min(test_emptying['run']))
 
     def test_reset(self):
-        run = [3, 2.9, 2.8, 2.9, 3.0, 3.1]
+        test_reset['should_raise'] = False
+        test_reset['reset_patience'] = True
+        es = make_es(test_reset)
+
         # run resetting (shouldn't throw any exceptions)
-        for checkpoint in run:
-            self.e_s.add_checkpoint(checkpoint)
+        for checkpoint in test_reset['run']:
+            es.add_checkpoint(checkpoint)
+
+        smallest, _ = es.get_min()
+        self.assertEqual(smallest, min(test_reset['run']),
+                         'best checkpoint won')
+        self.assertEqual(len(es.checks), len(test_reset['run']),
+                         'all checkpoints got registered')
+
         # run without resetting (should error)
-        self.e_s = early_stopping.EarlyStopping(
-            self.maxsize, self.patience, reset_patience=False)
+        test_reset['should_raise'] = True
+        test_reset['reset_patience'] = False
+        es = make_es(test_reset)
+
         run_test = False
-        for checkpoint in run:
+        for checkpoint in test_reset['run']:
             try:
-                self.e_s.add_checkpoint(checkpoint)
+                es.add_checkpoint(checkpoint)
             except early_stopping.EarlyStoppingException as e:
                 run_test = True
                 message, data = e.args
-                self.assertEqual(data['smallest'], min(run))
-        self.assertTrue(run_test)
+                self.assertEqual(data['smallest'], min(test_reset['run']),
+                                 'best checkpoint won')
+
+        self.assertEqual(run_test, test_reset['should_raise'],
+                         'should raise')
