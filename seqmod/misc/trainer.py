@@ -29,8 +29,11 @@ class LossStatistics(object):
         `loss`, loss label, and `format`, a format function.
         Losses should be input in same order as output by the
         model.
+
+    - weights: dict of loss->int specifying the weight of the
+        referenced loss when calling reduce.
     """
-    def __init__(self, *losses):
+    def __init__(self, *losses, weights=None):
         self.losses = []
         for loss in losses:
             if isinstance(loss, str):
@@ -39,6 +42,15 @@ class LossStatistics(object):
                 if 'format' not in loss:
                     loss['format'] = ppl  # default to ppl
                 self.losses.append(loss)
+
+        if weights is not None:
+            if set(weights) != set(self.losses):
+                raise ValueError("Weights requires same items as losses")
+            if sum(weights.values()) != 1.0:
+                raise ValueError("Loss weights must add up to 1")
+            self.weights = weights
+        else:
+            self.weights = {loss['loss']: 1 for loss in self.losses}
 
         self.history, self.examples = [], 0
 
@@ -68,20 +80,25 @@ class LossStatistics(object):
         self.history.append(tuple(loss))
         self.examples += num_examples
 
-    def pack(self, labels=False):
+    def reduce(self):
+        """
+        Return a float summary of all the losses using user defined weights.
+        Losses are first averaged over the history.
+        """
+        losses = self.pack()
+        return sum(self.weights[loss] * losses[loss] for loss in losses)
+
+    def pack(self):
         """
         Compute average losses over batches.
 
-        - labels: bool, if true output will be a dict with loss labels
+        Returns a dictionary mapping from loss label to average loss
         """
         losses, packed = list(zip(*self.history)), []
         for formatter, loss in zip(self.losses, losses):
             packed.append(formatter['format'](sum(loss) / len(self.history)))
 
-        if labels:
-            packed = dict(zip([l['loss'] for l in self.losses], packed))
-
-        return packed
+        return dict(zip([l['loss'] for l in self.losses], packed))
 
 
 class Trainer(object):
@@ -192,7 +209,7 @@ class Trainer(object):
 
     def on_epoch_end(self, epoch, loss, examples, duration, valid_loss=None):
         self.log("epoch_end", {"epoch": epoch,
-                               "loss": loss.pack(labels=True),
+                               "loss": loss.pack(),
                                "examples": examples,
                                "duration": duration})
 
@@ -200,17 +217,16 @@ class Trainer(object):
         self.log("validation_begin", {"epoch": epoch})
 
     def on_validation_end(self, epoch, loss):
-        packed = loss.pack(labels=True)
-        self.log("validation_end", {"epoch": epoch, "loss": packed})
+        self.log("validation_end", {"epoch": epoch, "loss": loss.pack()})
         if self.early_stopping is not None:
             self.early_stopping.add_checkpoint(
-                sum(loss.pack()), copy.deepcopy(self.model))
+                loss.reduce(), copy.deepcopy(self.model))
 
     def on_test_begin(self, epoch):
         self.log("test_begin", {"epoch": epoch})
 
     def on_test_end(self, loss):
-        self.log("test_end", {"loss": loss.pack(labels=True)})
+        self.log("test_end", {"loss": loss.pack()})
 
     # optimizer
     def optimizer_step(self):
@@ -329,7 +345,7 @@ class Trainer(object):
                     'total_batches': len(batch_order),
                     'examples': check_loss.examples,
                     'duration': time.time() - start,
-                    'loss': check_loss.pack(labels=True)})
+                    'loss': check_loss.pack()})
                 self.run_hooks(epoch, batch_num, checkpoint)
                 self.model.train()
                 check_loss.reset()
@@ -377,8 +393,8 @@ class Trainer(object):
                     self.on_validation_end(e, valid_loss)
                     self.model.train()
 
-                if valid_loss is not None:  # merge after callback
-                    valid_loss = sum(valid_loss.pack())
+                if valid_loss is not None:
+                    valid_loss = valid_loss.reduce()
 
                 # scheduler after valid
                 self.scheduler_step(e, valid_loss)
@@ -402,7 +418,7 @@ class Trainer(object):
             self.on_test_begin(self.batch_run)
             test_loss = self.validate_model(test=True, model=best_model, **kwargs)
             self.on_test_end(test_loss)
-            test_loss = sum(test_loss.pack())
+            test_loss = test_loss.reduce()
 
         return (best_model.cpu(), valid_loss), test_loss
 
