@@ -35,6 +35,7 @@ class LossStatistics(object):
     """
     def __init__(self, *losses, weights=None):
         self.losses = []
+
         for loss in losses:
             if isinstance(loss, str):
                 self.losses.append({'loss': loss, 'format': ppl})
@@ -43,14 +44,14 @@ class LossStatistics(object):
                     loss['format'] = ppl  # default to ppl
                 self.losses.append(loss)
 
+        loss_labels = [loss['loss'] for loss in self.losses]
+
         if weights is not None:
-            if set(weights) != set(self.losses):
+            if set(weights) != set(loss_labels):
                 raise ValueError("Weights requires same items as losses")
-            if sum(weights.values()) != 1.0:
-                raise ValueError("Loss weights must add up to 1")
             self.weights = weights
         else:
-            self.weights = {loss['loss']: 1 for loss in self.losses}
+            self.weights = {label: 1 for label in loss_labels}
 
         self.history, self.examples = [], 0
 
@@ -58,7 +59,7 @@ class LossStatistics(object):
         """
         Return a new copy of the current loss.
         """
-        return LossStatistics(*self.losses)
+        return LossStatistics(*self.losses, weights=self.weights)
 
     def reset(self):
         """
@@ -75,7 +76,7 @@ class LossStatistics(object):
 
         if len(loss) != len(self.losses):
             raise ValueError(
-                f"Got {len(loss)} losses but needs {len(self.losses)}")
+                "Got {len(loss)} losses but needs {}".format(len(self.losses)))
 
         self.history.append(tuple(loss))
         self.examples += num_examples
@@ -104,17 +105,18 @@ class LossStatistics(object):
 class Trainer(object):
     def __init__(self, model, datasets, optimizer, scheduler=None,
                  early_stopping=None, test_name='test', valid_name='valid',
-                 max_norm=None, losses=('loss',), verbose=True):
+                 max_norm=None, losses=('loss',), weights=None, verbose=True):
         """
         Parameter:
         ----------
 
-        - loss_labels: tuple of str, a tuple specifying the names of the
+        - max_norm: float or None, restrict the norm of the gradient to this
+            value before each SGD update.
+        - losses: tuple of str, a tuple specifying the names of the
             losses return by run_batch (typically this is useful to tell
             apart the different losses in a complex loss function)
-        - size_average: bool,
-            whether the loss is already averaged over examples.
-            See `size_average` in the torch.nn criterion functions.
+        - weights: dict or None, if given the losses will be reduce to a single
+            value by a weighted sum using this parameter.
         """
         # attributes
         self.model = model
@@ -122,7 +124,7 @@ class Trainer(object):
         self.optimizer = optimizer
         self.scheduler = scheduler
         self.early_stopping = early_stopping
-        self.loss = LossStatistics(*losses)
+        self.loss = LossStatistics(*losses, weights=weights)
         self.max_norm = max_norm
         # config
         self.verbose = verbose
