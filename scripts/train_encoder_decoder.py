@@ -15,7 +15,7 @@ from torch import nn, optim
 from seqmod.modules.encoder_decoder import make_rnn_encoder_decoder
 import seqmod.utils as u
 
-from seqmod.misc import EarlyStopping, Trainer
+from seqmod.misc import EarlyStopping, Trainer, Checkpoint
 from seqmod.misc import StdLogger, VisdomLogger, TensorboardLogger
 from seqmod.misc import PairedDataset, Dict, inflection_sigmoid
 
@@ -163,7 +163,8 @@ if __name__ == '__main__':
     early_stopping = EarlyStopping(args.patience)
     trainer = Trainer(
         model, {'train': train, 'valid': valid}, optimizer,
-        early_stopping=early_stopping, max_norm=args.max_norm)
+        early_stopping=early_stopping, max_norm=args.max_norm,
+        checkpoint=Checkpoint(model.__class__.__name__).setup(args, src_dict))
     trainer.add_loggers(StdLogger())
     # trainer.add_loggers(VisdomLogger(env='encdec'))
     trainer.add_loggers(TensorboardLogger(comment='encdec'))
