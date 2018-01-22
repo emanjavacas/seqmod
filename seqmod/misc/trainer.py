@@ -6,6 +6,7 @@ import copy
 import math
 import collections
 import yaml
+import argparse
 from operator import itemgetter
 from datetime import datetime
 
@@ -118,7 +119,7 @@ class Checkpoint(object):
     buffer_size: max number of best models to keep in disk.
     ext: model file extension.
     """
-    def __init__(self, topdir, subdir, buffer_size=1, ext='torch'):
+    def __init__(self, subdir, topdir='./models', buffer_size=1, ext='torch'):
         self.topdir = topdir
         self.subdir = subdir
         self.subdir += '-{}'.format(datetime.now().strftime("%Y_%m_%d-%H_%M_%S"))
@@ -141,6 +142,8 @@ class Checkpoint(object):
             os.makedirs(os.path.join(self.topdir, self.subdir))
 
         if args is not None:
+            if isinstance(args, argparse.Namespace):
+                args = vars(args)
             with open(self._joinpath('params.yml'), 'w') as f:
                 yaml.dump(args, f, default_flow_style=False)
 
