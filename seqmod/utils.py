@@ -52,12 +52,16 @@ def save_model(model, prefix, d=None, mode='torch'):
     else:
         raise ValueError("Unknown mode [{}]".format(mode))
 
-    with open(prefix + "." + ext, 'wb') as f:
+    filename = prefix + "." + ext
+
+    with open(filename, 'wb') as f:
         save_fn(model, f)
 
     if d is not None:
         with open(prefix + ".dict." + ext, 'wb') as f:
             save_fn(d, f)
+
+    return filename
 
 
 def save_checkpoint(parent, model, args, d=None, ppl=None, suffix=None):
