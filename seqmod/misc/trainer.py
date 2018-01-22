@@ -1,9 +1,13 @@
 
+import os
 import random
 import time
 import copy
 import math
 import collections
+import yaml
+from operator import itemgetter
+from datetime import datetime
 
 from torch.optim import lr_scheduler
 from torch.nn.utils import clip_grad_norm
@@ -102,8 +106,68 @@ class LossStatistics(object):
         return dict(zip([l['loss'] for l in self.losses], packed))
 
 
+class Checkpoint(object):
+    """
+    Utility class for storing intermediate models
+
+    Parameters:
+    -----------
+    topdir: top directory to store models
+    subdir: name for the subdirectory to store the current model.
+        Will be appended with a timestamp to disambiguate runs.
+    buffer_size: max number of best models to keep in disk.
+    ext: model file extension.
+    """
+    def __init__(self, topdir, subdir, buffer_size=1, ext='torch'):
+        self.topdir = topdir
+        self.subdir = subdir
+        self.subdir += '-{}'.format(datetime.now().strftime("%Y_%m_%d-%H_%M_%S"))
+        self.buffer_size = buffer_size
+        self.buf = []
+        self.ext = ext
+        self.is_setup = False
+
+    def _joinpath(self, *path):
+        return os.path.join(self.topdir, self.subdir, *path)
+
+    def _modelname(self, loss):
+        return self._joinpath('model-{:.4f}.{}'.format(loss, self.ext))
+
+    def setup(self, args=None, d=None):
+        if self.is_setup:
+            return
+
+        if not os.path.isdir(os.path.join(self.topdir, self.subdir)):
+            os.makedirs(os.path.join(self.topdir, self.subdir))
+
+        if args is not None:
+            with open(self._joinpath('params.yml'), 'w') as f:
+                yaml.dump(args, f, default_flow_style=False)
+
+        if d is not None:
+            u.save_model(d, self._joinpath('dict'), mode=self.ext)
+
+        self.is_setup = True
+
+        return self
+
+    def save(self, model, loss):
+        if len(self.buf) == self.buffer_size:
+            if loss < max(self.buf, key=itemgetter(1))[1]:
+                worstmodel, worstloss = self.buf.pop()
+                os.remove(worstmodel)
+            else:
+                return
+
+        modelname = u.save_model(model, self._modelname(loss), mode=self.ext)
+        self.buf.append((modelname, loss))
+        self.buf.sort(key=itemgetter(1))
+
+        return self
+
+
 class Trainer(object):
-    def __init__(self, model, datasets, optimizer, scheduler=None,
+    def __init__(self, model, datasets, optimizer, scheduler=None, checkpoint=None,
                  early_stopping=None, test_name='test', valid_name='valid',
                  max_norm=None, losses=('loss',), weights=None, verbose=True):
         """
@@ -123,6 +187,7 @@ class Trainer(object):
         self.datasets = datasets   # is a dict with at least a 'train' entry
         self.optimizer = optimizer
         self.scheduler = scheduler
+        self.checkpoint = checkpoint
         self.early_stopping = early_stopping
         self.loss = LossStatistics(*losses, weights=weights)
         self.max_norm = max_norm
@@ -223,6 +288,8 @@ class Trainer(object):
         if self.early_stopping is not None:
             self.early_stopping.add_checkpoint(
                 loss.reduce(), copy.deepcopy(self.model))
+        if self.checkpoint is not None:
+            self.checkpoint.save(self.model, loss.reduce())
 
     def on_test_begin(self, epoch):
         self.log("test_begin", {"epoch": epoch})
