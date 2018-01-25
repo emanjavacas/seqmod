@@ -280,11 +280,10 @@ def make_lm_hook(d, seed_texts=None, max_seq_len=25, gpu=False,
         trainer.log("info", "Checking training...")
         if validate:
             loss = trainer.validate_model()
-            packed = loss.pack(labels=True)
-            trainer.log("validation_end", {'epoch': epoch, 'loss': packed})
+            trainer.log("validation_end", {'epoch': epoch, 'loss': loss.pack()})
             if early_stopping is not None:
                 trainer.log("info", "Registering early stopping loss...")
-                early_stopping.add_checkpoint(sum(loss.pack()))
+                early_stopping.add_checkpoint(loss.reduce())
 
         trainer.log("info", "Generating text...")
         scores, hyps = trainer.model.generate(
@@ -312,11 +311,11 @@ def make_mlm_hook(d, seed_texts=None, max_seq_len=25, gpu=False,
     def hook(trainer, epoch, batch_num, checkpoint):
         trainer.log("info", "Checking training...")
         if validate:
-            loss = sum(trainer.validate_model().pack())
-            trainer.log("info", "Valid loss: {:g}".format(loss))
+            loss = trainer.validate_model()
+            trainer.log("validation_end", {'epoch': epoch, 'loss': loss.pack()})
             if early_stopping is not None:
                 trainer.log("info", "Registering early stopping loss...")
-                early_stopping.add_checkpoint(loss)
+                early_stopping.add_checkpoint(loss.reduce())
         trainer.log("info", "Generating text...")
         for head in trainer.model.project:
             trainer.log("info", "Head: {}".format(head))

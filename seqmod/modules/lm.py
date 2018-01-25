@@ -7,7 +7,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 
-from seqmod.modules.torch_utils import init_hidden_for, repackage_hidden, swap
+from seqmod.modules.torch_utils import init_hidden_for, repackage_hidden
+from seqmod.modules.torch_utils import swap, select_cols
 from seqmod.modules.embedding import Embedding
 from seqmod.modules import rnn
 from seqmod.modules.ff import MaxOut, Highway
