@@ -194,7 +194,7 @@ if __name__ == '__main__':
     # create trainer
     trainer = Trainer(
         m, {"train": train, "test": test, "valid": valid}, optimizer,
-        max_norm=args.max_norm)
+        max_norm=args.max_norm, losses=('bpc',))
 
     # hooks
     # - general hook

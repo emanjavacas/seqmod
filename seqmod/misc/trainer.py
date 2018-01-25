@@ -21,6 +21,10 @@ def ppl(loss):
     return math.exp(min(100, loss))
 
 
+def bpc(loss):
+    return math.log2(math.e) * loss
+
+
 class LossStatistics(object):
     """
     Accumulator for different losses (for report purposes)
@@ -43,10 +47,13 @@ class LossStatistics(object):
 
         for loss in losses:
             if isinstance(loss, str):
-                self.losses.append({'loss': loss, 'format': ppl})
+                if loss == 'ppl':
+                    self.losses.append({'loss': loss, 'format': ppl})
+                elif loss == 'bpc':
+                    self.losses.append({'loss': loss, 'format': bpc})
+                else:           # default to ppl
+                    self.losses.append({'loss': loss, 'format': ppl})
             else:
-                if 'format' not in loss:
-                    loss['format'] = ppl  # default to ppl
                 self.losses.append(loss)
 
         loss_labels = [loss['loss'] for loss in self.losses]
