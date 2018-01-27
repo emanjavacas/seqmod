@@ -131,6 +131,7 @@ def make_initializer(
         linear_bias={'type': 'constant', 'args': {'val': 0.}},
         rnn={'type': 'xavier_uniform', 'args': {'gain': 1.}},
         rnn_bias={'type': 'constant', 'args': {'val': 0.}},
+        cnn={'type': 'xavier_normal', 'args': {'gain': 1.}},
         cnn_bias={'type': 'constant', 'args': {'val': 0.}},
         emb={'type': 'normal', 'args': {'mean': 0, 'std': 1}},
         default={'type': 'uniform', 'args': {'a': -0.05, 'b': 0.05}}):
@@ -178,11 +179,11 @@ def make_initializer(
                 if is_bias(p_name):
                     getattr(init, cnn_bias['type'])(p, **cnn_bias['args'])
                 else:
+                    getattr(init, cnn['type'])(p, **cnn['args'])
                     # Karpathy: http://cs231n.github.io/neural-networks-2/#init
                     # -> scale weight vector by square root of its fan-in...
                     # fan_in, _ = init._calculate_fan_in_and_fan_out(p)
                     # init.normal(p, mean=0, std=math.sqrt(fan_in))
-                    init.xavier_normal(p)
 
     return initializer
 
