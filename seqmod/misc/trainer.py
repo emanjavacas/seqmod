@@ -493,7 +493,7 @@ class Trainer(object):
 
         # test
         if run_test and self.test_name in self.datasets:
-            self.model.eval()
+            best_model.eval()
             self.on_test_begin(self.batch_run)
             test_loss = self.validate_model(test=True, model=best_model, **kwargs)
             self.on_test_end(test_loss)
