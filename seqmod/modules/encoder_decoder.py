@@ -366,6 +366,7 @@ def make_grl_rnn_encoder_decoder(
         add_init_jitter=False,
         cond_dims=None,
         cond_vocabs=None,
+        conditional_decoder=True,
         reverse=False
 ):
 
@@ -385,6 +386,9 @@ def make_grl_rnn_encoder_decoder(
                             train_init=False, add_init_jitter=True)
 
     _, encoding_size = encoder.encoding_size
+
+    if not conditional_decoder:
+        cond_dims, cond_vocabs = None, None
 
     decoder = RNNDecoder(src_embeddings, hid_dim, num_layers, cell, encoding_size,
                          dropout=dropout, variational=variational,

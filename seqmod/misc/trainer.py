@@ -21,6 +21,10 @@ def ppl(loss):
     return math.exp(min(100, loss))
 
 
+def bpc(loss):
+    return math.log2(math.e) * loss
+
+
 class LossStatistics(object):
     """
     Accumulator for different losses (for report purposes)
@@ -43,10 +47,13 @@ class LossStatistics(object):
 
         for loss in losses:
             if isinstance(loss, str):
-                self.losses.append({'loss': loss, 'format': ppl})
+                if loss == 'ppl':
+                    self.losses.append({'loss': loss, 'format': ppl})
+                elif loss == 'bpc':
+                    self.losses.append({'loss': loss, 'format': bpc})
+                else:           # default to ppl
+                    self.losses.append({'loss': loss, 'format': ppl})
             else:
-                if 'format' not in loss:
-                    loss['format'] = ppl  # default to ppl
                 self.losses.append(loss)
 
         loss_labels = [loss['loss'] for loss in self.losses]
@@ -486,7 +493,7 @@ class Trainer(object):
 
         # test
         if run_test and self.test_name in self.datasets:
-            self.model.eval()
+            best_model.eval()
             self.on_test_begin(self.batch_run)
             test_loss = self.validate_model(test=True, model=best_model, **kwargs)
             self.on_test_end(test_loss)

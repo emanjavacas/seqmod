@@ -63,11 +63,10 @@ def make_lr_hook(optimizer, factor, patience, verbose=True):
         optimizer, factor=factor, patience=patience, verbose=verbose)
 
     def hook(trainer, epoch, batch_num, checkpoint):
-        valid_loss = trainer.validate_model()
+        loss = trainer.validate_model()
         if verbose:
-            packed = valid_loss.pack(labels=True)
-            trainer.log("validation_end", {"epoch": epoch, "loss": packed})
-        scheduler.step(sum(valid_loss.pack()))
+            trainer.log("validation_end", {"epoch": epoch, "loss": loss.pack()})
+        scheduler.step(loss.reduce())
 
     return hook
 
@@ -176,7 +175,7 @@ if __name__ == '__main__':
            deepout_act=args.deepout_act, maxouts=args.maxouts,
            word_dropout=args.word_dropout)
 
-    # u.initialize_model(m, rnn={'type': 'orthogonal', 'args': {'gain': 1.0}})
+    u.initialize_model(m, rnn={'type': 'orthogonal', 'args': {'gain': 1.0}})
     # u.initialize_model(m)
     m.embeddings.weight.data.uniform_(-0.1, 0.1)
     next(m.output_proj.children()).weight.data.uniform_(-0.1, 0.1)
@@ -197,7 +196,7 @@ if __name__ == '__main__':
     # create trainer
     trainer = Trainer(
         m, {"train": train, "test": test, "valid": valid}, optimizer,
-        max_norm=args.max_norm)
+        max_norm=args.max_norm, losses=('bpc',))
 
     # hooks
     # - general hook

@@ -100,7 +100,8 @@ if __name__ == '__main__':
     parser.add_argument('--max_norm', default=5., type=float)
     parser.add_argument('--weight_decay', default=0, type=float)
     parser.add_argument('--patience', default=2, type=int)
-    parser.add_argument('--inflection', default=6000, type=int)
+    parser.add_argument('--inflection', default=2, type=float,
+                        help='inflection for kl schedule in epochs')
     parser.add_argument('--epochs', default=15, type=int)
     parser.add_argument('--batch_size', type=int, default=100)
     parser.add_argument('--gpu', action='store_true')
@@ -191,7 +192,8 @@ if __name__ == '__main__':
     scheduler = optim.lr_scheduler.StepLR(optimizer, 1, gamma=0.75)
     scheduler.verbose = True
     # kl annealing
-    kl_schedule = kl_sigmoid_annealing_schedule(inflection=args.inflection)
+    kl_schedule = kl_sigmoid_annealing_schedule(
+        inflection=args.inflection * len(train))
 
     class VAETrainer(Trainer):
         def on_batch_end(self, epoch, batch, loss):
