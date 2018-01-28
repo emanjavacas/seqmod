@@ -538,10 +538,9 @@ class LM(BaseLM):
             proj = nn.Linear(self.hid_dim, vocab)
 
         output_proj.append(proj)
-        output_proj.append(nn.LogSoftmax(dim=1))
         self.output_proj = nn.Sequential(*output_proj)
 
-    def project(self, output, reshape=False):
+    def project(self, output, reshape=False, normalize=True):
         if output.dim() == 2:
             seq_len = 1
         else:
@@ -552,6 +551,9 @@ class LM(BaseLM):
         if reshape:
             # (seq_len x batch_size x vocab)
             output = output.view(seq_len, -1, len(self.embeddings.d))
+
+        if normalize:
+            output = F.log_softmax(output, dim=1)
 
         return output
 
