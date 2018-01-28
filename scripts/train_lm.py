@@ -186,9 +186,11 @@ if __name__ == '__main__':
     print(m)
     print('* number of parameters: {}'.format(m.n_params()))
 
-    # optimizer = getattr(optim, args.optim)(
-    #     m.parameters(), lr=args.lr, betas=(0., 0.99), eps=1e-5)
-    optimizer = getattr(optim, args.optim)(m.parameters(), lr=args.lr)
+    if args.optim == 'Adam':
+        optimizer = getattr(optim, args.optim)(
+            m.parameters(), lr=args.lr, betas=(0., 0.99), eps=1e-5)
+    else:
+        optimizer = getattr(optim, args.optim)(m.parameters(), lr=args.lr)
 
     # create trainer
     trainer = Trainer(

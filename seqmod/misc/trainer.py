@@ -17,6 +17,22 @@ from seqmod import utils as u
 from seqmod.misc.early_stopping import EarlyStoppingException
 
 
+def prompt(message):
+
+    def parse(ans):
+        if ans.lower() == 'yes':
+            return True
+        elif ans.lower() == 'no':
+            return False
+        else:
+            raise ValueError
+
+    try:
+        return parse(input("{} ".format(message)))
+    except ValueError:
+        return prompt("Please answer yes or no")
+
+
 def ppl(loss):
     return math.exp(min(100, loss))
 
@@ -104,7 +120,6 @@ class LossStatistics(object):
     def pack(self):
         """
         Compute average losses over batches.
-
         Returns a dictionary mapping from loss label to average loss
         """
         losses, packed = list(zip(*self.history)), []
@@ -174,6 +189,10 @@ class Checkpoint(object):
         self.buf.sort(key=itemgetter(1))
 
         return self
+
+    def remove(self):
+        import shutil
+        shutil.rmtree(self.join(self.topdir, self.subdir))
 
 
 class Trainer(object):
@@ -488,18 +507,21 @@ class Trainer(object):
 
         self.log("info", "Trained for [{:.3f} secs]".format(time.time()-start))
 
-        if best_model is None:  # use current model
+        # prepare best model
+        if best_model is None:
             best_model = copy.deepcopy(self.model)
+        best_model.eval()
 
-        # test
         if run_test and self.test_name in self.datasets:
-            best_model.eval()
             self.on_test_begin(self.batch_run)
             test_loss = self.validate_model(test=True, model=best_model, **kwargs)
             self.on_test_end(test_loss)
-            test_loss = test_loss.reduce()
 
-        return (best_model.cpu(), valid_loss), test_loss
+        if self.checkpoint is not None:
+            if not prompt('Dow you want to keep intermediate results? (y/n)'):
+                self.checkpoint.remove()
+
+        return (best_model.cpu(), valid_loss), test_loss.reduce()
 
     def train_batches(self, num_batches, checkpoint,
                       shuffle=False, run_test=False, **kwargs):

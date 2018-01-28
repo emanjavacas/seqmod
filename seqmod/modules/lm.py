@@ -538,10 +538,9 @@ class LM(BaseLM):
             proj = nn.Linear(self.hid_dim, vocab)
 
         output_proj.append(proj)
-        output_proj.append(nn.LogSoftmax(dim=1))
         self.output_proj = nn.Sequential(*output_proj)
 
-    def project(self, output, reshape=False):
+    def project(self, output, reshape=False, normalize=True):
         if output.dim() == 2:
             seq_len = 1
         else:
@@ -552,6 +551,9 @@ class LM(BaseLM):
         if reshape:
             # (seq_len x batch_size x vocab)
             output = output.view(seq_len, -1, len(self.embeddings.d))
+
+        if normalize:
+            output = F.log_softmax(output, dim=1)
 
         return output
 
@@ -604,35 +606,52 @@ class LM(BaseLM):
 
         return outs, hidden, weights
 
-    def loss(self, batch_data, test=False, use_schedule=False):
+    def loss(self, batch_data, test=False, use_schedule=False, cache=None):
         # unpack data
         (source, targets), conds = batch_data, None
         if self.conds is not None:
             (source, *conds), (targets, *_) = source, targets
 
-        # get hidden from previous batch (if stored)
-        hidden = self.hidden_state.get('hidden', None)
+        # eventually get data from previous batch
+        hidden, lout = self.hidden_state.get('hidden'), self.hidden_state.get('lout')
+        use_cache = cache is not None and test
 
         # run RNN
-        if use_schedule and self.exposure_rate < 1.0:
+        if use_cache or (use_schedule and self.exposure_rate < 1.0):
+
             outs = []
             for step, t in enumerate(source):
-                if step > 0:
+                if use_schedule and step > 0:
                     t = scheduled_sampling(
                         t, outs[-1], self.project, self.exposure_rate)
                     t = Variable(t, volatile=not self.training)
                 out, hidden, _ = self(t.unsqueeze(0), hidden=hidden, conds=conds)
-                outs.append(out.squeeze(0))  # remove seq_len dim
+                out = out.squeeze(0)
+
+                if use_cache:
+                    if lout is not None:
+                        cache.add(lout.unsqueeze(0), t.unsqueeze(0))
+                    lout = out
+                    out = cache.mixture(out, self.project(out, normalize=False))
+
+                outs.append(out)
             outs = torch.stack(outs, 0)
+
         else:
             outs, hidden, _ = self(source, hidden=hidden, conds=conds)
 
         # store hidden for next batch
         self.hidden_state['hidden'] = repackage_hidden(hidden)
+        if use_cache:
+            self.hidden_state['lout'] = lout
+
+        if use_cache:
+            outs = self.project(outs)
+        else:
+            outs = outs.view(source.size(0) * source.size(1), -1)
 
         # compute loss and backward
-        loss = F.nll_loss(
-            self.project(outs), targets.view(-1), size_average=True)
+        loss = F.nll_loss(outs, targets.view(-1), size_average=True)
 
         if not test:
             loss.backward()
