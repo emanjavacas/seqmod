@@ -15,7 +15,7 @@ from torch import optim
 
 from seqmod.modules.lm import LM
 from seqmod.misc import Trainer, StdLogger, VisdomLogger, EarlyStopping
-from seqmod.misc import Dict, BlockDataset, text_processor
+from seqmod.misc import Dict, BlockDataset, text_processor, Checkpoint
 from seqmod.misc import inflection_sigmoid, inverse_exponential, inverse_linear
 from seqmod import utils as u
 
@@ -58,9 +58,10 @@ def load_dataset(path, d, processor, args):
     return BlockDataset(data, d, args.batch_size, args.bptt, gpu=args.gpu)
 
 
-def make_lr_hook(optimizer, factor, patience, verbose=True):
+def make_lr_hook(optimizer, factor, patience, threshold=0.05, verbose=True):
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, factor=factor, patience=patience, verbose=verbose)
+        optimizer, factor=factor, patience=patience, threshold=threshold,
+        verbose=verbose)
 
     def hook(trainer, epoch, batch_num, checkpoint):
         loss = trainer.validate_model()
@@ -114,6 +115,7 @@ if __name__ == '__main__':
     parser.add_argument('--patience', default=0, type=int)
     parser.add_argument('--lr_schedule_checkpoints', type=int, default=1)
     parser.add_argument('--lr_schedule_factor', type=float, default=1)
+    parser.add_argument('--lr_checkpoints_per_epoch', type=int, default=1)
     # - check
     parser.add_argument('--seed', default=None)
     parser.add_argument('--max_seq_len', default=25, type=int)
@@ -176,10 +178,7 @@ if __name__ == '__main__':
            word_dropout=args.word_dropout)
 
     u.initialize_model(m, rnn={'type': 'orthogonal', 'args': {'gain': 1.0}})
-    # u.initialize_model(m)
     m.embeddings.weight.data.uniform_(-0.1, 0.1)
-    next(m.output_proj.children()).weight.data.uniform_(-0.1, 0.1)
-    next(m.output_proj.children()).bias.data.fill_(0)
 
     if args.gpu:
         m.cuda()
@@ -187,13 +186,15 @@ if __name__ == '__main__':
     print(m)
     print('* number of parameters: {}'.format(m.n_params()))
 
-    optimizer = getattr(optim, args.optim)(
-        m.parameters(), lr=args.lr, betas=(0., 0.99), eps=1e-5)
+    # optimizer = getattr(optim, args.optim)(
+    #     m.parameters(), lr=args.lr, betas=(0., 0.99), eps=1e-5)
+    optimizer = getattr(optim, args.optim)(m.parameters(), lr=args.lr)
 
     # create trainer
     trainer = Trainer(
         m, {"train": train, "test": test, "valid": valid}, optimizer,
-        max_norm=args.max_norm, losses=('bpc',))
+        max_norm=args.max_norm, losses=('bpc' if args.level == 'char' else 'ppl',),
+        checkpoint=Checkpoint(m.__class__.__name__, buffer_size=3).setup(args))
 
     # hooks
     # - general hook
@@ -204,6 +205,7 @@ if __name__ == '__main__':
         d, temperature=args.temperature, max_seq_len=args.max_seq_len,
         gpu=args.gpu, level=args.level, early_stopping=early_stopping)
     trainer.add_hook(model_hook, hooks_per_epoch=args.hooks_per_epoch)
+
     # - scheduled sampling hook
     if args.use_schedule:
         schedule = inflection_sigmoid(
@@ -211,12 +213,13 @@ if __name__ == '__main__':
             a=args.schedule_init, inverse=True)
         trainer.add_hook(
             u.make_schedule_hook(schedule, verbose=True), hooks_per_epoch=10e4)
+
     # - lr schedule hook
     if args.lr_schedule_factor < 1.0:
         hook = make_lr_hook(
             optimizer, args.lr_schedule_factor, args.lr_schedule_checkpoints)
         # run a hook args.checkpoint * 4 batches
-        trainer.add_hook(hook, num_checkpoints=4)
+        trainer.add_hook(hook, hooks_per_epoch=args.lr_checkpoints_per_epoch)
 
     # loggers
     trainer.add_loggers(StdLogger())
