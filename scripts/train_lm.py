@@ -18,26 +18,10 @@ from seqmod.misc import Trainer, StdLogger, VisdomLogger, EarlyStopping
 from seqmod.misc import Dict, BlockDataset, text_processor, Checkpoint
 from seqmod.misc import inflection_sigmoid, inverse_exponential, inverse_linear
 from seqmod import utils as u
+from seqmod.loaders import load_lines
 
 
 # Load data
-def load_lines(path, processor=text_processor()):
-    lines = []
-    if os.path.isfile(path):
-        input_files = [path]
-    else:
-        input_files = [os.path.join(path, f) for f in os.listdir(path)]
-    for path in input_files:
-        with open(path) as f:
-            for line in f:
-                line = line.strip()
-                if processor is not None:
-                    line = processor(line)
-                if line:
-                    lines.append(line)
-    return lines
-
-
 def load_from_file(path):
     if path.endswith('npy'):
         import numpy as np

@@ -136,14 +136,20 @@ def load_lines(path, max_len=None, processor=text_processor()):
     """Auxiliary function for sentence-per-line data"""
     lines = []
 
-    with open(os.path.expanduser(path)) as f:
-        for line in f:
-            line = line.strip()
-            if processor is not None:
-                line = processor(line)
-            if not line or (max_len is not None and len(line) > max_len):
-                continue
-            lines.append(line)
+    if os.path.isfile(path):
+        input_files = [path]
+    else:
+        input_files = [os.path.join(path, f) for f in os.listdir(path)]
+
+    for path in input_files:
+        with open(os.path.expanduser(path)) as f:
+            for line in f:
+                line = line.strip()
+                if processor is not None:
+                    line = processor(line)
+                if not line or (max_len is not None and len(line) > max_len):
+                    continue
+                lines.append(line)
 
     return lines
 
