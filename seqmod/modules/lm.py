@@ -613,12 +613,10 @@ class LM(BaseLM):
             (source, *conds), (targets, *_) = source, targets
 
         # eventually get data from previous batch
-        hidden, lout = self.hidden_state.get('hidden'), self.hidden_state.get('lout')
-        use_cache = cache is not None and test
+        hidden = self.hidden_state.get('hidden')
 
         # run RNN
-        if use_cache or (use_schedule and self.exposure_rate < 1.0):
-
+        if use_schedule and self.exposure_rate < 1.0:
             outs = []
             for step, t in enumerate(source):
                 if use_schedule and step > 0:
@@ -626,15 +624,7 @@ class LM(BaseLM):
                         t, outs[-1], self.project, self.exposure_rate)
                     t = Variable(t, volatile=not self.training)
                 out, hidden, _ = self(t.unsqueeze(0), hidden=hidden, conds=conds)
-                out = out.squeeze(0)
-
-                if use_cache:
-                    if lout is not None:
-                        cache.add(lout.unsqueeze(0), t.unsqueeze(0))
-                    lout = out
-                    out = cache.mixture(out, self.project(out, normalize=False))
-
-                outs.append(out)
+                outs.append(out.squeeze(0))
             outs = torch.stack(outs, 0)
 
         else:
@@ -642,16 +632,9 @@ class LM(BaseLM):
 
         # store hidden for next batch
         self.hidden_state['hidden'] = repackage_hidden(hidden)
-        if use_cache:
-            self.hidden_state['lout'] = lout
-
-        if use_cache:
-            outs = self.project(outs)
-        else:
-            outs = outs.view(source.size(0) * source.size(1), -1)
 
         # compute loss and backward
-        loss = F.nll_loss(outs, targets.view(-1), size_average=True)
+        loss = F.nll_loss(self.project(outs), targets.view(-1), size_average=True)
 
         if not test:
             loss.backward()
