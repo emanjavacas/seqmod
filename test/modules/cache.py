@@ -73,3 +73,22 @@ class CacheTest(unittest.TestCase):
         self.assertEqual(keyed.nonzero().nelement(), index.nelement(),
                          "Elements are not in their right position. Probably "
                          "0-value elements were retrieved.")
+
+    def test_add_sequence(self):
+        size, batch, dim, vocab = 10, 5, 100, 15
+        cache = Cache(dim, size, vocab)
+        # insert some key-val pairs
+        keys = torch.randn(15, batch, dim)
+        vals = torch.LongTensor(15, batch).random_(vocab)
+        for k, v in zip(keys, vals):
+            cache.add(k.unsqueeze(0), v.unsqueeze(0))
+
+        for idx, v in enumerate(vals[-size:]):
+            checked = False
+            for c in cache.memvals:
+                if (v == c).sum() == batch:
+                    checked = True
+                    break
+            self.assertTrue(checked, 'row {} was found in the cache'.format(idx))
+            checked = False
+

@@ -39,11 +39,10 @@ class Cache(object):
 
         self.stored = 0         # number of items stored in the cache
         self.current = 0        # index along size that should get written
-        self.memkeys = torch.zeros(self.size, 1, self.dim)
-        self.memvals = torch.zeros(self.size, 1).long()
-        if self.gpu:
-            self.memkeys.cuda()
-            self.memvals.cuda()
+        self.memkeys = torch.FloatTensor(self.size, 1, self.dim).zero_()
+        self.memvals = torch.LongTensor(self.size, 1).zero_()
+        self.memkeys = self.memkeys.cuda() if gpu else self.memkeys
+        self.memvals = self.memvals.cuda() if gpu else self.memvals
 
     def reset(self):
         self.stored = 0
@@ -80,6 +79,7 @@ class Cache(object):
 
         limit = min(self.size, self.current + keys.size(0))
         index = torch.arange(self.current, limit).long()
+        index = index.cuda() if self.gpu else index
         self.memkeys.index_copy_(0, index, keys[:len(index)])
         self.memvals.index_copy_(0, index, vals[:len(index)])
         self.current = limit % self.size
@@ -87,11 +87,12 @@ class Cache(object):
         if len(index) < len(keys):
             indexed = len(index)
             index = torch.arange(self.current, len(keys) - indexed).long()
+            index = index.cuda() if self.gpu else index
             self.memkeys.index_copy_(0, index, keys[indexed:])
             self.memvals.index_copy_(0, index, vals[indexed:])
             self.current = len(keys) - indexed
 
-        self.stored = max(min(len(keys), self.size), self.stored)
+        self.stored = min(self.size, self.stored + len(keys))
 
     # TODO: allow for processing multiple queries at once
     # expanding the memcache and memvals along the batch dim
@@ -112,52 +113,6 @@ class Cache(object):
         # select full entries
         memkeys, memvals = self.memkeys[:self.stored], self.memvals[:self.stored]
         # dot product => (batch x size)
-        scores = (memkeys * query.unsqueeze(0)).sum(2).t()
+        scores = (memkeys * query.unsqueeze(0)).sum(2)
 
-        return scores, memvals.t()
-
-    def get_full_probs(self, scores, vals):
-        """
-        Transforms sparse output distribution over items in cache to a
-        distribution over the full vocabulary. It also merges scores for
-        items that have multiple entries in the cache.
-        """
-        batch = scores.size(0)
-        # linear index on full vocabulary (batch x size)
-        index = torch.arange(0, batch, out=torch.zeros_like(scores)) * self.vocab
-        index = vals + index.long().unsqueeze(1).expand_as(scores)
-        # (batch x vocab) sum over scores corresponding to same value
-        output = scores.new(batch, self.vocab).zero_()
-        output.put_(index, scores, accumulate=True)
-
-        return output
-
-    def mixture(self, query, unnormed):
-        """
-        Compute the output cache probability over the vocabulary for mixture
-        with the model's output probability.
-
-        Parameters:
-        -----------
-        query: torch.Tensor(batch, hid_dim)
-        unnormed: torch.Tensor(batch, vocab), model's unnormalized output dist
-
-        Returns:
-        --------
-        logprobs: torch.Tensor(batch, vocab)
-        """
-        scores, vals = self.query(query)
-        scores = Variable(scores, volatile=True)
-
-        if self.mode == 'linear':
-            probs = self.get_full_probs(F.log_softmax(self.theta * scores, 1), vals)
-            return (1 - self.alpha) * F.log_softmax(unnormed) + self.alpha * probs
-
-        else:                   # global
-            unnormed_probs = self.get_full_probs(
-                self.theta * scores + self.alpha, vals)
-            return F.log_softmax(unnormed + unnormed_probs)
-
-
-if __name__ == '__main__':
-    pass
+        return scores.t(), memvals.t()
