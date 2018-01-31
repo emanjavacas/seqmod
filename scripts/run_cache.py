@@ -1,6 +1,7 @@
 
 import os
 
+import tqdm
 import torch
 import torch.nn.functional as F
 from torch.autograd import Variable
@@ -28,7 +29,9 @@ if __name__ == '__main__':
     parser.add_argument('--gpu', action='store_true')
     args = parser.parse_args()
 
+    print("Loading model...")
     model = u.load_model(os.path.join(args.model_path, 'model.pt'))
+    d = model.embeddings.d
     if args.gpu:
         model.cuda()
     else:
@@ -36,10 +39,8 @@ if __name__ == '__main__':
     model.eval()
     model.hidden_state = {}
 
-    d = u.load_model(os.path.join(args.model_path, 'model.dict.pt'))
-
+    print("Loading data...")
     processor = text_processor(lower=args.lower, num=args.num, level=args.level)
-
     if os.path.isfile(os.path.join(args.path, 'test.txt')):
         path = os.path.join(args.path, 'test.txt')
         test = BlockDataset(load_lines(path, processor=processor), d,
@@ -51,18 +52,16 @@ if __name__ == '__main__':
             args.batch_size, args.bptt, gpu=args.gpu
         ).splits(test=args.test_split, dev=None)
 
-    alpha = args.alpha
-    theta = args.theta
+    alpha, theta = args.alpha, args.theta
     cache = Cache(model.hid_dim, 500, len(d), gpu=args.gpu)
-    loss = LossStatistics('ppl')
-    hidden = None
+    loss, hidden = LossStatistics('ppl'), None
 
     def batch_index_add_(t, index, src):
-        # for b in range(prob.size(0)):
-        #     prob.data[b].index_add_(0, vals.data[b], cache_prob.data[b])
-        # t (batch x vocab)
-        # index (batch x cache_size)
-        # src (batch x cache_size)
+        """
+        t: (batch x vocab)
+        index: (batch x cache_size)
+        src: (batch x cache_size)
+        """
         (batch, vocab) = t.size()
         ex = torch.arange(0, batch, out=t.new()).unsqueeze(1).long() * vocab
         t.view(-1).index_add_(
@@ -71,7 +70,7 @@ if __name__ == '__main__':
             src.view(-1))
         
     
-    for (source, targets) in test:
+    for (source, targets) in tqdm.tqdm(test):
         # outs: (bptt x batch x hid)
         outs, hidden, _ = model(source, hidden=hidden)
 
@@ -79,10 +78,11 @@ if __name__ == '__main__':
             # (batch x vocab)
             logits = model.project(out, normalize=False)
 
-            if cache.stored > 0:
+            if cache.stored > 0:  # only interpolate after first step
                 # (batch x cache_size)
                 cache_logits, vals = u.wrap_variables(
                     cache.query(out.data), volatile=True)
+
                 # interpolate
                 if args.mode == 'linear':
                     cache_prob = alpha * F.softmax(theta * cache_logits, dim=1)
