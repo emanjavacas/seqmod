@@ -30,7 +30,7 @@ def prompt(message):
     try:
         return parse(input("{} ".format(message)))
     except ValueError:
-        return prompt("Please answer yes or no")
+        return prompt("Please answer yes or no:")
 
 
 def ppl(loss):
@@ -192,7 +192,7 @@ class Checkpoint(object):
 
     def remove(self):
         import shutil
-        shutil.rmtree(self.join(self.topdir, self.subdir))
+        shutil.rmtree(self._joinpath(self.topdir, self.subdir))
 
 
 class Trainer(object):

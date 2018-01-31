@@ -1,5 +1,6 @@
 
 import os
+import sys
 
 import tqdm
 import torch
@@ -15,11 +16,14 @@ if __name__ == '__main__':
     import argparse
 
     parser = argparse.ArgumentParser()
+    # data
     parser.add_argument('--path', required=True)
     parser.add_argument('--model_path', type=str)
     parser.add_argument('--lower', action='store_true')
     parser.add_argument('--num', action='store_true')
     parser.add_argument('--level', default='char')
+    # cache
+    parser.add_argument('--cache_size', default=100, type=int)
     parser.add_argument('--alpha', default=0.1, type=float)
     parser.add_argument('--theta', default=0.1, type=float)
     parser.add_argument('--mode', default='linear')
@@ -29,7 +33,7 @@ if __name__ == '__main__':
     parser.add_argument('--gpu', action='store_true')
     args = parser.parse_args()
 
-    print("Loading model...")
+    print("Loading model...", file=sys.stderr)
     model = u.load_model(os.path.join(args.model_path, 'model.pt'))
     d = model.embeddings.d
     if args.gpu:
@@ -39,7 +43,7 @@ if __name__ == '__main__':
     model.eval()
     model.hidden_state = {}
 
-    print("Loading data...")
+    print("Loading data...", file=sys.stderr)
     processor = text_processor(lower=args.lower, num=args.num, level=args.level)
     if os.path.isfile(os.path.join(args.path, 'test.txt')):
         path = os.path.join(args.path, 'test.txt')
@@ -69,7 +73,7 @@ if __name__ == '__main__':
             (index + ex).view(-1),
             src.view(-1))
         
-    
+    print("Computing perplexity...", file=sys.stderr)
     for (source, targets) in tqdm.tqdm(test):
         # outs: (bptt x batch x hid)
         outs, hidden, _ = model(source, hidden=hidden)
