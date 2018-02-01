@@ -154,7 +154,7 @@ class Checkpoint(object):
         return os.path.join(self.topdir, self.subdir, *path)
 
     def _modelname(self, loss):
-        return self._joinpath('model-{:.4f}.{}'.format(loss, self.ext))
+        return self._joinpath('model-{:.4f}.{}'.format(loss))
 
     def setup(self, args=None, d=None):
         if self.is_setup:
@@ -192,7 +192,7 @@ class Checkpoint(object):
 
     def remove(self):
         import shutil
-        shutil.rmtree(self._joinpath(self.topdir, self.subdir))
+        shutil.rmtree(os.path.join(self.topdir, self.subdir))
 
 
 class Trainer(object):
@@ -518,7 +518,7 @@ class Trainer(object):
             self.on_test_end(test_loss)
 
         if self.checkpoint is not None:
-            if not prompt('Dow you want to keep intermediate results? (y/n)'):
+            if not prompt('Do you want to keep intermediate results? (y/n)'):
                 self.checkpoint.remove()
 
         return (best_model.cpu(), valid_loss), test_loss.reduce()
