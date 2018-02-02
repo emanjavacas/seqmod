@@ -1,6 +1,7 @@
 
 import os
 import sys
+import itertools
 
 import tqdm
 import torch
@@ -11,6 +12,15 @@ from seqmod.misc import text_processor, BlockDataset, LossStatistics
 from seqmod.loaders import load_lines
 from seqmod.modules.cache import Cache
 import seqmod.utils as u
+
+
+def range_float(start, stop, step):
+    factor = 1 / step
+    start *= factor
+    stop *= factor
+    step *= factor
+    return (i / factor for i in range(int(start), int(stop), int(step)))
+
 
 if __name__ == '__main__':
     import argparse
@@ -28,6 +38,7 @@ if __name__ == '__main__':
     parser.add_argument('--theta', default=0.1, type=float)
     parser.add_argument('--mode', default='linear')
     # test
+    parser.add_argument('--run_grid', action='store_true')
     parser.add_argument('--batch_size', default=50, type=int)
     parser.add_argument('--bptt', default=35, type=int)
     parser.add_argument('--gpu', action='store_true')
@@ -56,8 +67,7 @@ if __name__ == '__main__':
             args.batch_size, args.bptt, gpu=args.gpu
         ).splits(test=args.test_split, dev=None)
 
-    alpha, theta = args.alpha, args.theta
-    cache = Cache(model.hid_dim, 500, len(d), gpu=args.gpu)
+    cache = Cache(model.hid_dim, args.cache_size, len(d), gpu=args.gpu)
     loss, hidden = LossStatistics('ppl'), None
 
     def batch_index_add_(t, index, src):
@@ -74,34 +84,47 @@ if __name__ == '__main__':
             src.view(-1))
         
     print("Computing perplexity...", file=sys.stderr)
-    for (source, targets) in tqdm.tqdm(test):
-        # outs: (bptt x batch x hid)
-        outs, hidden, _ = model(source, hidden=hidden)
 
-        for out, target in zip(outs, targets):
-            # (batch x vocab)
-            logits = model.project(out, normalize=False)
+    if args.run_grid:
+        grid = itertools.product(range_float(0, 1, 0.1), range_float(0, 0.5, 0.05))
+    else:
+        grid = [(args.theta, args.alpha)]
 
-            if cache.stored > 0:  # only interpolate after first step
-                # (batch x cache_size)
-                cache_logits, vals = u.wrap_variables(
-                    cache.query(out.data), volatile=True)
+    for theta, alpha in grid:
 
-                # interpolate
-                if args.mode == 'linear':
-                    cache_prob = alpha * F.softmax(theta * cache_logits, dim=1)
-                    prob = (1 - alpha) * F.softmax(logits, dim=1)
-                    batch_index_add_(prob.data, vals.data, cache_prob.data)
-                elif args.mode == 'global':
-                    cache_logits = theta * cache_logits + alpha
-                    batch_index_add_(logits.data, vals.data, cache_logits.data)
+        for (source, targets) in tqdm.tqdm(test):
+            # outs: (bptt x batch x hid)
+            outs, hidden, _ = model(source, hidden=hidden)
+    
+            for out, target in zip(outs, targets):
+                # (batch x vocab)
+                logits = model.project(out, normalize=False)
+    
+                if cache.stored > 0:  # only interpolate after first step
+                    # (batch x cache_size)
+                    cache_logits, vals = u.wrap_variables(
+                        cache.query(out.data), volatile=True)
+    
+                    # interpolate
+                    if args.mode == 'linear':
+                        cache_prob = alpha * F.softmax(theta * cache_logits, dim=1)
+                        prob = (1 - alpha) * F.softmax(logits, dim=1)
+                        batch_index_add_(prob.data, vals.data, cache_prob.data)
+                    elif args.mode == 'global':
+                        cache_logits = theta * cache_logits + alpha
+                        batch_index_add_(logits.data, vals.data, cache_logits.data)
+                        prob = F.softmax(logits, dim=1)
+    
+                else:
                     prob = F.softmax(logits, dim=1)
+    
+                loss.add(u.unwrap_variables(F.nll_loss(prob.log(), target)),
+                         target.nelement())
+                cache.add(out.data.unsqueeze(0), target.data.unsqueeze(0))
 
-            else:
-                prob = F.softmax(logits, dim=1)
-
-            loss.add(u.unwrap_variables(F.nll_loss(prob.log(), target)),
-                     target.nelement())
-            cache.add(out.data.unsqueeze(0), target.data.unsqueeze(0))
-
-    print(loss.reduce())
+        if args.run_grid:
+            fname = 'cache.{}.{}.grid.csv'.format(args.mode, args.cache_size)
+            with open(os.path.join(args.model_path, fname), 'w+') as f:
+                f.write('{} {} {}'.format(theta, alpha, loss.reduce()))
+        else:
+            print(loss.reduce())
