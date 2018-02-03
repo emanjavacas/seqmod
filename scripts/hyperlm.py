@@ -18,27 +18,10 @@ from seqmod.hyper import Hyperband
 from seqmod.hyper.utils import make_sampler
 
 from seqmod.modules.lm import LM
+from seqmod.loaders import load_lines
 from seqmod import utils as u
 from seqmod.misc import Trainer, StdLogger, Dict, BlockDataset
 from seqmod.misc import text_processor, EarlyStopping
-
-
-# Load data
-def load_lines(path, processor=text_processor()):
-    lines = []
-    if os.path.isfile(path):
-        input_files = [path]
-    else:
-        input_files = [os.path.join(path, f) for f in os.listdir(path)]
-    for path in input_files:
-        with open(path) as f:
-            for line in f:
-                line = line.strip()
-                if processor is not None:
-                    line = processor(line)
-                if line:
-                    lines.append(line)
-    return lines
 
 
 def load_from_file(path):
@@ -54,7 +37,7 @@ def load_from_file(path):
 
 
 def load_dataset(path, d, processor, args):
-    data = load_lines(path, processor=processor)
+    data = list(load_lines(path, processor=processor))
     if not d.fitted:
         d.fit(data)
 

@@ -104,7 +104,7 @@ class LossStatistics(object):
 
         if len(loss) != len(self.losses):
             raise ValueError(
-                "Got {len(loss)} losses but needs {}".format(len(self.losses)))
+                "Got {} losses but needs {}".format(len(loss), len(self.losses)))
 
         self.history.append(tuple(loss))
         self.examples += num_examples
@@ -154,7 +154,7 @@ class Checkpoint(object):
         return os.path.join(self.topdir, self.subdir, *path)
 
     def _modelname(self, loss):
-        return self._joinpath('model-{:.4f}.{}'.format(loss))
+        return self._joinpath('model-{:.4f}'.format(loss))
 
     def setup(self, args=None, d=None):
         if self.is_setup:
@@ -516,12 +516,13 @@ class Trainer(object):
             self.on_test_begin(self.batch_run)
             test_loss = self.validate_model(test=True, model=best_model, **kwargs)
             self.on_test_end(test_loss)
+            test_loss = test_loss.reduce()
 
         if self.checkpoint is not None:
-            if not prompt('Do you want to keep intermediate results? (y/n)'):
+            if not prompt('Do you want to keep intermediate results? (yes/no)'):
                 self.checkpoint.remove()
 
-        return (best_model.cpu(), valid_loss), test_loss.reduce()
+        return (best_model.cpu(), valid_loss), test_loss
 
     def train_batches(self, num_batches, checkpoint,
                       shuffle=False, run_test=False, **kwargs):

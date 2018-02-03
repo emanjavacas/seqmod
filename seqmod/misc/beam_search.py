@@ -42,13 +42,14 @@ class Beam(object):
 
     def _new_beam(self, outs):
         """
-        Computes a new beam based on the current model output and the hist.
+        Computes a new beam based on the current model output and the history.
+
+        outs: (width x vocab)
         """
         if len(self) > 0:
-            # outs: (width x vocab) + scores: (width)
             beam_outs = outs + self.scores.unsqueeze(1).expand_as(outs)
             # EOS nihilation (adapted from OpenNMT)
-            for i in range(self.beam_values[-1].size(0)):
+            for i in range(len(beam_outs)):
                 if self.eos is not None and self.beam_values[-1][i] == self.eos:
                     beam_outs[i] = -1e20
         else:
