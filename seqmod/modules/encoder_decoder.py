@@ -214,8 +214,8 @@ class EncoderDecoder(nn.Module):
             of the input sequence.
         atts: None (WIP)
         """
-        if src.size(1) > 1:
-            raise ValueError("Beam search currently only supports size 1 batches")
+        # if src.size(1) > 1:
+        #     raise ValueError("Beam search currently only supports size 1 batches")
         eos = self.decoder.embeddings.d.get_eos()
         bos = self.decoder.embeddings.d.get_bos()
         if hasattr(self, 'reverse') and self.reverse:
@@ -229,8 +229,7 @@ class EncoderDecoder(nn.Module):
             enc_outs, enc_hidden, lengths, conds=conds)
 
         dec_state.expand_along_beam(beam_width)
-
-        beam = Beam(beam_width, bos, eos=eos, gpu=gpu)
+        beam = Beam(beam_width, bos, src.size(1), eos=eos, gpu=gpu)
 
         while beam.active and len(beam) < len(src) * max_decode_len:
             # (width) -> (1 x width)
@@ -243,9 +242,10 @@ class EncoderDecoder(nn.Module):
 
         scores, hyps = beam.decode(n=beam_width)
         if hasattr(self, 'reverse') and self.reverse:
-            hyps = [hyp[::-1] for hyp in hyps]
+            hyps = [[hyp[::-1] for hyp in b] for b in hyps]
 
         return scores, hyps, weights
+        # return beam
 
 
 def make_embeddings(src_dict, trg_dict, emb_dim, word_dropout):
