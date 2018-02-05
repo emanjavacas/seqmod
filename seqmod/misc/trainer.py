@@ -288,7 +288,7 @@ class Trainer(object):
             if 'hooks_per_epoch' in hook:
                 # get repetition frequency
                 batches = len(self.datasets['train'])
-                rep = max(1, batches // (checkpoint * hook['hooks_per_epoch']))
+                rep = max(1, batches // (checkpoint * hook['hooks_per_epoch']) - 1)
                 if num_checkpoints % rep == 0:
                     hook['hook'](self, epoch, batch_num, num_checkpoints)
             else:  # assume num_checkpoints
