@@ -6,7 +6,6 @@ import itertools
 import tqdm
 import torch
 import torch.nn.functional as F
-from torch.autograd import Variable
 
 from seqmod.misc import text_processor, BlockDataset, LossStatistics
 from seqmod.loaders import load_lines
@@ -82,7 +81,7 @@ if __name__ == '__main__':
             0,
             (index + ex).view(-1),
             src.view(-1))
-        
+
     print("Computing perplexity...", file=sys.stderr)
 
     if args.run_grid:
@@ -95,16 +94,16 @@ if __name__ == '__main__':
         for (source, targets) in tqdm.tqdm(test):
             # outs: (bptt x batch x hid)
             outs, hidden, _ = model(source, hidden=hidden)
-    
+
             for out, target in zip(outs, targets):
                 # (batch x vocab)
                 logits = model.project(out, normalize=False)
-    
+
                 if cache.stored > 0:  # only interpolate after first step
                     # (batch x cache_size)
                     cache_logits, vals = u.wrap_variables(
                         cache.query(out.data), volatile=True)
-    
+
                     # interpolate
                     if args.mode == 'linear':
                         cache_prob = alpha * F.softmax(theta * cache_logits, dim=1)
@@ -114,10 +113,10 @@ if __name__ == '__main__':
                         cache_logits = theta * cache_logits + alpha
                         batch_index_add_(logits.data, vals.data, cache_logits.data)
                         prob = F.softmax(logits, dim=1)
-    
+
                 else:
                     prob = F.softmax(logits, dim=1)
-    
+
                 loss.add(u.unwrap_variables(F.nll_loss(prob.log(), target)),
                          target.nelement())
                 cache.add(out.data.unsqueeze(0), target.data.unsqueeze(0))

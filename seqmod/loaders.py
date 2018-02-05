@@ -134,8 +134,6 @@ class EmbeddingLoader(object):
 
 def load_lines(path, max_len=None, processor=text_processor()):
     """Auxiliary function for sentence-per-line data"""
-    lines = []
-
     if os.path.isfile(path):
         input_files = [path]
     else:
@@ -149,32 +147,27 @@ def load_lines(path, max_len=None, processor=text_processor()):
                     line = processor(line)
                 if not line or (max_len is not None and len(line) > max_len):
                     continue
-                lines.append(line)
-
-    return lines
+                yield line
 
 
 def load_split_data(path, batch_size, max_size, min_freq, max_len, gpu, processor):
     """
     Load corpus that is already splitted in 'train.txt', 'valid.txt', 'test.txt'
     """
-    train_data = load_lines(
-        os.path.join(path, 'train.txt'), max_len=max_len, processor=processor)
-    valid_data = load_lines(
-        os.path.join(path, 'valid.txt'), max_len=max_len, processor=processor)
-    test_data = load_lines(
-        os.path.join(path, 'test.txt'), max_len=max_len, processor=processor)
+    train = load_lines(os.path.join(path, 'train.txt'), max_len, processor)
+    valid = load_lines(os.path.join(path, 'valid.txt'), max_len, processor)
 
-    d = Dict(pad_token=u.PAD, eos_token=u.EOS, bos_token=u.BOS,
-             max_size=max_size, min_freq=min_freq, force_unk=True)
-    d.fit(train_data, valid_data)
+    d = Dict(
+        pad_token=u.PAD, eos_token=u.EOS, bos_token=u.BOS,
+        max_size=max_size, min_freq=min_freq, force_unk=True
+    ).fit(train, valid)
 
-    train = PairedDataset(
-        train_data, None, {'src': d}, batch_size, gpu=gpu)
-    valid = PairedDataset(
-        valid_data, None, {'src': d}, batch_size, gpu=gpu, evaluation=True)
-    test = PairedDataset(
-        test_data, None, {'src': d}, batch_size, gpu=gpu, evaluation=True)
+    train = load_lines(os.path.join(path, 'train.txt'), max_len, processor)
+    valid = load_lines(os.path.join(path, 'valid.txt'), max_len, processor)
+    test = load_lines(os.path.join(path, 'test.txt'), max_len, processor)
+    train = PairedDataset(train, None, {'src': d}, batch_size, gpu=gpu)
+    valid = PairedDataset(valid, None, {'src': d}, batch_size, gpu=gpu, evaluation=True)
+    test = PairedDataset(test, None, {'src': d}, batch_size, gpu=gpu, evaluation=True)
 
     return train.sort_(), valid.sort_(), test.sort_()
 
