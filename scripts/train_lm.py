@@ -23,7 +23,7 @@ from seqmod.loaders import load_lines
 
 # Load data
 def load_from_file(path):
-    if path.endswith('npy'):
+    if path.endswith('npy') or path.endswith('npz'):
         import numpy as np
         array = np.load(path).astype(np.int64)
         data = torch.LongTensor(array)
@@ -35,7 +35,7 @@ def load_from_file(path):
 
 
 def load_dataset(path, d, processor, args):
-    data = load_lines(path, processor=processor)
+    data = list(load_lines(path, processor=processor))
     if not d.fitted:
         d.fit(data)
 
@@ -115,10 +115,23 @@ if __name__ == '__main__':
     if args.processed:
         print("Loading preprocessed datasets...")
         assert args.dict_path, "Processed data requires DICT_PATH"
-        data, d = load_from_file(args.path), u.load_model(args.dict_path)
-        train, test, valid = BlockDataset(
-            data, d, args.batch_size, args.bptt, gpu=args.gpu, fitted=True
-        ).splits(test=args.test_split, dev=args.dev_split)
+        d = u.load_model(args.dict_path)
+
+        if os.path.isfile(args.path):
+            # single files full dataset
+            train, test, valid = BlockDataset(
+                load_from_file(args.path), d, args.batch_size, args.bptt,
+                gpu=args.gpu, fitted=True
+            ).splits(test=args.test_split, dev=args.dev_split)
+            train = BlockDataset(load_from_file(args.path), )
+        else:
+            # assume path is prefix to train/test splits
+            train, valid = BlockDataset(
+                load_from_file(args.path + '.train.npz'), d, args.batch_size, args.bptt,
+                gpu=args.gpu, fitted=True).splits(test=args.dev_split, dev=None)
+            test = BlockDataset(
+                load_from_file(args.path + '.test.npz'), d, args.batch_size, args.bptt,
+                gpu=args.gpu, fitted=True)
 
     else:
         print("Processing datasets...")
@@ -144,7 +157,7 @@ if __name__ == '__main__':
 
         # split, assume input is single file or dir with txt files
         else:
-            data = load_lines(args.path, processor=processor)
+            data = list(load_lines(args.path, processor=processor))
             d.fit(data)
             train, valid, test = BlockDataset(
                 data, d, args.batch_size, args.bptt, gpu=args.gpu
