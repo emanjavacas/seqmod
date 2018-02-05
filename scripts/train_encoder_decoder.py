@@ -22,29 +22,35 @@ from seqmod.misc import PairedDataset, Dict, inflection_sigmoid
 import dummy as d
 
 
-def translate(model, target, gpu, beam=True):
-    src_dict = model.encoder.embeddings.d
-    inp = torch.LongTensor(list(src_dict.transform([target]))).transpose(0, 1)
-    length = torch.LongTensor([len(target)]) + 2
-    inp, length = u.wrap_variables((inp, length), volatile=True, gpu=gpu)
+def translate(model, src, src_lengths, gpu, beam=True):
     if beam:
         scores, hyps, _ = model.translate_beam(
-            inp, length, beam_width=5, max_decode_len=4)
+            src, src_lengths, beam_width=5, max_decode_len=4)
     else:
-        scores, hyps, _ = model.translate(inp, length, max_decode_len=4)
+        scores, hyps, _ = model.translate(src, src_lengths, max_decode_len=4)
 
     return scores, hyps
 
 
-def make_encdec_hook(target, gpu, beam=True):
+def make_encdec_hook(target, gpu, beam=True, max_items=10):
 
     def hook(trainer, epoch, batch_num, checkpoint):
         trainer.log("info", "Translating {}".format(target))
-        trg_dict = trainer.model.decoder.embeddings.d
-        scores, hyps = translate(trainer.model, target, gpu, beam=beam)
-        hyps = [u.format_hyp(score, hyp, num + 1, trg_dict)
-                for num, (score, hyp) in enumerate(zip(scores, hyps))]
-        trainer.log("info", '\n***' + ''.join(hyps) + '\n***')
+        # prepare
+        dataset, d = trainer.datasets['valid'], trainer.model.decoder.embeddings.d
+        items = min(max_items, dataset.batch_size)
+        # sample random batch
+        batch = dataset[random.randint(0, len(dataset) - 1)]
+        (src, src_lengths), (trg, _) = batch
+        src, src_lengths, trg = src[:, :items], src_lengths[:items], trg[:, :items]
+        # translate
+        scores, hyps = translate(trainer.model, src, src_lengths, gpu, beam=beam)
+        # report
+        trues, report = trg.data.transpose(0, 1).tolist(), ''
+        for num, (score, hyp, trg) in enumerate(zip(scores, hyps, trues)):
+            report += u.format_hyp(score, hyp, num+1, d, level='char', trg=trg)
+
+        trainer.log("info", '\n***' + report + '\n***')
 
     return hook
 

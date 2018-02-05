@@ -159,7 +159,7 @@ class EncoderDecoder(nn.Module):
         dec_state = self.decoder.init_state(
             enc_outs, enc_hidden, lengths, conds=conds)
 
-        hyps, weights, scores = [], [], 0
+        scores, hyps, weights = 0, [], []
         mask = src.data.new(batch_size).zero_().float() + 1
         prev = Variable(src.data.new([bos]).expand(batch_size), volatile=True)
 
@@ -197,8 +197,8 @@ class EncoderDecoder(nn.Module):
         Parameters:
         -----------
 
-        src: torch.LongTensor (seq_len x 1)
-        lengths: torch.LongTensor (1)
+        src: torch.LongTensor (seq_len x batch_size)
+        lengths: torch.LongTensor (batch_size)
         conds: (optional) conditions for the decoder
         beam_width: int, width of the beam
         max_decode_len: int, limit to the length of the output sequence
@@ -206,44 +206,47 @@ class EncoderDecoder(nn.Module):
 
         Returns:
         --------
-        scores: list of floats (beam_width), corresponding to the decoded hypotheses
-            in descending order.
-        hyps: (list of) list of ints (beam_width x max_seq_len), corresponding to the
+        scores: (batch_size), corresponding to the decoded
+            hypotheses in descending order.
+        hyps: (list of) list of ints (batch_size x max_seq_len), corresponding to the
             decoded hypotheses in descending order. `max_seq_len` corresponds to the
             size of the longest decoded hypotheses up to `max_decode_len` * the length
             of the input sequence.
         atts: None (WIP)
         """
-        if src.size(1) > 1:
-            raise ValueError("Beam search currently only supports size 1 batches")
         eos = self.decoder.embeddings.d.get_eos()
         bos = self.decoder.embeddings.d.get_bos()
         if hasattr(self, 'reverse') and self.reverse:
             bos, eos = eos, bos
         gpu = src.is_cuda
 
-        weights = []
+        scores, hyps, weights = [], [], []
 
         enc_outs, enc_hidden = self.encoder(src)
         dec_state = self.decoder.init_state(
             enc_outs, enc_hidden, lengths, conds=conds)
 
-        dec_state.expand_along_beam(beam_width)
+        for state in dec_state.split_batches():
 
-        beam = Beam(beam_width, bos, eos=eos, gpu=gpu)
+            state.expand_along_beam(beam_width)
+            beam = Beam(beam_width, bos, eos=eos, gpu=gpu)
 
-        while beam.active and len(beam) < len(src) * max_decode_len:
-            # (width) -> (1 x width)
-            prev = Variable(beam.get_current_state(), volatile=True)
-            dec_out, weight = self.decoder(prev, dec_state)
-            logprobs = self.decoder.project(dec_out)  # (width x vocab_size)
-            beam.advance(logprobs.data)
-            dec_state.reorder_beam(beam.get_source_beam())
-            # TODO: add attention weight for decoded steps
+            while beam.active and len(beam) < len(src) * max_decode_len:
+                # (width) -> (1 x width)
+                prev = Variable(beam.get_current_state(), volatile=True)
+                dec_out, weight = self.decoder(prev, state)
+                logprobs = self.decoder.project(dec_out)  # (width x vocab_size)
+                beam.advance(logprobs.data)
+                state.reorder_beam(beam.get_source_beam())
+                # TODO: add attention weight for decoded steps
 
-        scores, hyps = beam.decode(n=beam_width)
-        if hasattr(self, 'reverse') and self.reverse:
-            hyps = [hyp[::-1] for hyp in hyps]
+            bscores, bhyps = beam.decode(n=1)
+            bscores, bhyps = bscores[0], bhyps[0]
+            if hasattr(self, 'reverse') and self.reverse:
+                bhyps = bhyps[::-1]
+
+            scores.append(bscores)
+            hyps.append(bhyps)
 
         return scores, hyps, weights
 

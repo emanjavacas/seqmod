@@ -252,7 +252,8 @@ def make_xent_criterion(vocab_size, mask_ids=()):
     return torch.nn.CrossEntropyLoss(weight=weight)
 
 
-def format_hyp(score, hyp, hyp_num, d, level='word'):
+def format_hyp(score, hyp, hyp_num, d, level='word',
+               src=None, trg=None, src_dict=None):
     """
     Transform a hypothesis into a string for visualization purposes
 
@@ -264,10 +265,23 @@ def format_hyp(score, hyp, hyp_num, d, level='word'):
     if level not in ('word', 'char', 'token'):
         raise ValueError('level must be "word/token" or "char"')
     sep = ' ' if level == 'word' or level == 'token' else ''
-    return '\n* [{hyp}] [Score:{score:.3f}]: {sent}'.format(
+
+    formatter = '\n[{hyp}] [Score:{score:.3f}]:\n'
+    if src is not None:
+        formatter += '    [Source]=> {source}\n'
+        src_dict = src_dict or d
+        src = sep.join([src_dict.vocab[c] for c in src]),
+    if trg is not None:
+        formatter += '    [Target]=> {target}\n'
+        trg = sep.join([d.vocab[c] for c in trg])
+    formatter += '    [Output]=> {output}\n'
+
+    return formatter.format(
         hyp=hyp_num,
         score=score/len(hyp),
-        sent=sep.join([d.vocab[c] for c in hyp]))
+        source=src,
+        target=trg,
+        output=sep.join([d.vocab[c] for c in hyp]))
 
 
 def make_lm_hook(d, seed_texts=None, max_seq_len=25, gpu=False,
