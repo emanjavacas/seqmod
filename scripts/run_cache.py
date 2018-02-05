@@ -86,7 +86,7 @@ if __name__ == '__main__':
     print("Computing perplexity...", file=sys.stderr)
 
     if args.run_grid:
-        grid = itertools.product(range_float(0, 1, 0.1), range_float(0, 0.5, 0.05))
+        grid = itertools.product(range_float(0, 1, 0.1), range_float(0, 0.5, 0.01))
     else:
         grid = [(args.theta, args.alpha)]
 
@@ -124,7 +124,7 @@ if __name__ == '__main__':
 
         if args.run_grid:
             fname = 'cache.{}.{}.grid.csv'.format(args.mode, args.cache_size)
-            with open(os.path.join(args.model_path, fname), 'w+') as f:
-                f.write('{} {} {}'.format(theta, alpha, loss.reduce()))
+            with open(os.path.join(args.model_path, fname), 'a') as f:
+                f.write('{} {} {}\n'.format(theta, alpha, loss.reduce()))
         else:
             print(loss.reduce())
