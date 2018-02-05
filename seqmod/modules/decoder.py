@@ -306,6 +306,9 @@ class State(object):
     def reorder_beam(self, beam_ids):
         raise NotImplementedError
 
+    def split_batches(self):
+        raise NotImplementedError
+
 
 class RNNDecoderState(State):
     """
@@ -357,3 +360,36 @@ class RNNDecoderState(State):
         else:
             hidden = swap(self.hidden, 1, beam_ids)
         self.hidden = hidden
+
+    def split_batches(self):
+        batch_size = self.context.size(0 if self.context.dim() == 2 else 1)
+
+        if isinstance(self.hidden, tuple):
+            hidden = list(zip(self.hidden[0].chunk(batch_size, 1),
+                              self.hidden[1].chunk(batch_size, 1)))
+        else:
+            hidden = self.hidden.chunk(batch_size, 1)
+
+        if self.context.dim() == 2:
+            context = self.context.chunk(batch_size, 0)
+        else:
+            context = self.context.chunk(batch_size, 1)
+
+        input_feed, enc_att, mask, conds = None, None, None, None
+        if self.input_feed is not None:
+            input_feed = self.input_feed.chunk(batch_size, 0)
+        if self.enc_att is not None:
+            enc_att = self.enc_att.chunk(batch_size, 1)
+        if self.mask is not None:
+            mask = self.mask.chunk(batch_size, 0)
+        if self.conds is not None:
+            conds = self.conds.chunk(batch_size, 0)
+
+        for b in range(batch_size):
+
+            yield RNNDecoderState(
+                hidden[b], context[b],
+                input_feed=input_feed[b] if input_feed is not None else None,
+                enc_att=enc_att[b] if enc_att is not None else None,
+                mask=mask[b] if mask is not None else None,
+                conds=conds[b] if conds is not None else None)
