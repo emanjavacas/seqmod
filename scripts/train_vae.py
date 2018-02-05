@@ -143,7 +143,7 @@ if __name__ == '__main__':
                 max_tweets=None if args.max_tweets == 0 else args.max_tweets)
         else:
             train, test, valid = load_split_data(
-                os.path.join('~/corpora', args.source), args.batch_size,
+                os.path.join('/home/manjavacas/corpora', args.source), args.batch_size,
                 args.max_size, args.min_freq, args.max_len, args.gpu, processor)
         # save
         if args.cache_data:
@@ -202,8 +202,7 @@ if __name__ == '__main__':
             self.model.encoder.kl_weight = kl_schedule(
                 batch + total_batches * epoch)
 
-    losses = [{'loss': 'rec'},
-              {'loss': 'kl', 'format': lambda loss: loss}]
+    losses = ['ppl', {'loss': 'kl', 'format': lambda loss: loss}]
 
     trainer = VAETrainer(
         model, {'train': train, 'valid': valid, 'test': test}, optimizer,
