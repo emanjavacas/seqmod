@@ -157,8 +157,14 @@ class Checkpoint(object):
         return self._joinpath('model-{:.4f}'.format(loss))
 
     def setup(self, args=None, d=None):
+        """
+        Initialize the checkpoint register.
+
+        - args: Namespace or dictionary of params associated with the network
+        - d: Dict (optional) to store together with the model
+        """
         if self.is_setup:
-            return
+            return self
 
         if not os.path.isdir(os.path.join(self.topdir, self.subdir)):
             os.makedirs(os.path.join(self.topdir, self.subdir))
@@ -177,10 +183,17 @@ class Checkpoint(object):
         return self
 
     def save(self, model, loss):
+        """
+        Save model according to current state and some validation loss
+        """
+        if not self.is_setup:
+            raise ValueError("Checkpoint not setup yet")
+
         if len(self.buf) == self.buffer_size:
-            if loss < max(self.buf, key=itemgetter(1))[1]:
-                worstmodel, worstloss = self.buf.pop()
-                os.remove(worstmodel)
+            losses, (worstm, worstl) = [l for _, l in self.buf], self.buf[-1]
+            if loss < worstl and loss not in losses:  # avoid duplicates
+                os.remove(worstm)
+                self.buf.pop()
             else:
                 return
 
@@ -191,6 +204,12 @@ class Checkpoint(object):
         return self
 
     def remove(self):
+        """
+        Remove entire register
+        """
+        if not self.is_setup:
+            raise ValueError("Checkpoint not setup yet")
+
         import shutil
         shutil.rmtree(os.path.join(self.topdir, self.subdir))
 
