@@ -6,6 +6,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Function
 
+from seqmod.modules.torch_utils import variational_dropout
+
 
 class MLP(nn.Module):
     """
@@ -255,11 +257,14 @@ class OutputSoftmax(nn.Module):
 
             # Compute weights over mixtures: ((seq_len *) batch x mixture)
             priors = F.softmax(self.mixture_priors(output), dim=1)
-            # Compute logits 1: ((seq_len *) batch * mixture x emb_dim)
-            output = self.mixture_latent(output).view(-1, self.emb_dim)
-            # TODO: variational dropout
+            # Compute logits 1: (seq_len x batch x mixture * emb_dim)
+            output = self.mixture_latent(output).view(
+                seq_len, -1, self.mixture * self.emb_dim)
+            # Variational dropout
+            output = variational_dropout(
+                output, p=self.dropout, training=self.training)
             # Compute logits 2: ((seq_len *) batch * mixture x vocab)
-            output = self.output_emb(output)
+            output = self.output_emb(output.view(-1, self.emb_dim))
             # Compute probabilities
             output = F.softmax(output, dim=1).view(-1, self.mixture, self.vocab)
             # Mix: ((seq_len *) batch x vocab)

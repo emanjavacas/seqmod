@@ -58,8 +58,25 @@ def make_dropout_mask(inp, p, size):
     """
     Make dropout mask variable
     """
-    return Variable(inp.data.new(*size).bernoulli_(1 - p).div_(1 - p))
+    return Variable(inp.data.new(*size).bernoulli_(1 - p).div_(1 - p),
+                    requires_grad=False)
 
+
+def variational_dropout(inp, p=0.0, training=False):
+    if inp.dim() != 3:
+        raise ValueError("variational dropout expects 3D input")
+
+    if not training or p == 0.0:
+        return inp
+
+    seq_len, batch, dim = inp.size()
+
+    return Variable(
+        # compute mask
+        inp.data.new(1, batch, dim).bernoulli_(1 - p).div_(1 - p),
+        requires_grad=False
+    # exapand and apply mask
+    ).expand(seq_len, batch, dim) * inp
 
 def split(inp, breakpoints, include_last=False):
     """
