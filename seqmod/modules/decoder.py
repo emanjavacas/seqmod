@@ -115,7 +115,7 @@ class RNNDecoder(BaseDecoder):
                 self.hid_dim, self.hid_dim, scorer=self.att_type)
 
         # output projection
-        self.project = OutputSoftmax(
+        self.proj = OutputSoftmax(
             hid_dim, self.embeddings.embedding_dim, self.embeddings.num_embeddings,
             tie_weights=tie_weights, dropout=dropout, deepout_layers=deepout_layers,
             deepout_act=deepout_act)
@@ -220,6 +220,12 @@ class RNNDecoder(BaseDecoder):
         return RNNDecoderState(
             hidden, context, mask=mask, enc_att=enc_att,
             input_feed=input_feed, conds=conds, dropout_mask=dropout_mask)
+
+    def project(self, dec_out):  # legacy code
+        if dec_out.dim() == 3:
+            dec_out = dec_out.view(-1, dec_out.size(2))
+
+        return self.proj(dec_out)
 
     def forward(self, inp, state):
         """
