@@ -134,7 +134,8 @@ class EncoderDecoder(nn.Module):
 
         return (loss.data[0], *enc_losses), num_examples
 
-    def translate(self, src, lengths, conds=None, max_decode_len=2):
+    def translate(self, src, lengths, conds=None, max_decode_len=2,
+                  on_init_state=None, on_step=None):
         """
         Translate a single input sequence using greedy decoding.
 
@@ -155,15 +156,21 @@ class EncoderDecoder(nn.Module):
             bos, eos = eos, bos
         seq_len, batch_size = src.size()
 
-        enc_outs, enc_hidden = self.encoder(src)
+        enc_outs, enc_hidden = self.encoder(src, lengths)
         dec_state = self.decoder.init_state(
             enc_outs, enc_hidden, lengths, conds=conds)
+
+        if on_init_state is not None:
+            on_init_state(self, state)
 
         scores, hyps, weights = 0, [], []
         mask = src.data.new(batch_size).zero_().float() + 1
         prev = Variable(src.data.new([bos]).expand(batch_size), volatile=True)
 
         for _ in range(len(src) * max_decode_len):
+            if on_step is not None:
+                on_step(self, state)
+
             out, weight = self.decoder(prev, dec_state)
             # decode
             logprobs = self.decoder.project(out)
@@ -190,7 +197,7 @@ class EncoderDecoder(nn.Module):
         return scores, hyps, weights
 
     def translate_beam(self, src, lengths, conds=None, beam_width=5,
-                       max_decode_len=2):
+                       max_decode_len=2, on_init_state=None, on_step=None):
         """
         Translate a single input sequence using beam search.
 
@@ -222,17 +229,25 @@ class EncoderDecoder(nn.Module):
 
         scores, hyps, weights = [], [], []
 
-        enc_outs, enc_hidden = self.encoder(src)
+        enc_outs, enc_hidden = self.encoder(src, lengths)
         dec_state = self.decoder.init_state(
             enc_outs, enc_hidden, lengths, conds=conds)
 
-        for state in dec_state.split_batches():
+        # run callback
+        if on_init_state is not None:
+            on_init_state(self, dec_state)
 
+        for state in dec_state.split_batches():
+            # create beam
             state.expand_along_beam(beam_width)
             beam = Beam(beam_width, bos, eos=eos, gpu=gpu)
 
             while beam.active and len(beam) < len(src) * max_decode_len:
-                # (width) -> (1 x width)
+                # run callback
+                if on_step is not None:
+                    on_step(self, state)
+
+                # advance
                 prev = Variable(beam.get_current_state(), volatile=True)
                 dec_out, weight = self.decoder(prev, state)
                 logprobs = self.decoder.project(dec_out)  # (width x vocab_size)
