@@ -285,7 +285,7 @@ def format_hyp(score, hyp, hyp_num, d, level='word',
 
 
 def make_lm_hook(d, seed_texts=None, max_seq_len=25, gpu=False,
-                 temperature=1, level='token',
+                 temperature=1, level='token', checkpoint=None,
                  early_stopping=None, validate=True):
     """
     Make a generator hook for a normal language model
@@ -296,9 +296,13 @@ def make_lm_hook(d, seed_texts=None, max_seq_len=25, gpu=False,
         if validate:
             loss = trainer.validate_model()
             trainer.log("validation_end", {'epoch': epoch, 'loss': loss.pack()})
+
             if early_stopping is not None:
                 trainer.log("info", "Registering early stopping loss...")
                 early_stopping.add_checkpoint(loss.reduce())
+
+            if checkpoint is not None:
+                checkpoint.save()
 
         trainer.log("info", "Generating text...")
         scores, hyps = trainer.model.generate(

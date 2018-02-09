@@ -192,17 +192,20 @@ if __name__ == '__main__':
     # create trainer
     trainer = Trainer(
         m, {"train": train, "test": test, "valid": valid}, optimizer,
-        max_norm=args.max_norm, losses=('bpc' if args.level == 'char' else 'ppl',),
-        checkpoint=Checkpoint(m.__class__.__name__, buffer_size=3).setup(args))
+        max_norm=args.max_norm, losses=('bpc' if args.level == 'char' else 'ppl',))
 
     # hooks
     # - general hook
     early_stopping = None
     if args.patience > 0:
         early_stopping = EarlyStopping(args.patience)
+
+    checkpoint = Checkpoint(m.__class__.__name__, buffer_size=3).setup(args)
+
     model_hook = u.make_lm_hook(
         d, temperature=args.temperature, max_seq_len=args.max_seq_len,
-        gpu=args.gpu, level=args.level, early_stopping=early_stopping)
+        gpu=args.gpu, level=args.level, early_stopping=early_stopping,
+        checkpoint=checkpoint)
     trainer.add_hook(model_hook, hooks_per_epoch=args.hooks_per_epoch)
 
     # - scheduled sampling hook
@@ -231,5 +234,10 @@ if __name__ == '__main__':
         args.epochs, args.checkpoint, use_schedule=args.use_schedule)
 
     if args.save:
+        print("Saving model to {}".format(args.save_path))
         u.save_checkpoint(
             args.save_path, best_model, vars(args), d=d, ppl=test_loss)
+
+    if not prompt("Do you want to keep intermediate results? (yes/no)"):
+        checkpoint.remove()
+
