@@ -55,6 +55,7 @@ def make_lr_hook(optimizer, factor, patience, threshold=0.05, verbose=True):
 
     return hook
 
+
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
@@ -67,6 +68,7 @@ if __name__ == '__main__':
     parser.add_argument('--dropout', default=0.2, type=float)
     parser.add_argument('--word_dropout', default=0.0, type=float)
     parser.add_argument('--tie_weights', action='store_true')
+    parser.add_argument('--mixture', default=0, type=int)
     parser.add_argument('--deepout_layers', default=0, type=int)
     parser.add_argument('--deepout_act', default='MaxOut')
     parser.add_argument('--maxouts', default=2, type=int)
@@ -169,7 +171,7 @@ if __name__ == '__main__':
     print('Building model...')
     m = LM(args.emb_dim, args.hid_dim, d, exposure_rate=args.schedule_init,
            num_layers=args.num_layers, cell=args.cell, dropout=args.dropout,
-           att_dim=args.att_dim, tie_weights=args.tie_weights,
+           att_dim=args.att_dim, tie_weights=args.tie_weights, mixture=args.mixture,
            deepout_layers=args.deepout_layers, train_init=args.train_init,
            deepout_act=args.deepout_act, maxouts=args.maxouts,
            word_dropout=args.word_dropout)
@@ -200,7 +202,9 @@ if __name__ == '__main__':
     if args.patience > 0:
         early_stopping = EarlyStopping(args.patience)
 
-    checkpoint = Checkpoint(m.__class__.__name__, buffer_size=3).setup(args)
+    checkpoint = None
+    if args.save:
+        checkpoint = Checkpoint(m.__class__.__name__, buffer_size=3).setup(args)
 
     model_hook = u.make_lm_hook(
         d, temperature=args.temperature, max_seq_len=args.max_seq_len,
@@ -238,6 +242,6 @@ if __name__ == '__main__':
         u.save_checkpoint(
             args.save_path, best_model, vars(args), d=d, ppl=test_loss)
 
-    if not prompt("Do you want to keep intermediate results? (yes/no)"):
-        checkpoint.remove()
+        if not prompt("Do you want to keep intermediate results? (yes/no)"):
+            checkpoint.remove()
 
