@@ -1,4 +1,6 @@
 
+import logging
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -102,7 +104,7 @@ class Highway(torch.nn.Module):
         with kwargs for each layer.
     dropout: float, dropout rate before the nonlinearity
     """
-    def __init__(self, input_dim, num_layers=1, activation='ReLU', dropout=0.0,
+    def __init__(self, input_dim, num_layers=1, dropout=0.0, activation='ReLU',
                  **kwargs):
         self.input_dim = input_dim
         self.dropout = dropout
@@ -162,3 +164,118 @@ def grad_reverse(x):
     GRL must be placed between the feature extractor and the domain classifier
     """
     return GradReverse.apply(x)
+
+
+class OutputSoftmax(nn.Module):
+    """
+    General output layer for Softmax-based models (LM, Decoder)
+    It has options for adding a a deepout previous to the softmax layers.
+    """
+    def __init__(self, hid_dim, emb_dim, vocab, tie_weights=False, dropout=0.0,
+                 mixture=0, deepout_layers=0, deepout_act=None, maxouts=1):
+
+        self.hid_dim = hid_dim
+        self.emb_dim = emb_dim
+        self.vocab = vocab
+        self.tie_weights = tie_weights
+        self.dropout = dropout
+        self.mixture = mixture
+        self.has_mixture = bool(mixture)
+        self.tied_weights = False  # flag to check if weights were tied before run
+        self.has_deepout = False
+        self.has_intermediate_proj = False
+
+        super(OutputSoftmax, self).__init__()
+
+        if deepout_layers > 0:
+            self.has_deepout = True
+            self.deepout = Highway(hid_dim, num_layers=deepout_layers,
+                                   dropout=dropout, activation=deepout_act,
+                                   # kwargs for custom MaxOut activation
+                                   k=maxouts, in_dim=hid_dim, out_dim=hid_dim)
+
+        if self.has_mixture:
+            self.mixture_priors = nn.Linear(hid_dim, mixture, bias=False)
+            self.mixture_latent = nn.Linear(hid_dim, mixture * emb_dim)
+
+        if tie_weights:
+            self.output_emb = nn.Linear(emb_dim, vocab)
+            if emb_dim != hid_dim and not self.has_mixture:
+                # Insert a projection from hid_dim to emb_dim to have same dims
+                # in both input and output embedding layers.
+                # Mixture of softmaxes doesn't have this constraint
+                # as it always projects hid_dim to emb_dim (* mixtures)
+                logging.warn("When tying weights, output layer and "
+                             "embedding layer should have equal size. "
+                             "A projection layer will be insterted.")
+                self.intermediate = nn.Linear(hid_dim, emb_dim)
+                self.has_intermediate_proj = True
+        else:
+            # mixture softmax introduces a layer before output embeddings
+            # projecting to the embedding dimension
+            inp_dim = emb_dim if self.has_mixture else hid_dim
+            self.output_emb = nn.Linear(inp_dim, vocab)
+
+    def tie_embedding_weights(self, embedding):
+        """
+        Actually tie the weights
+        """
+        if not self.tie_weights:
+            raise ValueError("Module not setup for weight tying")
+
+        if self.output_emb.weight.size() != embedding.weight.size():
+            raise ValueError("Uncompatible weight sizes")
+
+        self.tied_weights = True
+        self.output_emb.weight = embedding.weight
+
+    def forward(self, output, reshape=False, normalize=True):
+        """
+        output: Tensor((seq_len x) batch x hid_dim)
+        reshape: whether to unflatten the seq_len and batch dims in the output
+        normalize: whether to return log-probs (otherwise logits will be returned).
+            It cannot be False for mixture softmaxes (an error is thrown since it
+            would probably imply a design error in client code).
+        """
+        if self.tie_weights and not self.tied_weights:
+            raise ValueError("Module should have tied weights")
+
+        seq_len = 1 if output.dim() == 2 else output.size(0)
+        output = output.view(-1, self.hid_dim)  # collapse seq_len and batch
+
+        if self.has_deepout:
+            output = self.deepout(output)
+
+        if self.has_intermediate_proj:
+            output = self.intermediate(output)
+
+        if self.has_mixture:
+            if not normalize:
+                raise ValueError("Mixture of Softmaxes cannot return logits")
+
+            # Compute weights over mixtures: ((seq_len *) batch x mixture)
+            priors = F.softmax(self.mixture_priors(output), dim=1)
+            # Compute logits 1: ((seq_len *) batch * mixture x emb_dim)
+            output = self.mixture_latent(output).view(-1, self.emb_dim)
+            # TODO: variational dropout
+            # Compute logits 2: ((seq_len *) batch * mixture x vocab)
+            output = self.output_emb(output)
+            # Compute probabilities
+            output = F.softmax(output, dim=1).view(-1, self.mixture, self.vocab)
+            # Mix: ((seq_len *) batch x vocab)
+            output = (output * priors.unsqueeze(2).expand_as(output)).sum(1)
+            # Transform log-probs to probs
+            output = output.add_(1e-8).log()
+
+        else:
+            # ((seq_len *) batch x vocab)
+            output = self.output_emb(output)
+
+            if normalize:
+                output = F.log_softmax(output, dim=1)
+
+        if reshape:
+            # => (seq_len x batch x vocab)
+            output = output.view(seq_len, -1, self.vocab)
+
+        return output

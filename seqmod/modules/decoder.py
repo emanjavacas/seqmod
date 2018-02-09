@@ -6,7 +6,7 @@ import torch.nn as nn
 from torch.autograd import Variable
 
 from seqmod.modules.rnn import StackedGRU, StackedLSTM
-from seqmod.modules.ff import Highway
+from seqmod.modules.ff import OutputSoftmax
 from seqmod.modules import attention
 from seqmod.modules.torch_utils import make_length_mask, make_dropout_mask, swap
 
@@ -39,49 +39,6 @@ class BaseDecoder(nn.Module):
         Whether the current decoder implements takes conditions
         """
         return False
-
-    def build_output(self, hid_dim, deep_layers, deep_act, tie_weights, p):
-        """
-        Create output projection (from decoder output to softmax)
-        """
-        output = []
-
-        if deep_layers > 0:
-            output.append(
-                Highway(hid_dim, num_layers=deep_layers,
-                        activation=deep_act, dropout=p))
-
-        emb_dim = self.embeddings.embedding_dim
-        vocab_size = self.embeddings.num_embeddings
-
-        if not tie_weights:
-            proj = nn.Linear(hid_dim, vocab_size)
-        else:
-            proj = nn.Linear(emb_dim, vocab_size)
-            proj.weight = self.embeddings.weight
-            if emb_dim != hid_dim:
-                # inp embeddings are (vocab x emb_dim); output is (hid x vocab)
-                # if emb_dim != hidden, we insert a projection
-                logging.warn("When tying weights, output layer and "
-                             "embedding layer should have equal size. "
-                             "A projection layer will be insterted.")
-                proj = nn.Sequential(nn.Linear(hid_dim, emb_dim), proj)
-
-        output.append(proj)
-        output.append(nn.LogSoftmax(dim=1))
-
-        return nn.Sequential(*output)
-
-    def project(self, dec_out):
-        """
-        Run output projection (from the possibly attended output til softmax).
-        During training the input for the entire target sequence is processed
-        at once for efficiency.
-        """
-        if dec_out.dim() == 3:  # collapse seq_len and batch_size (training)
-            dec_out = dec_out.view(-1, dec_out.size(2))
-
-        return self.proj(dec_out)
 
 
 class RNNDecoder(BaseDecoder):
@@ -158,8 +115,13 @@ class RNNDecoder(BaseDecoder):
                 self.hid_dim, self.hid_dim, scorer=self.att_type)
 
         # output projection
-        self.proj = self.build_output(
-            hid_dim, deepout_layers, deepout_act, tie_weights, dropout)
+        self.project = OutputSoftmax(
+            hid_dim, self.embeddings.embedding_dim, self.embeddings.num_embeddings,
+            tie_weights=tie_weights, dropout=dropout, deepout_layers=deepout_layers,
+            deepout_act=deepout_act)
+
+        if tie_weights:
+            self.project.tie_embedding_weights(self.embeddings)
 
     def build_rnn(self, num_layers, in_dim, hid_dim, cell, **kwargs):
         stacked = StackedLSTM if cell == 'LSTM' else StackedGRU

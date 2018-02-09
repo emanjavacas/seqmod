@@ -11,7 +11,7 @@ from seqmod.modules.torch_utils import init_hidden_for, repackage_hidden
 from seqmod.modules.torch_utils import swap, select_cols
 from seqmod.modules.embedding import Embedding
 from seqmod.modules import rnn
-from seqmod.modules.ff import MaxOut, Highway
+from seqmod.modules.ff import MaxOut, OutputSoftmax
 from seqmod.modules.attention import Attention
 from seqmod.misc.beam_search import Beam
 from seqmod.modules.exposure import scheduled_sampling
@@ -307,7 +307,7 @@ class BaseLM(nn.Module):
             if hasattr(m, 'dropout'):
                 m.dropout = dropout
 
-    def project(self, output, reshape=False):
+    def project(self, output, reshape=False, normalize=True):
         raise NotImplementedError
 
     def forward(self, inp, **kwargs):
@@ -426,7 +426,6 @@ class LM(BaseLM):
     Parameters:
     -----------
 
-    - vocab: int, vocabulary size.
     - emb_dim: int, embedding size.
     - hid_dim: int, hidden dimension of the RNN.
     - d: Dict.
@@ -448,6 +447,8 @@ class LM(BaseLM):
     - tie_weights: bool, whether to tie input and output embedding layers.
         In case of unequal emb_dim and hid_dim values a linear project layer
         will be inserted after the RNN to match back to the embedding dim
+    - mixture: int, use a mixture of softmaxes in the output (only if the value
+        is strictly positive).
     - deepout_layers: int, whether to add deep output after hidden layer and
         before output projection layer. No deep output will be added if
         deepout_layers is 0 or None.
@@ -457,15 +458,10 @@ class LM(BaseLM):
     """
     def __init__(self, emb_dim, hid_dim, d, num_layers=1,
                  cell='GRU', bias=True, dropout=0.0, conds=None,
-                 word_dropout=0.0, att_dim=0, tie_weights=False,
+                 word_dropout=0.0, att_dim=0, tie_weights=False, mixture=0,
                  train_init=False, add_init_jitter=False,
                  deepout_layers=0, deepout_act='MaxOut', maxouts=2,
                  exposure_rate=1.0):
-
-        if tie_weights and not emb_dim == hid_dim:
-            logging.warn("When tying weights, output layer and embedding " +
-                         "layer should have equal size. A projection layer " +
-                         "will be insterted to accomodate for this")
 
         self.emb_dim = emb_dim
         self.hid_dim = hid_dim
@@ -520,42 +516,16 @@ class LM(BaseLM):
         self.has_attention = hasattr(self, 'attn')
 
         # Output projection
-        output_proj = []
-        if deepout_layers > 0:
-            deepout = Highway(
-                hid_dim, num_layers=deepout_layers,
-                activation=MaxOut, in_dim=hid_dim, out_dim=hid_dim, k=maxouts)
-            output_proj.append(deepout)
+        self.project_ = OutputSoftmax(
+            hid_dim, emb_dim, len(self.embeddings.d),
+            tie_weights=tie_weights, dropout=dropout, mixture=mixture,
+            deepout_layers=deepout_layers, deepout_act=MaxOut, maxouts=maxouts)
 
-        vocab = len(self.embeddings.d)
-        if self.tie_weights:
-            proj = nn.Linear(self.emb_dim, vocab)
-            proj.weight = self.embeddings.weight
-            if self.emb_dim != self.hid_dim:
-                proj = nn.Sequential(
-                    nn.Linear(self.hid_dim, self.emb_dim), proj)
-        else:
-            proj = nn.Linear(self.hid_dim, vocab)
+        if tie_weights:
+            self.project_.tie_embedding_weights(self.embeddings)
 
-        output_proj.append(proj)
-        self.output_proj = nn.Sequential(*output_proj)
-
-    def project(self, output, reshape=False, normalize=True):
-        if output.dim() == 2:
-            seq_len = 1
-        else:
-            seq_len = output.size(0)
-
-        output = self.output_proj(output.view(-1, self.hid_dim))
-
-        if reshape:
-            # (seq_len x batch_size x vocab)
-            output = output.view(seq_len, -1, len(self.embeddings.d))
-
-        if normalize:
-            output = F.log_softmax(output, dim=1)
-
-        return output
+    def project(self, inp, reshape=False, normalize=True):
+        return self.project_(inp, reshape=reshape, normalize=normalize)
 
     def init_hidden_for(self, inp):
         return init_hidden_for(
