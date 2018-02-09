@@ -90,6 +90,23 @@ def save_checkpoint(parent, model, args, d=None, ppl=None, suffix=None):
     return dirpath
 
 
+def prompt(message):
+
+    def parse(ans):
+        if ans.lower() == 'yes':
+            return True
+        elif ans.lower() == 'no':
+            return False
+        else:
+            raise ValueError
+
+    try:
+        return parse(input("{} ".format(message)))
+    except ValueError:
+        return prompt("Please answer yes or no:")
+
+
+
 def _wrap_variable(t, volatile, gpu):
     if len(t) == 0:             # don't wrap empty vectors
         return t
@@ -291,7 +308,7 @@ def make_lm_hook(d, seed_texts=None, max_seq_len=25, gpu=False,
     Make a generator hook for a normal language model
     """
 
-    def hook(trainer, epoch, batch_num, checkpoint):
+    def hook(trainer, epoch, batch_num, check):
         trainer.log("info", "Checking training...")
         if validate:
             loss = trainer.validate_model()
@@ -302,7 +319,7 @@ def make_lm_hook(d, seed_texts=None, max_seq_len=25, gpu=False,
                 early_stopping.add_checkpoint(loss.reduce())
 
             if checkpoint is not None:
-                checkpoint.save()
+                checkpoint.save(trainer.model, loss.reduce())
 
         trainer.log("info", "Generating text...")
         scores, hyps = trainer.model.generate(

@@ -242,6 +242,6 @@ if __name__ == '__main__':
         u.save_checkpoint(
             args.save_path, best_model, vars(args), d=d, ppl=test_loss)
 
-        if not prompt("Do you want to keep intermediate results? (yes/no)"):
+        if not u.prompt("Do you want to keep intermediate results? (yes/no)"):
             checkpoint.remove()
 
