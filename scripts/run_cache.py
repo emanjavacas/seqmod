@@ -35,7 +35,6 @@ if __name__ == '__main__':
     parser.add_argument('--cache_size', default=100, type=int)
     parser.add_argument('--alpha', default=0.1, type=float)
     parser.add_argument('--theta', default=0.1, type=float)
-    parser.add_argument('--mode', default='linear')
     # test
     parser.add_argument('--run_grid', action='store_true')
     parser.add_argument('--batch_size', default=50, type=int)
@@ -100,29 +99,21 @@ if __name__ == '__main__':
                 logits = model.project(out, normalize=False)
 
                 if cache.stored > 0:  # only interpolate after first step
-                    # (batch x cache_size)
+                    # query (batch x cache_size)
                     cache_logits, vals = u.wrap_variables(
                         cache.query(out.data), volatile=True)
 
                     # interpolate
-                    if args.mode == 'linear':
-                        cache_prob = alpha * F.softmax(theta * cache_logits, dim=1)
-                        prob = (1 - alpha) * F.softmax(logits, dim=1)
-                        batch_index_add_(prob.data, vals.data, cache_prob.data)
-                    elif args.mode == 'global':
-                        cache_logits = theta * cache_logits + alpha
-                        batch_index_add_(logits.data, vals.data, cache_logits.data)
-                        prob = F.softmax(logits, dim=1)
+                    cache_prob = alpha * F.softmax(theta * cache_logits, dim=1)
+                    prob = (1 - alpha) * F.softmax(logits, dim=1)
+                    batch_index_add_(prob.data, vals.data, cache_prob.data)
 
-                else:
-                    prob = F.softmax(logits, dim=1)
-
-                loss.add(u.unwrap_variables(F.nll_loss(prob.log(), target)),
-                         target.nelement())
+                bloss = u.unwrap_variables(F.nll_loss(prob.add(1e-8).log(), target))
+                loss.add(bloss, target.nelement())
                 cache.add(out.data.unsqueeze(0), target.data.unsqueeze(0))
 
         if args.run_grid:
-            fname = 'cache.{}.{}.grid.csv'.format(args.mode, args.cache_size)
+            fname = 'cache.{}.grid.csv'.format(args.cache_size)
             with open(os.path.join(args.model_path, fname), 'a') as f:
                 f.write('{} {} {}\n'.format(theta, alpha, loss.reduce()))
         else:
