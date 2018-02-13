@@ -6,7 +6,7 @@ from torch.autograd import Variable
 from seqmod.modules.torch_utils import swap, make_dropout_mask
 from seqmod.modules.ff import Highway
 from seqmod.misc import inflection_sigmoid, linear
-from seqmod.modules.encoder_decoder import RNNEncoder
+from seqmod.modules.rnn_encoder import RNNEncoder
 from seqmod.modules.decoder import RNNDecoder, State
 from seqmod.modules.encoder_decoder import EncoderDecoder, make_embeddings
 

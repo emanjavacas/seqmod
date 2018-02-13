@@ -5,7 +5,8 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 
 from seqmod.misc.beam_search import Beam
-from seqmod.modules.encoder import RNNEncoder, GRLRNNEncoder
+from seqmod.modules.encoder import GRLWrapper
+from seqmod.modules.rnn_encoder import RNNEncoder
 from seqmod.modules.decoder import RNNDecoder
 from seqmod.modules.embedding import Embedding
 from seqmod.modules.torch_utils import flip, shards
@@ -362,6 +363,9 @@ def make_rnn_encoder_decoder(
                              "value")
 
     return EncoderDecoder(encoder, decoder, reverse=reverse)
+
+
+GRLRNNEncoder = GRLWrapper(RNNEncoder)
 
 
 def make_grl_rnn_encoder_decoder(
