@@ -3,10 +3,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from seqmod.modules.encoder import BaseEncoder
 from seqmod.modules import conv_utils
 
 
-class CNNTextEncoder(nn.Module):
+class CNNTextEncoder(BaseEncoder):
     """
     'Convolutional Neural Networks for Sentence Classification'
     http://www.aclweb.org/anthology/D14-1181

@@ -44,6 +44,6 @@ def get_padding(filter_size, mode='wide'):
     """
     pad = 0
     if mode == 'wide':
-        pad = math.floor(filter_size / 2) * 2
+        pad = math.floor(filter_size / 2)
 
     return pad

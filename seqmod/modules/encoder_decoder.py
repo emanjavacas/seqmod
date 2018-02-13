@@ -161,7 +161,7 @@ class EncoderDecoder(nn.Module):
             enc_outs, enc_hidden, lengths, conds=conds)
 
         if on_init_state is not None:
-            on_init_state(self, state)
+            on_init_state(self, dec_state)
 
         scores, hyps, weights = 0, [], []
         mask = src.data.new(batch_size).zero_().float() + 1
@@ -169,7 +169,7 @@ class EncoderDecoder(nn.Module):
 
         for _ in range(len(src) * max_decode_len):
             if on_step is not None:
-                on_step(self, state)
+                on_step(self, dec_state)
 
             out, weight = self.decoder(prev, dec_state)
             # decode
