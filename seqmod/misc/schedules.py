@@ -35,7 +35,7 @@ def inflection_sigmoid(inflection, steepness, a=1, inverse=False):
 
 def linear(convergence):
     """
-    - convergence: value of x at which y reaches 1
+- convergence: value of x at which y reaches 1
     """
     return lambda x: x * (1 / convergence)
 
@@ -67,6 +67,16 @@ def inverse_exponential(k=0.95, y_intercept=1):
     - y_intercept: value of y at which x is equal to 0
     """
     return lambda x: k ** x - (1 - y_intercept)
+
+
+def inverse_cosine(a_min, a_max, total):
+    """
+    A schedules that goes from a_max to a_min over a predefined number of steps
+    `total`, following a cosine slope.
+
+    https://arxiv.org/pdf/1801.06146.pdf
+    """
+    return lambda t: a_min + 1/2 * ((a_max-a_min)*(1+math.cos((t/total) * math.pi)))
 
 
 if __name__ == '__main__':
