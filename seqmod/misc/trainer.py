@@ -25,6 +25,10 @@ def bpc(loss):
     return math.log2(math.e) * loss
 
 
+def identity(loss):
+    return loss
+
+
 class LossStatistics(object):
     """
     Accumulator for different losses (for report purposes)
@@ -52,7 +56,7 @@ class LossStatistics(object):
                 elif loss == 'bpc':
                     self.losses.append({'loss': loss, 'format': bpc})
                 else:           # default to ppl
-                    self.losses.append({'loss': loss, 'format': ppl})
+                    self.losses.append({'loss': loss, 'format': identity})
             else:
                 self.losses.append(loss)
 
