@@ -2,9 +2,6 @@
 import unittest
 
 import torch
-import torch.nn.functional as F
-from torch.autograd import Variable
-import numpy as np
 
 from seqmod.modules.cache import Cache
 
@@ -46,34 +43,6 @@ class CacheTest(unittest.TestCase):
                     "Stored items don't agree with input items")
             current = newcurrent
 
-    def test_query(self):
-        # params
-        size, batch, dim, vocab = 10, 5, 100, 15
-        cache = Cache(dim, size, vocab)
-        # insert some key-val pairs
-        keys = torch.randn(15, batch, dim)
-        vals = torch.LongTensor(15, batch).random_(vocab)
-        cache.add(keys, vals)
-        # get random query
-        unnormed, vals = cache.query(torch.rand(batch, dim))
-        # normalize output probability
-        normed = cache.get_full_probs(F.log_softmax(Variable(unnormed), 1).data, vals)
-        # index symbols in the cache
-        index = cache.memvals + torch.arange(0, batch) \
-                                     .unsqueeze(0) \
-                                     .expand_as(cache.memvals) \
-                                     .type_as(cache.memvals) * vocab
-        # elements in the full output distribution retrieved by the index
-        keyed = normed.view(-1).index_select(0, index.t().contiguous().view(-1))
-
-        self.assertEqual(len(np.unique(keyed)), (normed != 0).sum(),
-                         "Same number of nonzero entries in the full output dist "
-                         "as in the cache")
-        # we shouldn't have retrieved any zero elements
-        self.assertEqual(keyed.nonzero().nelement(), index.nelement(),
-                         "Elements are not in their right position. Probably "
-                         "0-value elements were retrieved.")
-
     def test_add_sequence(self):
         size, batch, dim, vocab = 10, 5, 100, 15
         cache = Cache(dim, size, vocab)
@@ -91,4 +60,3 @@ class CacheTest(unittest.TestCase):
                     break
             self.assertTrue(checked, 'row {} was found in the cache'.format(idx))
             checked = False
-
