@@ -65,6 +65,53 @@ class EncoderDecoder(nn.Module):
         for p in getattr(self, module).parameters():
             p.requires_grad = False
 
+    def decoder_loss(self, dec_state, trg, num_examples,
+                     test=False, split=25, use_schedule=False):
+
+        # word-level loss weight (weight down padding)
+        weight = self.nll_weight
+        if self.is_cuda():
+            weight = weight.cuda()
+
+        # [<bos> ... <eos> pad pad]
+        dec_trg, loss_trg = trg[:-1], trg[1:]
+
+        # should we run fast_forward?
+        fast_run = hasattr(self.decoder, 'is_fast_forward')
+        fast_run = fast_run and self.decoder.is_fast_forward
+        fast_run = fast_run and not use_schedule
+
+        if fast_run:
+            dec_outs, _ = self.decoder.fast_forward(dec_trg, dec_state)
+
+        else:
+            dec_outs = []
+            for step, t in enumerate(dec_trg):
+                if use_schedule and step > 0 and self.exposure_rate < 1.0:
+                    t = scheduled_sampling(
+                        t, dec_outs[-1],
+                        self.decoder.project,
+                        self.exposure_rate)
+                    t = Variable(t, volatile=not self.training)
+                out, _ = self.decoder(t, dec_state)
+                dec_outs.append(out)
+            dec_outs = torch.stack(dec_outs)
+
+        # compute memory efficient decoder loss
+        loss, shard_data = 0, {'out': dec_outs, 'trg': loss_trg}
+
+        for shard in shards(shard_data, size=split, test=test):
+            out, true = shard['out'], shard['trg'].view(-1)
+            pred = self.decoder.project(out)
+            shard_loss = F.nll_loss(pred, true, weight, size_average=False)
+            shard_loss /= num_examples
+            loss += shard_loss
+
+            if not test:
+                shard_loss.backward(retain_graph=True)
+
+        return loss.data[0]
+
     def loss(self, batch_data, test=False, split=25, use_schedule=False):
         """
         Return batch-averaged loss and examples processed for speed monitoring
@@ -86,54 +133,25 @@ class EncoderDecoder(nn.Module):
             (trg, *trg_conds) = trg
         (trg, trg_lengths) = trg
 
-        # word-level loss weight (weight down padding)
-        weight = self.nll_weight
-        if self.is_cuda():
-            weight = weight.cuda()
+        num_examples = trg_lengths.data.sum()
 
+        # - compute encoder output
+        enc_outs, enc_hidden = self.encoder(src, lengths=src_lengths)
+        # - compute encoder loss
+        enc_losses, _ = self.encoder.loss(enc_outs, src_conds, test=test)
+
+        # - compute decoder loss
         # remove <eos> from decoder targets, remove <bos> from loss targets
         if hasattr(self, 'reverse') and self.reverse:
             # assume right aligned data: [pad pad <bos> ... <eos>]
             trg = flip(trg, 0)
-
-        # [<bos> ... <eos> pad pad]
-        dec_trg, loss_trg = trg[:-1], trg[1:]
-
-        # compute model output
-        enc_outs, enc_hidden = self.encoder(src, lengths=src_lengths)
         dec_state = self.decoder.init_state(
             enc_outs, enc_hidden, src_lengths, conds=trg_conds)
+        dec_loss = self.decoder_loss(
+            dec_state, trg, num_examples,
+            test=test, split=split, use_schedule=use_schedule)
 
-        dec_outs = []
-        for step, t in enumerate(dec_trg):
-            if use_schedule and step > 0 and self.exposure_rate < 1.0:
-                t = scheduled_sampling(
-                    t, dec_outs[-1],
-                    self.decoder.project,
-                    self.exposure_rate)
-                t = Variable(t, volatile=not self.training)
-            out, _ = self.decoder(t, dec_state)
-            dec_outs.append(out)
-        dec_outs = torch.stack(dec_outs)
-
-        # compute loss and backprop
-        enc_losses, _ = self.encoder.loss(enc_outs, src_conds, test=test)
-
-        # compute memory efficient word loss
-        shard_data = {'out': dec_outs, 'trg': loss_trg}
-        num_examples, loss = trg_lengths.data.sum(), 0
-
-        for shard in shards(shard_data, size=split, test=test):
-            out, true = shard['out'], shard['trg'].view(-1)
-            pred = self.decoder.project(out)
-            shard_loss = F.nll_loss(pred, true, weight, size_average=False)
-            shard_loss /= num_examples
-            loss += shard_loss
-
-            if not test:
-                shard_loss.backward(retain_graph=True)
-
-        return (loss.data[0], *enc_losses), num_examples
+        return (dec_loss, *enc_losses), num_examples
 
     def translate(self, src, lengths, conds=None, max_decode_len=2,
                   on_init_state=None, on_step=None):
@@ -157,7 +175,7 @@ class EncoderDecoder(nn.Module):
             bos, eos = eos, bos
         seq_len, batch_size = src.size()
 
-        enc_outs, enc_hidden = self.encoder(src, lengths)
+        enc_outs, enc_hidden = self.encoder(src, lengths=lengths)
         dec_state = self.decoder.init_state(
             enc_outs, enc_hidden, lengths, conds=conds)
 

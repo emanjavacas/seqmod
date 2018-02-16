@@ -28,7 +28,16 @@ class BaseDecoder(nn.Module):
         """
         Parameters:
         -----------
-        inp: torch.LongTensor(seq_len x batch)
+        inp: torch.LongTensor(batch)
+        state: DecoderState
+        """
+        raise NotImplementedError
+
+    def fast_forward(self, inp, state, **kwargs):
+        """
+        Parameters:
+        -----------
+        inp: torch.LongTensor(batch)
         state: DecoderState
         """
         raise NotImplementedError
@@ -84,6 +93,10 @@ class RNNDecoder(BaseDecoder):
         if self.att_type is not None and self.att_type.lower() != 'none':
             self.has_attention = True
 
+        self.is_fast_forward = False
+        if not (variational or input_feed):
+            self.is_fast_forward = True
+
         in_dim = self.embeddings.embedding_dim
         if input_feed:
             in_dim += hid_dim
@@ -124,8 +137,12 @@ class RNNDecoder(BaseDecoder):
             self.project.tie_embedding_weights(self.embeddings)
 
     def build_rnn(self, num_layers, in_dim, hid_dim, cell, **kwargs):
-        stacked = StackedLSTM if cell == 'LSTM' else StackedGRU
-        return stacked(num_layers, in_dim, hid_dim, **kwargs)
+        if self.is_fast_forward:
+            stacked = nn.LSTM if cell == 'LSTM' else nn.GRU
+            return stacked(in_dim, hid_dim, num_layers, **kwargs)
+        else:
+            stacked = StackedLSTM if cell == 'LSTM' else StackedGRU
+            return stacked(num_layers, in_dim, hid_dim, **kwargs)
 
     @property
     def conditional(self):
@@ -190,8 +207,6 @@ class RNNDecoder(BaseDecoder):
         context: torch.FloatTensor, summary vector(s) from the Encoder.
         hidden: torch.FloatTensor, previous hidden decoder state.
         conds: (optional) tuple of (batch) with conditions
-        mask: (optional) precomputed attention mask. If passed, lengths
-            will be ignored.
         """
         hidden = self.init_hidden_for(hidden)
 
@@ -247,7 +262,12 @@ class RNNDecoder(BaseDecoder):
         if self.conditional:
             inp = torch.cat([inp, state.conds], 1)
 
-        out, hidden = self.rnn(inp, state.hidden, dropout_mask=state.dropout_mask)
+        if self.is_fast_forward:
+            # rnn module expects 3D input and doesn't take dropout_mask
+            out, hidden = self.rnn(inp.unsqueeze(0), state.hidden)
+            out = out.squeeze(0)
+        else:
+            out, hidden = self.rnn(inp, state.hidden, dropout_mask=state.dropout_mask)
 
         weight = None
         if self.has_attention:
@@ -258,6 +278,45 @@ class RNNDecoder(BaseDecoder):
         state.hidden = hidden
         if self.input_feed:
             state.input_feed = out
+
+        return out, weight
+
+    def fast_forward(self, inp, state):
+        """
+        Parameters:
+        -----------
+
+        inp: torch.FloatTensor(seq_len x batch), Embedding input.
+        state: DecoderState, object data persisting throughout the decoding.
+        """
+        if not self.is_fast_forward:
+            raise ValueError("Decoder is not configured for fast_forward")
+
+        inp = self.embeddings(inp)
+
+        if self.input_feed:
+            raise ValueError("Fast decoder can't use `input_feed`")
+
+        # condition on encoder summary for non-attentive decoders (2D contexts)
+        if self.context_feed:
+            # repeat along seq_len dim
+            context = state.context.unsqueeze(0).repeat(inp.size(0), 1, 1)
+            inp = torch.cat([inp, context], dim=2)
+
+        if self.conditional:
+            # repeat along seq_len dim
+            conds = state.conds.unsqueeze(0).repeat(inp.size(0), 1, 1)
+            inp = torch.cat([inp, conds], dim=2)
+
+        out, hidden = self.rnn(inp, state.hidden)
+
+        weight = None
+        if self.has_attention:
+            out, weight = self.attn.fast_forward(
+                out, state.context, enc_att=state.enc_att, mask=state.mask)
+
+        # update state
+        state.hidden = hidden
 
         return out, weight
 
