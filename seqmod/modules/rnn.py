@@ -59,7 +59,7 @@ class StackedLSTM(BaseStackedRNN):
             inp = h_1_i
             # dropout on all but last layer
             if i + 1 != self.num_layers:
-                if dropout_mask is not None:
+                if dropout_mask is not None and self.training:
                     inp = inp * dropout_mask
                 else:
                     inp = F.dropout(inp, p=self.dropout, training=self.training)
@@ -80,7 +80,7 @@ class StackedGRU(BaseStackedRNN):
             inp = h_1_i
             # dropout on all but last layer
             if i + 1 != self.num_layers:
-                if dropout_mask is not None:
+                if dropout_mask is not None and self.training:
                     inp = inp * dropout_mask
                 else:
                     inp = F.dropout(inp, p=self.dropout, training=self.training)
@@ -101,7 +101,7 @@ class StackedNormalizedGRU(BaseStackedRNN):
             inp = h_1_i
             # dropout on all but last layer
             if i + 1 != self.num_layers:
-                if dropout_mask is not None:
+                if dropout_mask is not None and self.training:
                     inp = inp * dropout_mask
                 else:
                     inp = F.dropout(inp, p=self.dropout, training=self.training)
