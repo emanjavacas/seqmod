@@ -168,7 +168,7 @@ if __name__ == '__main__':
 
     early_stopping = EarlyStopping(args.patience)
     trainer = Trainer(
-        model, {'train': train, 'valid': valid}, optimizer,
+        model, {'train': train, 'valid': valid}, optimizer, losses=('ppl',),
         early_stopping=early_stopping, max_norm=args.max_norm,
         checkpoint=Checkpoint(model.__class__.__name__).setup(args, src_dict))
     trainer.add_loggers(StdLogger())
