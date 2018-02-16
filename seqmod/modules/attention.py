@@ -8,8 +8,29 @@ def DotScorer(dec_out, enc_outs, **kwargs):
     """
     Score for query decoder state and the ith encoder state is given
     by their dot product.
+
+    dec_outs: ((trg_seq_len x) batch x hid_dim)
+    enc_outs: (src_seq_len x batch x hid_dim)
+
+    output: ((trg_seq_len x) batch x src_seq_len)
     """
-    return torch.bmm(enc_outs.transpose(0, 1), dec_out.unsqueeze(2)).squeeze(2)
+    if dec_out.dim() == 2:
+        # (batch x seq_len x hid_dim) * (batch x hid_dim x 1) => (batch x seq_len x 1)
+        score = torch.bmm(enc_outs.transpose(0, 1), dec_out.unsqueeze(2))
+        # (batch x seq_len)
+        return score.squeeze(2)
+
+    elif dec_out.dim() == 3:
+        score = torch.bmm(
+            # (batch x src_seq_len x hid_dim)
+            enc_outs.transpose(0, 1),
+            # (batch x hid_dim x trg_seq_len)
+            dec_out.transpose(0, 1).transpose(1, 2))
+        # (batch x src_seq_len x trg_seq_len) => (trg_seq_len x batch x src_seq_len)
+        return score.transpose(0, 1).transpose(0, 2)
+
+    else:
+        raise ValueError("Wrong dec output dims [{}]".format(dec_out.dim()))
 
 
 class GeneralScorer(nn.Module):
@@ -22,6 +43,7 @@ class GeneralScorer(nn.Module):
         self.W_a = nn.Linear(dim, dim, bias=False)
 
     def forward(self, dec_out, enc_outs, **kwargs):
+
         return DotScorer(self.W_a(dec_out), enc_outs)
 
 
@@ -59,12 +81,41 @@ class BahdanauScorer(nn.Module):
         if enc_att is None:
             # (seq_len x batch x att dim)
             enc_att = self.project_enc_outs(enc_outs)
-        # (batch x att_dim)
+        # ((trg_seq_len x) batch x att_dim)
         dec_att = self.W_t(dec_out)
-        # (batch x seq_len x att_dim)
-        dec_enc_att = F.tanh(enc_att + dec_att[None, :, :])
-        # (batch x seq_len x att_dim) * (1 x att_dim x 1) -> (batch x seq_len)
-        return (dec_enc_att.transpose(0, 1) @ self.v_a[None, :, :]).squeeze(2)
+
+        if dec_att.dim() == 2:
+            # (batch x seq_len x att_dim)
+            dec_enc_att = F.tanh(enc_att + dec_att[None, :, :])
+            # (batch x seq_len x att_dim) * (1 x att_dim x 1) -> (batch x seq_len)
+            return (dec_enc_att.transpose(0, 1) @ self.v_a[None, :, :]).squeeze(2)
+
+        elif dec_att.dim() == 3:
+            src_seq_len, batch, dim = enc_att.size()
+            trg_seq_len = dec_att.size(0)
+
+            # see seqmod/test/modules/attention.py
+            dec_enc_att = F.tanh(
+                # (src_seq_len x trg_seq_len x batch x att_dim) +
+                # (1           x trg_seq_len x batch x att_dim)
+                # => (src_seq_len x trg_seq_len x batch x att_dim)
+                enc_att.unsqueeze(0)
+                       .repeat(trg_seq_len, 1, 1, 1)
+                       .transpose(0, 1) + dec_att.unsqueeze(0))
+
+            # (batch x src_seq_len x trg_seq_len x dim)
+            dec_enc_att = dec_enc_att.transpose(0, 2)
+            # (batch x src_seq_len * trg_seq_len x dim)
+            dec_enc_att = dec_att.view(batch, src_seq_len * trg_seq_len, dim)
+            # (batch x seq_len x dim) * (1 x dim x 1) -> (batch x seq_len)
+            dec_enc_att = dec_enc_att @ self.v_a[None, :, :].unsqueeze(2)
+            # (batch x src_seq_len x trg_seq_len)
+            dec_enc_att = dec_enc_att.view(batch, src_seq_len, trg_seq_len)
+            # (trg_seq_len x batch x src_seq_len)
+            return dec_enc_att.transpose(0, 2).transpose(1, 2)
+
+        else:
+            raise ValueError("Wrong dec output dims [{}]".format(dec_out.dim()))
 
 
 class Attention(nn.Module):
@@ -123,9 +174,46 @@ class Attention(nn.Module):
 
         weights = F.softmax(weights, dim=1)
 
-        # (eq 7)
+        # (eq 7) (batch x 1 x seq_len) * (batch x seq_len x hid_dim)
+        # => (batch x hid_dim)
         context = weights.unsqueeze(1).bmm(enc_outs.transpose(0, 1)).squeeze(1)
         # (eq 5) linear out combining context and hidden
+        # (batch x hid_dim * 2) => (batch x hid_dim)
         context = F.tanh(self.linear_out(torch.cat([context, dec_out], 1)))
+
+        return context, weights
+
+    def fast_forward(self, dec_out, enc_outs, enc_att=None, mask=None):
+        """
+        Parameters:
+        -----------
+
+        - dec_out: torch.Tensor(trg_seq_len x batch_size x hid_dim)
+        - enc_outs: torch.Tensor(seq_len x batch_size x hid_dim)
+        - enc_att: (optional), torch.Tensor(seq_len x batch_size x att_dim)
+
+        Returns:
+        --------
+        - context: (trg_seq_len x batch x hid_dim)
+        - weights: (trg_seq_len x batch x seq_len)
+        """
+        # (trg_seq_len x batch x seq_len)
+        weights = self.scorer(dec_out, enc_outs, enc_att=enc_att)
+
+        if mask is not None:
+            # (batch x src_seq_len) => (trg_seq_len x batch x src_seq_len)
+            mask = mask.unsqueeze(0).expand_as(weights)
+            # weights = weights * mask.float()
+            weights.data.masked_fill_(1 - mask.data, -float('inf'))
+
+        weights = F.softmax(weights, dim=2)
+
+        # (eq 7) (batch x trg_seq_len x seq_len) * (batch x seq_len x hid_dim)
+        # => (batch x trg_seq_len x hid_dim) => (trg_seq_len x batch x hid_dim)
+        context = torch.bmm(
+            weights.transpose(0, 1), enc_outs.transpose(0, 1)
+        ).transpose(0, 1)
+        # (eq 5) linear out combining context and hidden
+        context = F.tanh(self.linear_out(torch.cat([context, dec_out], 2)))
 
         return context, weights
