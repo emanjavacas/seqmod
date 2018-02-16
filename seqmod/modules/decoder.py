@@ -389,6 +389,10 @@ class RNNDecoderState(State):
         self.hidden = hidden
 
     def split_batches(self):
+        """
+        After encoding, split the decoder state into single decoder states
+        (one per batch), for decoding.
+        """
         batch_size = self.context.size(0 if self.context.dim() == 2 else 1)
 
         if isinstance(self.hidden, tuple):
