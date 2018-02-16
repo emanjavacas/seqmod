@@ -9,7 +9,7 @@ from seqmod.modules.encoder import BaseEncoder
 
 class StackedResidualCNN(nn.Module):
     def __init__(self, inp_dim, kernel_size, layers,
-                 conv_type='wide', act='relu', dropout=0.0):
+                 conv_type='wide', act='gated', dropout=0.0):
         self.inp_dim = inp_dim
         self.kernel_size = kernel_size
         self.conv_type = conv_type
@@ -17,24 +17,29 @@ class StackedResidualCNN(nn.Module):
         self.dropout = dropout
         super(StackedResidualCNN, self).__init__()
 
-        padding = get_padding(kernel_size, 1)
+        padding = (get_padding(kernel_size, conv_type), 0)
         convs = nn.ModuleList()
         for i in range(layers):
             if act == 'gated':
-                conv = nn.Conv2d(inp_dim, inp_dim, (kernel_size, 1), padding=padding)
-            else:
                 conv = nn.Conv2d(inp_dim, 2*inp_dim, (kernel_size, 1), padding=padding)
+            else:
+                conv = nn.Conv2d(inp_dim, inp_dim, (kernel_size, 1), padding=padding)
             convs.append(conv)
 
         self.convs = convs
+
+    def custom_init(self):
+        for conv in self.convs:
+            torch.nn.init.xavier_uniform(
+                conv.weight, gain=(4 * (1 - self.dropout)) ** 0.5)
 
     def forward(self, inp, lengths=None):
         for conv in self.convs:
             if self.act == 'gated':
                 # dropout on input to conv
                 output = conv(F.dropout(inp, p=self.dropout, training=self.training))
-                output, gate = torch.split(output, output.size(1) // 2, dim=1)
-                output = output + F.sigmoid(gate)
+                output, gate = output.split(int(output.size(1) / 2), dim=1)
+                output = output * F.sigmoid(gate)
             else:
                 output = getattr(F, self.act)(inp)
 
@@ -67,7 +72,10 @@ class CNNEncoder(BaseEncoder):
 
         output = self.conv(emb)     # (batch x hid_dim x seq_len x 1)
         output = output.squeeze(3)  # (batch x hid_dim x seq_len)
-        output = output.contiguous()
+        # (seq_len x batch x hid_dim)
+        output = output.transpose(0, 1).contiguous() \
+                       .transpose(0, 2).contiguous()
+
         return output, None
 
     @property

@@ -1,4 +1,5 @@
 
+import copy
 import os
 import yaml
 from datetime import datetime
@@ -316,7 +317,8 @@ def make_lm_hook(d, seed_texts=None, max_seq_len=25, gpu=False,
 
             if early_stopping is not None:
                 trainer.log("info", "Registering early stopping loss...")
-                early_stopping.add_checkpoint(loss.reduce())
+                early_stopping.add_checkpoint(
+                    loss.reduce(), copy.deepcopy(trainer.model))
 
             if checkpoint is not None:
                 checkpoint.save(trainer.model, loss.reduce())
@@ -351,7 +353,8 @@ def make_mlm_hook(d, seed_texts=None, max_seq_len=25, gpu=False,
             trainer.log("validation_end", {'epoch': epoch, 'loss': loss.pack()})
             if early_stopping is not None:
                 trainer.log("info", "Registering early stopping loss...")
-                early_stopping.add_checkpoint(loss.reduce())
+                early_stopping.add_checkpoint(
+                    loss.reduce(), copy.deepcopy(trainer.model))
         trainer.log("info", "Generating text...")
         for head in trainer.model.project:
             trainer.log("info", "Head: {}".format(head))

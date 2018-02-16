@@ -63,3 +63,7 @@ def GRLWrapper(EncoderBaseClass):
                 {'__init__': __init__,
                  'loss': loss,
                  'conditional': property(lambda self: True)})
+
+
+# legacy imports
+from seqmod.modules.rnn_encoder import RNNEncoder

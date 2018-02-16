@@ -60,7 +60,7 @@ class CNNTextEncoder(BaseEncoder):
                 raise ValueError("ComplexEmbedding requires char-level length info")
             emb, lengths = self.embeddings(inp, lengths)
         else:
-            self.embeddings(inp)
+            emb = self.embeddings(inp)
 
         emb = emb.transpose(0, 1)  # (batch x seq_len x emb_dim)
         emb = emb.transpose(1, 2)  # (batch x emb_dim x seq_len)
