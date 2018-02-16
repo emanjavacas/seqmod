@@ -91,6 +91,7 @@ if __name__ == '__main__':
     parser.add_argument('--att_type', default='general', type=str)
     parser.add_argument('--encoder_summary', default='full')
     parser.add_argument('--deepout_layers', default=0, type=int)
+    parser.add_argument('--input_feed', action='store_true')
     parser.add_argument('--tie_weights', action='store_true')
     # training
     parser.add_argument('--epochs', default=5, type=int)
@@ -145,7 +146,7 @@ if __name__ == '__main__':
         args.layers, args.emb_dim, args.hid_dim, src_dict, cell=args.cell,
         bidi=True, encoder_summary=args.encoder_summary, att_type=args.att_type,
         reuse_hidden=args.att_type.lower() != 'none',
-        dropout=args.dropout, input_feed=args.att_type.lower() != 'none',
+        dropout=args.dropout, input_feed=args.input_feed,
         word_dropout=args.word_dropout, deepout_layers=args.deepout_layers,
         tie_weights=args.tie_weights, reverse=args.reverse)
 
