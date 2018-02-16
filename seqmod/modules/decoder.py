@@ -134,7 +134,7 @@ class RNNDecoder(BaseDecoder):
             deepout_act=deepout_act)
 
         if tie_weights:
-            self.project.tie_embedding_weights(self.embeddings)
+            self.proj.tie_embedding_weights(self.embeddings)
 
     def build_rnn(self, num_layers, in_dim, hid_dim, cell, **kwargs):
         if self.is_fast_forward:
