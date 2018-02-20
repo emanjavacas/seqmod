@@ -7,7 +7,7 @@ from seqmod.modules.torch_utils import swap, make_dropout_mask
 from seqmod.modules.ff import Highway
 from seqmod.misc import inflection_sigmoid, linear
 from seqmod.modules.rnn_encoder import RNNEncoder
-from seqmod.modules.decoder import RNNDecoder, State
+from seqmod.modules.decoder import RNNDecoder, RNNWrapper, State
 from seqmod.modules.encoder_decoder import EncoderDecoder, make_embeddings
 
 
@@ -85,7 +85,7 @@ class VAERNNDecoder(RNNDecoder):
             # add projection
             self.z_proj = Highway(z_dim, num_layers=2)
             # rebuild rnn
-            self.rnn = self.build_rnn(
+            self.rnn = RNNWrapper(
                 self.num_layers,
                 self.rnn.in_dim + z_dim,  # append z dim to input
                 self.hid_dim,

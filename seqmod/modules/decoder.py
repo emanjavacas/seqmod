@@ -50,6 +50,32 @@ class BaseDecoder(nn.Module):
         return False
 
 
+class RNNWrapper(nn.Module):
+    """
+    Wrapper to abstract over RNN and RNNCell differences for the decoder
+    """
+    def __init__(self, num_layers, in_dim, hid_dim, cell, dropout=0.0, ffw=False):
+        self.ffw = ffw
+        super(RNNWrapper, self).__init__()
+
+        if ffw:
+            stacked = nn.LSTM if cell == 'LSTM' else nn.GRU
+            self.rnn = stacked(in_dim, hid_dim, num_layers, dropout=dropout)
+        else:
+            stacked = StackedLSTM if cell == 'LSTM' else StackedGRU
+            self.rnn = stacked(num_layers, in_dim, hid_dim, dropout=dropout)
+
+    def forward(self, inp, hidden, dropout_mask=None):
+        if inp.dim() == 2 and self.ffw:
+            # rnn module expects 3D input and doesn't take dropout_mask
+            out, hidden = self.rnn(inp.unsqueeze(0), hidden)
+            out = out.squeeze(0)
+        else:
+            out, hidden = self.rnn(inp, hidden, dropout_mask=dropout_mask)
+
+        return out, hidden
+
+
 class RNNDecoder(BaseDecoder):
     """
     RNNDecoder
@@ -93,9 +119,9 @@ class RNNDecoder(BaseDecoder):
         if self.att_type is not None and self.att_type.lower() != 'none':
             self.has_attention = True
 
-        self.is_fast_forward = False
+        ffw = False
         if not (variational or input_feed):
-            self.is_fast_forward = True
+            ffw = True
 
         in_dim = self.embeddings.embedding_dim
         if input_feed:
@@ -113,8 +139,8 @@ class RNNDecoder(BaseDecoder):
                 in_dim += cond_dim
 
         # rnn layer
-        self.rnn = self.build_rnn(
-            num_layers, in_dim, hid_dim, cell, dropout=dropout)
+        self.rnn = RNNWrapper(num_layers, in_dim, hid_dim, cell,
+                              dropout=dropout, ffw=ffw)
 
         # train init
         self.h_0 = None
@@ -135,14 +161,6 @@ class RNNDecoder(BaseDecoder):
 
         if tie_weights:
             self.proj.tie_embedding_weights(self.embeddings)
-
-    def build_rnn(self, num_layers, in_dim, hid_dim, cell, **kwargs):
-        if self.is_fast_forward:
-            stacked = nn.LSTM if cell == 'LSTM' else nn.GRU
-            return stacked(in_dim, hid_dim, num_layers, **kwargs)
-        else:
-            stacked = StackedLSTM if cell == 'LSTM' else StackedGRU
-            return stacked(num_layers, in_dim, hid_dim, **kwargs)
 
     @property
     def conditional(self):
@@ -262,12 +280,7 @@ class RNNDecoder(BaseDecoder):
         if self.conditional:
             inp = torch.cat([inp, state.conds], 1)
 
-        if self.is_fast_forward:
-            # rnn module expects 3D input and doesn't take dropout_mask
-            out, hidden = self.rnn(inp.unsqueeze(0), state.hidden)
-            out = out.squeeze(0)
-        else:
-            out, hidden = self.rnn(inp, state.hidden, dropout_mask=state.dropout_mask)
+        out, hidden = self.rnn(inp, state.hidden, )
 
         weight = None
         if self.has_attention:
@@ -289,7 +302,7 @@ class RNNDecoder(BaseDecoder):
         inp: torch.FloatTensor(seq_len x batch), Embedding input.
         state: DecoderState, object data persisting throughout the decoding.
         """
-        if not self.is_fast_forward:
+        if not self.rnn.ffw:
             raise ValueError("Decoder is not configured for fast_forward")
 
         inp = self.embeddings(inp)
