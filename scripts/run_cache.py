@@ -108,6 +108,9 @@ if __name__ == '__main__':
                     prob = (1 - alpha) * F.softmax(logits, dim=1)
                     batch_index_add_(prob.data, vals.data, cache_prob.data)
 
+                else:
+                    prob = F.softmax(logits, dim=1)
+
                 bloss = u.unwrap_variables(F.nll_loss(prob.add(1e-8).log(), target))
                 loss.add(bloss, target.nelement())
                 cache.add(out.data.unsqueeze(0), target.data.unsqueeze(0))
