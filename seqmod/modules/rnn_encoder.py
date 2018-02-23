@@ -41,7 +41,7 @@ class RNNEncoder(BaseEncoder):
             init_size = self.num_layers * self.num_dirs, 1, self.hid_dim
             self.h_0 = nn.Parameter(torch.Tensor(*init_size).zero_())
 
-        if self.summary not in ('mean', 'mean-concat', 'full', 'inner-attention'):
+        if self.summary not in ('mean', 'mean-concat', 'mean-max', 'full', 'inner-attention'):
             raise ValueError("Unknown summary type [{}]".format(self.summary))
 
         if self.summary == 'inner-attention':
@@ -79,6 +79,7 @@ class RNNEncoder(BaseEncoder):
             - full: (seq_len x batch x hid_dim * num_dirs)
             - mean: (batch x hid_dim * num_dirs)
             - mean-concat: (batch x hid_dim * num_dirs * 2)
+            - mean-max: (batch x hid_dim * num_dirs * 2)
             - inner-attention: (batch x hid_dim * num_dirs)
 
         - hidden: (num_layers x batch x hid_dim * num_dirs)
@@ -135,6 +136,9 @@ class RNNEncoder(BaseEncoder):
             # weighted sum of encoder outputs (feature-wise)
             outs = (weights * outs).sum(0)
 
+        elif self.summary == 'mean-max':
+            outs = torch.cat([outs.mean(0), outs.max(0)[0]], 1)
+
         return outs, hidden
 
     @property
@@ -150,3 +154,6 @@ class RNNEncoder(BaseEncoder):
 
         elif self.summary == 'inner-attention':
             return 2, self.hid_dim * self.num_dirs
+
+        elif self.summary == 'mean-max':
+            return 2, self.hid_dim * self.num_dirs * 2
