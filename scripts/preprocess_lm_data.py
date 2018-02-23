@@ -11,9 +11,9 @@ import seqmod.utils as u
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('path')
-    parser.add_argument('output')
-    parser.add_argument('--max_size', default=1000000, type=int)
+    parser.add_argument('--path', nargs='+', required=True)
+    parser.add_argument('--output', help='prefix for the stored dataset', required=True)
+    parser.add_argument('--max_size', type=int, default=100000)
     parser.add_argument('--min_freq', default=1, type=int)
     parser.add_argument('--lower', action='store_true')
     parser.add_argument('--num', action='store_true')

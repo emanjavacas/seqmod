@@ -145,6 +145,7 @@ class EncoderDecoder(nn.Module):
         if hasattr(self, 'reverse') and self.reverse:
             # assume right aligned data: [pad pad <bos> ... <eos>]
             trg = flip(trg, 0)
+
         dec_state = self.decoder.init_state(
             enc_outs, enc_hidden, src_lengths, conds=trg_conds)
         dec_loss = self.decoder_loss(
