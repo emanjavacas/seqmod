@@ -59,14 +59,11 @@ if __name__ == '__main__':
         processor = text_processor(lower=args.lower, num=args.num, level=args.level)
         if os.path.isfile(os.path.join(args.path, 'test.txt')):
             path = os.path.join(args.path, 'test.txt')
-            test = BlockDataset(load_lines(path, processor=processor), d,
+            test = BlockDataset(list(load_lines(path, processor=processor)), d,
                                 args.batch_size, args.bptt, gpu=args.gpu,
                                 evaluation=True)
         else:
-            _, test = BlockDataset(
-                load_lines(args.path, processor=processor), d,
-                args.batch_size, args.bptt, gpu=args.gpu
-            ).splits(test=args.test_split, dev=None)
+            raise ValueError("Couldn't find test.txt split")
     else:
         test = BlockDataset(
             torch.from_numpy(np.load(args.path).astype(np.int64)), d,

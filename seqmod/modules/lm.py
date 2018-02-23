@@ -516,16 +516,16 @@ class LM(BaseLM):
         self.has_attention = hasattr(self, 'attn')
 
         # Output projection
-        self.project_ = OutputSoftmax(
+        self.output_proj = OutputSoftmax(
             hid_dim, emb_dim, len(self.embeddings.d),
             tie_weights=tie_weights, dropout=dropout, mixture=mixture,
             deepout_layers=deepout_layers, deepout_act=MaxOut, maxouts=maxouts)
 
         if tie_weights:
-            self.project_.tie_embedding_weights(self.embeddings)
+            self.output_proj.tie_embedding_weights(self.embeddings)
 
     def project(self, inp, reshape=False, normalize=True):
-        return self.project_(inp, reshape=reshape, normalize=normalize)
+        return self.output_proj(inp, reshape=reshape, normalize=normalize)
 
     def init_hidden_for(self, inp):
         return init_hidden_for(
