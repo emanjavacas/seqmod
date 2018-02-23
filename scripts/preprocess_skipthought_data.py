@@ -5,7 +5,7 @@ import time
 from seqmod.misc import text_processor, Dict
 from seqmod import utils as u
 
-from train_skipthought import load_sents, load_pairs
+from train_skipthought import load_sents
 
 
 def make_dataset_fname(args, split=None):
@@ -50,40 +50,42 @@ if __name__ == '__main__':
 
     infix = make_dataset_fname(args)
     processor = text_processor(
-        lower=args.lower, num=args.num, level=args.level)
+        lower=args.lower, num=args.num, level=args.level, normalize=False)
     d = Dict(eos_token=u.EOS, bos_token=u.BOS, unk_token=u.UNK,
              pad_token=u.PAD, max_size=args.max_size, force_unk=True)
 
-    print("Fitting dictionary")
-    # iterate through chunks to be able to count the total number of sequences
-    start, num_sents = time.time(), 0
-    sents = load_sents(*args.path, max_len=args.max_len, processor=processor)
-    for chunk in chunk_seq(sents, 1000):
-        num_sents += len(chunk)
-        d.partial_fit(chunk)
-    d.fit()
-
-    u.save_model(d, '{}.{}.dict'.format(args.output, infix))
-    print("... took {:.3f} secs".format(time.time() - start))
-    print()
-
-    print("Processing dataset")
-    start, chunk_size = time.time(), (num_sents // args.num_splits) + 1
-    pairs = load_pairs(*args.path, max_len=args.max_len, processor=processor)
-
     if args.num_splits == 1:
-        fname = '{}.{}'.format(args.output, infix)
-        p1, p2 = zip(*pairs)
-        u.save_model({'p1': list(d.transform(p1)), 'p2': list(d.transform(p2))}, fname)
-    else:
-        # iterate through chunks of size proportional to the number of desired chunks
-        for idx, chunk in enumerate(chunk_seq(pairs, chunk_size)):
-            print("Processing chunk num {}/{}".format(idx+1, args.num_splits))
-            p1, p2 = zip(*chunk)
-            p1, p2 = d.transform(p1), d.transform(p2)
-            infix = make_dataset_fname(args, split=idx+1)
-            fname = '{}.{}'.format(args.output, infix)
-            u.save_model({'p1': list(p1), 'p2': list(p2)}, fname)
-            del p1, p2
+        print("Fitting dictionary")
+        start = time.time()
+        sents = list(load_sents(*args.path, max_len=args.max_len, processor=processor))
+        d.fit(sents)
+        u.save_model(d, '{}.{}.dict'.format(args.output, infix))
+        print("... took {:.3f} secs".format(time.time() - start))
+        print()
 
-    print("... took {:.3f} secs".format(time.time() - start))
+        print("Saving dataset")
+        u.save_model(sents, '{}.{}'.format(args.output, infix))
+
+    else:
+        print("Fitting dictionary")
+        # iterate through chunks to be able to count the total number of sequences
+        start, num_sents = time.time(), 0
+        sents = load_sents(*args.path, max_len=args.max_len, processor=processor)
+        for chunk in chunk_seq(sents, 10000):
+            num_sents += len(chunk)
+            d.partial_fit(chunk)
+        d.fit()
+        u.save_model(d, '{}.{}.dict'.format(args.output, infix))
+        print("... took {:.3f} secs".format(time.time() - start))
+        print()
+    
+        print("Processing dataset")
+        start, chunk_size = time.time(), (num_sents // args.num_splits) + 1
+        sents = load_sents(*args.path, max_len=args.max_len, processor=processor)
+
+        # iterate through chunks of size proportional to the number of desired chunks
+        for idx, chunk in enumerate(chunk_seq(sents, chunk_size)):
+            print("Processing chunk num {}/{}".format(idx+1, args.num_splits))
+            infix = make_dataset_fname(args, split=idx+1)
+            u.save_model(list(d.transform(chunk)), '{}.{}'.format(args.output, infix))
+        print("... took {:.3f} secs".format(time.time() - start))

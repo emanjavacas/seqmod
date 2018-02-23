@@ -11,31 +11,33 @@ from seqmod.misc.loggers import StdLogger
 from seqmod import utils as u
 
 
-def load_pairs(*paths, root=None, max_len=-1, processor=text_processor()):
+def load_sents(*paths, root=None, max_len=-1, processor=text_processor()):
     for path in paths:
         if root is not None:
             path = os.path.join(root, path)
         with open(path, 'r+') as f:
-            prev = None
             for line in f:
                 line = processor(line.strip())
                 if max_len > 0 and len(line) >= max_len:
-                    prev = None
-                    continue
-                if prev is not None:
-                    yield prev, line
-                    prev = line
+                    while len(line) >= max_len:
+                        yield line[:max_len]
+                        line = line[max_len:]
                 else:
-                    prev = line
+                    yield line
 
 
-def load_sents(*paths, **kwargs):
-    last = None
-    for prev, line in load_pairs(*paths, **kwargs):
-        if last != prev:
-            yield prev
-        yield line
-        last = line
+class SkipthoughtDataset(PairedDataset):
+    def __len__(self):
+        return self.num_batches
+
+    def __getitem__(self, idx):
+        if idx >= self.num_batches:
+            raise IndexError("{} >= {}".format(idx, self.num_batches))
+
+        b_from, b_to = idx * self.batch_size, (idx+1) * self.batch_size
+        src = self._pack(self.data['src'][b_from: b_to], self.d['src'])
+        trg = self._pack(self.data['trg'][b_from+1: b_to+1], self.d['trg'])
+        return src, trg
 
 
 def make_validation_hook(patience, checkpoint):
@@ -133,13 +135,12 @@ if __name__ == '__main__':
     print("Loading data...")
     processor = text_processor(
         lower=args.lower, num=args.num, level=args.level)
+    train = list(load_sents(*args.path, max_len=args.max_len, processor=processor))
     d = Dict(eos_token=u.EOS, bos_token=u.BOS, unk_token=u.UNK,
              pad_token=u.PAD, max_size=args.max_size, force_unk=True
-    ).fit(load_sents(*args.path, max_len=args.max_len, processor=processor))
-    p1, p2 = zip(*load_pairs(*args.path, max_len=args.max_len, processor=processor))
+    ).fit(train)
     train, valid = PairedDataset(
-        list(p1), list(p2), {'src': d, 'trg': d},
-        batch_size=args.batch_size, gpu=args.gpu
+        train, None, {'src': d}, batch_size=args.batch_size, gpu=args.gpu
     ).splits(dev=None, test=args.dev_split)
 
     print("Building model...")

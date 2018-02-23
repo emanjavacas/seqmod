@@ -16,7 +16,7 @@ def segmenter(sent, level='char'):
         raise ValueError
 
 
-def text_processor(language='en', num=False, lower=False, level='token'):
+def text_processor(language='en', num=False, lower=False, level='token', normalize=True):
     try:
         from normalizr import Normalizr
     except ImportError:
@@ -36,7 +36,8 @@ def text_processor(language='en', num=False, lower=False, level='token'):
     NUM = re.compile('[0-9]+')
 
     def processor(sent):
-        sent = normalizr.normalize(sent, normalizations)
+        if normalize:
+            sent = normalizr.normalize(sent, normalizations)
         if num:
             sent = NUM.sub('<num>', sent)  # number substitution
         if lower:
