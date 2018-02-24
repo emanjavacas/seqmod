@@ -309,6 +309,7 @@ def make_rnn_encoder_decoder(
         dropout=0.0,
         variational=False,
         input_feed=True,
+        context_feed=None,
         word_dropout=0.0,
         deepout_layers=0,
         deepout_act='ReLU',
@@ -361,9 +362,13 @@ def make_rnn_encoder_decoder(
 
     encoder_dims, encoder_size = encoder.encoding_size
 
+    if context_feed is None:
+        # only disable it if it explicitely desired (passing False)
+        context_feed = att_type is None or att_type.lower() == 'none'
+
     decoder = RNNDecoder(trg_embeddings, hid_dim, num_layers, cell, encoder_size,
                          dropout=dropout, variational=variational, input_feed=input_feed,
-                         context_feed=att_type is None or att_type.lower() == 'none',
+                         context_feed=context_feed,
                          att_type=att_type, deepout_layers=deepout_layers,
                          deepout_act=deepout_act,
                          tie_weights=tie_weights, reuse_hidden=reuse_hidden,
