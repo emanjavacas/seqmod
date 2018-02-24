@@ -2,12 +2,12 @@
 import torch.optim as optim
 
 from seqmod.modules.encoder_decoder import make_rnn_encoder_decoder
-from seqmod.misc import PairedDataset, Trainer, Dict, EarlyStopping, Checkpoint
-from seqmod.misc import text_processor
+from seqmod.misc import Trainer, Checkpoint
 from seqmod.misc.loggers import StdLogger
 from seqmod import utils as u
 
 from train_skipthought import make_validation_hook, make_report_hook, make_lr_hook
+from train_skipthought import SkipthoughtDataset
 
 if __name__ == '__main__':
     import argparse
@@ -43,10 +43,10 @@ if __name__ == '__main__':
     parser.add_argument('--max_norm', type=float, default=5.)
     parser.add_argument('--patience', default=0, type=int)
     parser.add_argument('--epochs', type=int, default=5)
-    parser.add_argument('--batch_size', type=int, default=100)
+    parser.add_argument('--batch_size', type=int, default=50)
     parser.add_argument('--gpu', action='store_true')
-    parser.add_argument('--checkpoint', type=int, default=1000)
-    parser.add_argument('--num_checkpoints', type=int, default=100)
+    parser.add_argument('--checkpoint', type=int, default=200)
+    parser.add_argument('--num_checkpoints', type=int, default=50)
     parser.add_argument('--test', action='store_true')
     args = parser.parse_args()
 
@@ -56,8 +56,8 @@ if __name__ == '__main__':
     print("Building model...")
     m = make_rnn_encoder_decoder(
         args.num_layers, args.emb_dim, args.hid_dim, d, cell=args.cell,
-        encoder_summary=args.encoder_summary, dropout=args.dropout,
-        reuse_hidden=False, add_init_jitter=True, input_feed=False, att_type=None,
+        encoder_summary=args.encoder_summary, dropout=args.dropout, context_feed=False,
+        reuse_hidden=True, add_init_jitter=True, input_feed=False, att_type=None,
         tie_weights=True, word_dropout=args.word_dropout, reverse=args.reverse)
 
     print(m)
@@ -94,13 +94,12 @@ if __name__ == '__main__':
             # prepare data subset
             print("Training on subset [{}/{}]: {}".format(idx+1, len(args.path), path))
             print("Loading data...")
-            train = u.load_model(path)
-            train = PairedDataset(
-                train['p1'], train['p2'], {'src': d, 'trg': d},
+            train = SkipthoughtDataset(
+                u.load_model(path), None, {'src': d},
                 batch_size=args.batch_size, fitted=True, gpu=args.gpu)
             if valid is None:
                 train, valid = train.splits(dev=None, test=args.dev_split)
-            train.sort_()
+
             # setup trainer
             trainer = Trainer(m, {'train': train, 'valid': valid}, optimizer,
                               losses=('ppl',), max_norm=args.max_norm)

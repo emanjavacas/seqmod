@@ -139,14 +139,14 @@ if __name__ == '__main__':
     d = Dict(eos_token=u.EOS, bos_token=u.BOS, unk_token=u.UNK,
              pad_token=u.PAD, max_size=args.max_size, force_unk=True
     ).fit(train)
-    train, valid = PairedDataset(
+    train, valid = SkipthoughtDataset(
         train, None, {'src': d}, batch_size=args.batch_size, gpu=args.gpu
     ).splits(dev=None, test=args.dev_split)
 
     print("Building model...")
     m = make_rnn_encoder_decoder(
         args.num_layers, args.emb_dim, args.hid_dim, d, cell=args.cell,
-        encoder_summary=args.encoder_summary, dropout=args.dropout,
+        encoder_summary=args.encoder_summary, dropout=args.dropout, context_feed=False,
         reuse_hidden=False, add_init_jitter=True, input_feed=False, att_type=None,
         tie_weights=True, word_dropout=args.word_dropout, reverse=args.reverse)
 
