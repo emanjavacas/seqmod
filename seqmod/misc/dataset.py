@@ -586,7 +586,7 @@ class PairedDataset(Dataset):
 
     def stratify_(self, target='trg', key=lambda data: data):
         """
-        Froce balanced batch data according to an input field.
+        Force balanced batch data according to an input field.
 
         Parameters:
         -----------

@@ -400,7 +400,6 @@ class CNNEmbedding(ComplexEmbedding):
                              "with the `from_dict` classmethod")
 
         self.num_embeddings = num_embeddings
-        self._embedding_dim = embedding_dim
         self.kernel_sizes = kernel_sizes
         self.max_kernel = max(kernel_sizes)
         if callable(output_channels):
@@ -421,7 +420,7 @@ class CNNEmbedding(ComplexEmbedding):
         convs = []
         for W, C_o in zip(self.kernel_sizes, self.output_channels):
             convs.append(
-                nn.Conv2d(1, C_o, (self._embedding_dim, W),
+                nn.Conv2d(1, C_o, (embedding_dim, W),
                           padding=(0, get_padding(W, mode="wide"))))
         self.convs = nn.ModuleList(convs)
 

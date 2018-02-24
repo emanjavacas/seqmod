@@ -3,6 +3,7 @@ import os
 import sys
 import itertools
 
+import numpy as np
 import tqdm
 import torch
 import torch.nn.functional as F
@@ -27,6 +28,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     # data
     parser.add_argument('--path', required=True)
+    parser.add_argument('--processed', action='store_true')
     parser.add_argument('--model_path', type=str)
     parser.add_argument('--lower', action='store_true')
     parser.add_argument('--num', action='store_true')
@@ -53,17 +55,22 @@ if __name__ == '__main__':
     model.hidden_state = {}
 
     print("Loading data...", file=sys.stderr)
-    processor = text_processor(lower=args.lower, num=args.num, level=args.level)
-    if os.path.isfile(os.path.join(args.path, 'test.txt')):
-        path = os.path.join(args.path, 'test.txt')
-        test = BlockDataset(load_lines(path, processor=processor), d,
-                            args.batch_size, args.bptt, gpu=args.gpu,
-                            evaluation=True)
+    if not args.processed:
+        processor = text_processor(lower=args.lower, num=args.num, level=args.level)
+        if os.path.isfile(os.path.join(args.path, 'test.txt')):
+            path = os.path.join(args.path, 'test.txt')
+            test = BlockDataset(load_lines(path, processor=processor), d,
+                                args.batch_size, args.bptt, gpu=args.gpu,
+                                evaluation=True)
+        else:
+            _, test = BlockDataset(
+                load_lines(args.path, processor=processor), d,
+                args.batch_size, args.bptt, gpu=args.gpu
+            ).splits(test=args.test_split, dev=None)
     else:
-        _, test = BlockDataset(
-            load_lines(args.path, processor=processor), d,
-            args.batch_size, args.bptt, gpu=args.gpu
-        ).splits(test=args.test_split, dev=None)
+        test = BlockDataset(
+            torch.from_numpy(np.load(args.path).astype(np.int64)), d,
+            args.batch_size, args.bptt, gpu=args.gpu, fitted=True)
 
     cache = Cache(model.hid_dim, args.cache_size, len(d), gpu=args.gpu)
     loss, hidden = LossStatistics('ppl'), None
@@ -107,6 +114,9 @@ if __name__ == '__main__':
                     cache_prob = alpha * F.softmax(theta * cache_logits, dim=1)
                     prob = (1 - alpha) * F.softmax(logits, dim=1)
                     batch_index_add_(prob.data, vals.data, cache_prob.data)
+
+                else:
+                    prob = F.softmax(logits, dim=1)
 
                 bloss = u.unwrap_variables(F.nll_loss(prob.add(1e-8).log(), target))
                 loss.add(bloss, target.nelement())
