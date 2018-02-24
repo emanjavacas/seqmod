@@ -658,7 +658,7 @@ class PairedDataset(Dataset):
                 src = self.data['src'][start:stop]
                 trg = self.data['trg'][start:stop]
 
-            subset = PairedDataset(
+            subset = type(self)(
                 src, trg, self.d, self.batch_size, fitted=True, gpu=self.gpu,
                 return_lengths=self.return_lengths, evaluation=evaluation,
                 align_right=self.align_right)
