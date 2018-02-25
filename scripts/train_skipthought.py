@@ -66,9 +66,9 @@ def make_report_hook(level='word', items=10):
         dataset.set_batch_size(items)
         # grab random batch
         (src, src_lengths), (trg, _) = dataset[random.randint(0, len(dataset)-1)]
-        scores, hyps, _ = trainer.model.translate_beam(src, src_lengths)
+        scores, hyps, _ = trainer.model.translate(src, src_lengths, sample=True)
         # report
-        trues, report = trg.data.transpose(0, 1).tolist(), ''
+        trues, report = src.data.transpose(0, 1).tolist(), ''
         for num, (score, hyp, trg) in enumerate(zip(scores, hyps, trues)):
             report += u.format_hyp(score, hyp, num+1, d, level=level, trg=trg)
         trainer.log("info", '\n***' + report + '\n***')

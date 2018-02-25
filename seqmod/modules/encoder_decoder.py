@@ -9,8 +9,7 @@ from seqmod.modules.encoder import GRLWrapper
 from seqmod.modules.rnn_encoder import RNNEncoder
 from seqmod.modules.decoder import RNNDecoder
 from seqmod.modules.embedding import Embedding
-from seqmod.modules.torch_utils import flip, shards
-
+from seqmod.modules.torch_utils import flip, shards, select_cols
 from seqmod.modules.exposure import scheduled_sampling
 
 
@@ -155,7 +154,7 @@ class EncoderDecoder(nn.Module):
         return (dec_loss, *enc_losses), num_examples
 
     def translate(self, src, lengths, conds=None, max_decode_len=2,
-                  on_init_state=None, on_step=None):
+                  on_init_state=None, on_step=None, sample=False, tau=1.0):
         """
         Translate a single input sequence using greedy decoding.
 
@@ -194,7 +193,13 @@ class EncoderDecoder(nn.Module):
             out, weight = self.decoder(prev, dec_state)
             # decode
             logprobs = self.decoder.project(out)
-            logprobs, prev = logprobs.max(1)
+
+            if sample:
+                prev = logprobs.div_(tau).exp().multinomial(1).squeeze()
+                logprobs = select_cols(logprobs, prev)
+            else:
+                logprobs, prev = logprobs.max(1)
+
             # accumulate
             hyps.append(prev.data)
             if self.decoder.has_attention:
