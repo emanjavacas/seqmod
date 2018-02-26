@@ -171,7 +171,7 @@ def grad_reverse(x):
 class OutputSoftmax(nn.Module):
     """
     General output layer for Softmax-based models (LM, Decoder)
-    It has options for adding a a deepout previous to the softmax layers.
+    It has options for adding a deepout layer previous to the softmax layers.
     """
     def __init__(self, hid_dim, emb_dim, vocab, tie_weights=False, dropout=0.0,
                  mixture=0, deepout_layers=0, deepout_act=None, maxouts=1):
