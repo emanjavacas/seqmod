@@ -629,7 +629,7 @@ class PairedDataset(Dataset):
 
         return self
 
-    def splits(self, test=0.1, dev=0.2, shuffle=False, sort=True, **kwargs):
+    def splits(self, test=0.1, dev=0.2, shuffle=False, sort=False, **kwargs):
         """
         Compute splits on dataset instance. For convenience, it can return
         BatchIterator objects instead of Dataset via method chaining.
