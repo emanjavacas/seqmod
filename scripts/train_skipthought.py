@@ -50,8 +50,8 @@ def make_validation_hook(patience, checkpoint):
             loss = trainer.validate_model()
             trainer.log("validation_end", {"epoch": epoch, "loss": loss.pack()})
             early_stopping.add_checkpoint(loss.reduce(), copy.deepcopy(trainer.model))
-            if checkpoint is not None:
-                checkpoint.save(model, loss.reduce())
+        if checkpoint is not None:
+            checkpoint.save(trainer.model, loss.reduce())
 
     return hook
 
@@ -146,7 +146,7 @@ if __name__ == '__main__':
     print("Building model...")
     m = make_rnn_encoder_decoder(
         args.num_layers, args.emb_dim, args.hid_dim, d, cell=args.cell,
-        encoder_summary=args.encoder_summary, dropout=args.dropout, context_feed=False,
+        encoder_summary=args.encoder_summary, dropout=args.dropout,
         reuse_hidden=False, add_init_jitter=True, input_feed=False, att_type=None,
         tie_weights=True, word_dropout=args.word_dropout, reverse=args.reverse)
 

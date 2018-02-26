@@ -6,8 +6,20 @@ from seqmod.misc import Trainer, Checkpoint
 from seqmod.misc.loggers import StdLogger
 from seqmod import utils as u
 
-from train_skipthought import make_validation_hook, make_report_hook, make_lr_hook
+from train_skipthought import make_validation_hook, make_report_hook
 from train_skipthought import SkipthoughtDataset
+
+
+def make_lr_hook(optimizer, factor, checkpoints):
+    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=checkpoints, gamma=factor)
+
+    def hook(trainer, epoch, batch_num, checkpoint):
+        loss = trainer.validate_model()
+        trainer.log("validation_end", {"epoch": epoch, "loss": loss.pack()})
+        scheduler.step(loss.reduce())
+
+    return hook
+
 
 if __name__ == '__main__':
     import argparse
@@ -38,15 +50,15 @@ if __name__ == '__main__':
     parser.add_argument('--word_dropout', type=float, default=0.0)
     parser.add_argument('--optimizer', default='Adam')
     parser.add_argument('--lr', type=float, default=0.001)
-    parser.add_argument('--lr_schedule_epochs', type=int, default=1)
+    parser.add_argument('--lr_schedule_checkpoints', type=int, default=1)
     parser.add_argument('--lr_schedule_factor', type=float, default=1)
     parser.add_argument('--max_norm', type=float, default=5.)
     parser.add_argument('--patience', default=0, type=int)
     parser.add_argument('--epochs', type=int, default=5)
     parser.add_argument('--batch_size', type=int, default=50)
     parser.add_argument('--gpu', action='store_true')
-    parser.add_argument('--checkpoint', type=int, default=200)
-    parser.add_argument('--num_checkpoints', type=int, default=50)
+    parser.add_argument('--checkpoint', type=int, default=1000)
+    parser.add_argument('--num_checkpoints', type=int, default=20)
     parser.add_argument('--test', action='store_true')
     args = parser.parse_args()
 
@@ -56,7 +68,7 @@ if __name__ == '__main__':
     print("Building model...")
     m = make_rnn_encoder_decoder(
         args.num_layers, args.emb_dim, args.hid_dim, d, cell=args.cell,
-        encoder_summary=args.encoder_summary, dropout=args.dropout, context_feed=False,
+        encoder_summary=args.encoder_summary, dropout=args.dropout,
         reuse_hidden=True, add_init_jitter=True, input_feed=False, att_type=None,
         tie_weights=True, word_dropout=args.word_dropout, reverse=args.reverse)
 
@@ -107,10 +119,10 @@ if __name__ == '__main__':
             trainer.add_hook(validation_hook, num_checkpoints=args.num_checkpoints)
             trainer.add_hook(report_hook, num_checkpoints=args.num_checkpoints)
             if args.lr_schedule_factor < 1.0:
-                trainer.add_hook(
-                    lr_hook, num_checkpoints=args.lr_schedule_num_checkpoints)
+                trainer.add_hook(lr_hook, num_checkpoints=args.num_checkpoints)
             # train
-            trainer.train(1, args.checkpoint)
+            trainer.train(1, args.checkpoint, shuffle=True)
+            del trainer
 
     if not args.test:
         if not u.prompt("Do you want to keep intermediate results? (yes/no)"):
