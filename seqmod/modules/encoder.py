@@ -1,8 +1,10 @@
 
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from seqmod.modules.ff import grad_reverse, MLP
+from seqmod.modules.ff import grad_reverse, MLP, MaxOut
+from seqmod.modules.embedding import Embedding
 
 
 class BaseEncoder(nn.Module):
@@ -67,3 +69,55 @@ def GRLWrapper(EncoderBaseClass):
 
 # legacy imports
 from seqmod.modules.rnn_encoder import RNNEncoder
+
+
+class MaxoutWindowEncoder(BaseEncoder):
+    """
+    Pseudo-CNN encoding on top of embedding features with MaxOut activations
+    """
+    def __init__(self, embedding, layers, maxouts=2, dropout=0.0):
+        self.layers = layers
+        self.dropout = dropout
+        super(MaxoutWindowEncoder, self).__init__()
+
+        self.embedding = embedding
+        self.maxouts = nn.ModuleList(
+            [MaxOut(embedding.embedding_dim * 3, embedding.embedding_dim, maxouts)
+             for _ in range(layers)])
+
+    def extract_window(self, inp):
+        """
+        Parameters:
+        -----------
+        - inp: (seq_len x batch_size x emb_dim)
+
+        Returns:
+        --------
+        - output: (seq_len x batch_size x emb_dim * 3)
+        """
+        return torch.cat([
+            F.pad(inp[:-1], (0, 0, 0, 0, 1, 0)),
+            inp,
+            F.pad(inp[1:],  (0, 0, 0, 0, 0, 1))
+        ], dim=2)
+
+    def forward(self, inp, **kwargs):
+        """
+        Parameters:
+        -----------
+        - inp (seq_len x batch)
+        """
+        seq_len, batch = inp.size()
+
+        emb = self.embedding(inp)
+
+        for maxout in self.maxouts:
+            emb = self.extract_window(emb)
+            emb = F.dropout(emb, p=self.dropout, training=self.training)
+            emb = maxout(emb.view(seq_len * batch, -1)).view(seq_len, batch, -1)
+
+        return torch.cat([emb.mean(0), emb.max(0)[0]], 1)
+
+    @property
+    def encoding_size(self):
+        return 2, self.embedding.embedding_dim * 2
