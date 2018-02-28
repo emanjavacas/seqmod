@@ -11,7 +11,8 @@ from seqmod.modules.torch_utils import init_hidden_for, repackage_hidden
 from seqmod.modules.torch_utils import swap, select_cols
 from seqmod.modules.embedding import Embedding
 from seqmod.modules import rnn
-from seqmod.modules.ff import MaxOut, OutputSoftmax
+from seqmod.modules.ff import MaxOut
+from seqmod.modules.softmax import FullSoftmax, MixtureSoftmax, SampledSoftmax
 from seqmod.modules.attention import Attention
 from seqmod.misc.beam_search import Beam
 from seqmod.modules.exposure import scheduled_sampling
@@ -307,9 +308,6 @@ class BaseLM(nn.Module):
             if hasattr(m, 'dropout'):
                 m.dropout = dropout
 
-    def project(self, output, reshape=False, normalize=True):
-        raise NotImplementedError
-
     def forward(self, inp, **kwargs):
         raise NotImplementedError
 
@@ -447,7 +445,7 @@ class LM(BaseLM):
     - tie_weights: bool, whether to tie input and output embedding layers.
         In case of unequal emb_dim and hid_dim values a linear project layer
         will be inserted after the RNN to match back to the embedding dim
-    - mixture: int, use a mixture of softmaxes in the output (only if the value
+    - mixtures: int, use a mixture of softmaxes in the output (only if the value
         is strictly positive).
     - deepout_layers: int, whether to add deep output after hidden layer and
         before output projection layer. No deep output will be added if
@@ -458,8 +456,8 @@ class LM(BaseLM):
     """
     def __init__(self, emb_dim, hid_dim, d, num_layers=1,
                  cell='GRU', bias=True, dropout=0.0, conds=None,
-                 word_dropout=0.0, att_dim=0, tie_weights=False, mixture=0,
-                 train_init=False, add_init_jitter=False,
+                 word_dropout=0.0, att_dim=0, tie_weights=False, mixtures=0,
+                 train_init=False, add_init_jitter=False, sampled_softmax=False,
                  deepout_layers=0, deepout_act='MaxOut', maxouts=2,
                  exposure_rate=1.0):
 
@@ -516,16 +514,23 @@ class LM(BaseLM):
         self.has_attention = hasattr(self, 'attn')
 
         # Output projection
-        self.output_proj = OutputSoftmax(
-            hid_dim, emb_dim, len(self.embeddings.d),
-            tie_weights=tie_weights, dropout=dropout, mixture=mixture,
-            deepout_layers=deepout_layers, deepout_act=MaxOut, maxouts=maxouts)
+        if mixtures > 0:
+            self.project = MixtureSoftmax(
+                hid_dim, emb_dim, len(self.embeddings.d),
+                tie_weights=tie_weights, dropout=dropout, mixtures=mixtures)
+        elif sampled_softmax:
+            self.project = SampledSoftmax(
+                hid_dim, emb_dim, len(self.embeddings.d), nsampled=8192,
+                tie_weights=tie_weights, dropout=dropout,
+                deepout_layers=deepout_layers, deepout_act=MaxOut, maxouts=maxouts)
+        else:
+            self.project = FullSoftmax(
+                hid_dim, emb_dim, len(self.embeddings.d),
+                tie_weights=tie_weights, dropout=dropout,
+                deepout_layers=deepout_layers, deepout_act=MaxOut, maxouts=maxouts)
 
         if tie_weights:
-            self.output_proj.tie_embedding_weights(self.embeddings)
-
-    def project(self, inp, reshape=False, normalize=True):
-        return self.output_proj(inp, reshape=reshape, normalize=normalize)
+            self.project.tie_embedding_weights(self.embeddings)
 
     def init_hidden_for(self, inp):
         return init_hidden_for(
@@ -604,7 +609,11 @@ class LM(BaseLM):
         self.hidden_state['hidden'] = repackage_hidden(hidden)
 
         # compute loss and backward
-        loss = F.nll_loss(self.project(outs), targets.view(-1), size_average=True)
+        if isinstance(self.project, SampledSoftmax) and self.training:
+            logits, new_targets = self.project(outs, targets=targets.view(-1))
+            loss = F.cross_entropy(logits, new_targets, size_average=True)
+        else:
+            loss = F.nll_loss(self.project(outs), targets.view(-1), size_average=True)
 
         if not test:
             loss.backward()

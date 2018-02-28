@@ -60,15 +60,15 @@ if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
     # model
-    parser.add_argument('--num_layers', default=2, type=int)
+    parser.add_argument('--num_layers', default=1, type=int)
     parser.add_argument('--cell', default='LSTM')
     parser.add_argument('--emb_dim', default=200, type=int)
-    parser.add_argument('--hid_dim', default=200, type=int)
+    parser.add_argument('--hid_dim', default=1000, type=int)
     parser.add_argument('--att_dim', default=0, type=int)
-    parser.add_argument('--dropout', default=0.2, type=float)
+    parser.add_argument('--dropout', default=0.6, type=float)
     parser.add_argument('--word_dropout', default=0.0, type=float)
     parser.add_argument('--tie_weights', action='store_true')
-    parser.add_argument('--mixture', default=0, type=int)
+    parser.add_argument('--mixtures', default=0, type=int)
     parser.add_argument('--deepout_layers', default=0, type=int)
     parser.add_argument('--deepout_act', default='MaxOut')
     parser.add_argument('--maxouts', default=2, type=int)
@@ -81,12 +81,12 @@ if __name__ == '__main__':
     parser.add_argument('--min_freq', default=1, type=int)
     parser.add_argument('--lower', action='store_true')
     parser.add_argument('--num', action='store_true')
-    parser.add_argument('--level', default='char')
+    parser.add_argument('--level', default='word')
     parser.add_argument('--dev_split', default=0.1, type=float)
     parser.add_argument('--test_split', default=0.1, type=float)
     # training
     parser.add_argument('--epochs', default=40, type=int)
-    parser.add_argument('--batch_size', default=128, type=int)
+    parser.add_argument('--batch_size', default=20, type=int)
     parser.add_argument('--bptt', default=35, type=int)
     parser.add_argument('--gpu', action='store_true')
     parser.add_argument('--use_schedule', action='store_true')
@@ -171,7 +171,7 @@ if __name__ == '__main__':
     print('Building model...')
     m = LM(args.emb_dim, args.hid_dim, d, exposure_rate=args.schedule_init,
            num_layers=args.num_layers, cell=args.cell, dropout=args.dropout,
-           att_dim=args.att_dim, tie_weights=args.tie_weights, mixture=args.mixture,
+           att_dim=args.att_dim, tie_weights=args.tie_weights, mixtures=args.mixtures,
            deepout_layers=args.deepout_layers, train_init=args.train_init,
            deepout_act=args.deepout_act, maxouts=args.maxouts,
            word_dropout=args.word_dropout)
