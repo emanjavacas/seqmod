@@ -6,7 +6,7 @@ import torch.nn as nn
 from torch.autograd import Variable
 
 from seqmod.modules.rnn import StackedGRU, StackedLSTM
-from seqmod.modules.ff import OutputSoftmax
+from seqmod.modules.softmax import FullSoftmax
 from seqmod.modules import attention
 from seqmod.modules.torch_utils import make_length_mask, make_dropout_mask, swap
 
@@ -154,13 +154,13 @@ class RNNDecoder(BaseDecoder):
                 self.hid_dim, self.hid_dim, scorer=self.att_type)
 
         # output projection
-        self.proj = OutputSoftmax(
+        self.project = FullSoftmax(
             hid_dim, self.embeddings.embedding_dim, self.embeddings.num_embeddings,
             tie_weights=tie_weights, dropout=dropout, deepout_layers=deepout_layers,
             deepout_act=deepout_act)
 
         if tie_weights:
-            self.proj.tie_embedding_weights(self.embeddings)
+            self.project.tie_embedding_weights(self.embeddings)
 
     @property
     def conditional(self):
@@ -253,12 +253,6 @@ class RNNDecoder(BaseDecoder):
         return RNNDecoderState(
             hidden, context, mask=mask, enc_att=enc_att,
             input_feed=input_feed, conds=conds, dropout_mask=dropout_mask)
-
-    def project(self, dec_out):  # legacy code
-        if dec_out.dim() == 3:
-            dec_out = dec_out.view(-1, dec_out.size(2))
-
-        return self.proj(dec_out)
 
     def forward(self, inp, state):
         """
