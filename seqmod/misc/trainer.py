@@ -15,6 +15,7 @@ from torch.nn.utils import clip_grad_norm
 
 from seqmod import utils as u
 from seqmod.misc.early_stopping import EarlyStoppingException
+from .git import GitInfo
 
 
 def ppl(loss):
@@ -160,6 +161,12 @@ class Checkpoint(object):
         if args is not None:
             if isinstance(args, argparse.Namespace):
                 args = vars(args)
+            # add git info
+            git_info = GitInfo(self.topdir)
+            commit, branch = git_info.get_commit(), git_info.get_branch()
+            args['git-commit'] = commit
+            args['git-branch'] = branch
+            # dump
             with open(self._joinpath('params.yml'), 'w') as f:
                 yaml.dump(args, f, default_flow_style=False)
 
