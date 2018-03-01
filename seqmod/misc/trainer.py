@@ -330,7 +330,9 @@ class Trainer(object):
         self.log("validation_end", {"epoch": epoch, "loss": loss.pack()})
         if self.early_stopping is not None:
             self.early_stopping.add_checkpoint(
-                loss.reduce(), copy.deepcopy(self.model))
+                # need some extra free GPU memory to duplicate the model before
+                # moving to cpu and storing it in the EarlyStopping object
+                loss.reduce(), copy.deepcopy(self.model).cpu())
         if self.checkpoint is not None:
             self.checkpoint.save(self.model, loss.reduce())
 
