@@ -6,7 +6,7 @@ import torch.nn as nn
 from torch.autograd import Variable
 
 from seqmod.modules.rnn import StackedGRU, StackedLSTM
-from seqmod.modules.softmax import FullSoftmax
+from seqmod.modules.softmax import FullSoftmax, SampledSoftmax
 from seqmod.modules import attention
 from seqmod.modules.torch_utils import make_length_mask, make_dropout_mask, swap
 
@@ -92,7 +92,7 @@ class RNNDecoder(BaseDecoder):
     """
     def __init__(self, embeddings, hid_dim, num_layers, cell, encoding_size,
                  dropout=0.0, variational=False, input_feed=False,
-                 context_feed=False,
+                 context_feed=False, sampled_softmax=False,
                  att_type=None, deepout_layers=0, deepout_act='ReLU',
                  tie_weights=False, train_init=False, add_init_jitter=False,
                  reuse_hidden=True, cond_dims=None, cond_vocabs=None):
@@ -154,10 +154,16 @@ class RNNDecoder(BaseDecoder):
                 self.hid_dim, self.hid_dim, scorer=self.att_type)
 
         # output projection
-        self.project = FullSoftmax(
-            hid_dim, self.embeddings.embedding_dim, self.embeddings.num_embeddings,
-            tie_weights=tie_weights, dropout=dropout, deepout_layers=deepout_layers,
-            deepout_act=deepout_act)
+        if sampled_softmax:
+            self.project = SampledSoftmax(
+                hid_dim, self.embeddings.embedding_dim, self.embeddings.num_embeddings,
+                nsampled=8192, tie_weights=tie_weights, dropout=dropout,
+                deepout_layers=deepout_layers, deepout_act=deepout_act)
+        else:
+            self.project = FullSoftmax(
+                hid_dim, self.embeddings.embedding_dim, self.embeddings.num_embeddings,
+                tie_weights=tie_weights, dropout=dropout,
+                deepout_layers=deepout_layers, deepout_act=deepout_act)
 
         if tie_weights:
             self.project.tie_embedding_weights(self.embeddings)

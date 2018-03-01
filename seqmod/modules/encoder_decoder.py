@@ -7,6 +7,7 @@ from torch.autograd import Variable
 from seqmod.misc.beam_search import Beam
 from seqmod.modules.encoder import GRLWrapper
 from seqmod.modules.rnn_encoder import RNNEncoder
+from seqmod.modules.softmax import SampledSoftmax
 from seqmod.modules.decoder import RNNDecoder
 from seqmod.modules.embedding import Embedding
 from seqmod.modules.torch_utils import flip, shards, select_cols
@@ -101,8 +102,13 @@ class EncoderDecoder(nn.Module):
 
         for shard in shards(shard_data, size=split, test=test):
             out, true = shard['out'], shard['trg'].view(-1)
-            pred = self.decoder.project(out)
-            shard_loss = F.nll_loss(pred, true, weight, size_average=False)
+            if isinstance(self.decoder.project, SampledSoftmax) and self.training:
+                out, new_true = self.decoder.project(
+                    out, targets=new_true, normalize=False, reshape=False)
+                shard_loss = F.cross_entropy(out, new_true, size_average=False)
+            else:
+                shard_loss = F.nll_loss(
+                    self.decoder.project(out), true, weight, size_average=False)
             shard_loss /= num_examples
             loss += shard_loss
 
@@ -312,6 +318,7 @@ def make_rnn_encoder_decoder(
         bidi=True,
         encoder_summary='full',
         att_type=None,
+        sampled_softmax=False,
         dropout=0.0,
         variational=False,
         input_feed=True,
@@ -374,12 +381,11 @@ def make_rnn_encoder_decoder(
 
     decoder = RNNDecoder(trg_embeddings, hid_dim, num_layers, cell, encoder_size,
                          dropout=dropout, variational=variational, input_feed=input_feed,
-                         context_feed=context_feed,
+                         context_feed=context_feed, sampled_softmax=sampled_softmax,
                          att_type=att_type, deepout_layers=deepout_layers,
                          deepout_act=deepout_act,
                          tie_weights=tie_weights, reuse_hidden=reuse_hidden,
-                         train_init=train_init,
-                         add_init_jitter=add_init_jitter,
+                         train_init=train_init, add_init_jitter=add_init_jitter,
                          cond_dims=cond_dims, cond_vocabs=cond_vocabs)
 
     if decoder.has_attention:

@@ -67,7 +67,7 @@ class FullSoftmax(BaseSoftmax):
                 # in both input and output embedding layers.
                 logging.warn("When tying weights, output layer and "
                              "embedding layer should have equal size. "
-                             "A projection layer will be insterted.")
+                             "A projection layer will be inserted.")
                 self.intermediate = nn.Linear(hid_dim, emb_dim)
         else:
             self.output_emb = nn.Linear(hid_dim, vocab)
@@ -86,18 +86,14 @@ class FullSoftmax(BaseSoftmax):
 
         if hasattr(self, 'deepout'):
             output = self.deepout(output)
-
         if hasattr(self, 'intermediate'):
             output = self.intermediate(output)
 
-        # ((seq_len *) batch x vocab)
-        output = self.output_emb(output)
+        output = self.output_emb(output)  # ((seq_len *) batch x vocab)
 
         if normalize:
             output = F.log_softmax(output, dim=1)
-
         if reshape:
-            # => (seq_len x batch x vocab)
             output = output.view(seq_len, -1, self.vocab)
 
         return output
@@ -162,16 +158,15 @@ class MixtureSoftmax(BaseSoftmax):
 
 
 # FIXME: Can't be put inside SampledSoftmax since it can't be pickled
-_sampler = LogUniformSampler(9000)
+_SAMPLER = None
 
 
 class SampledSoftmax(FullSoftmax):
-    def __init__(self, hid_dim, emb_dim, vocab,
-                 nsampled=8192, tie_weights=False, dropout=0.0, **kwargs):
-        super(SampledSoftmax, self).__init__(
-            hid_dim, emb_dim, vocab,
-            tie_weights=tie_weights, dropout=dropout, **kwargs)
+    def __init__(self, hid_dim, emb_dim, vocab, nsampled=8192, **kwargs):
+        super(SampledSoftmax, self).__init__(hid_dim, emb_dim, vocab, **kwargs)
 
+        global _SAMPLER
+        _SAMPLER = LogUniformSampler(vocab)
         self.nsampled = nsampled
 
     def forward(self, output, targets=None, normalize=True, reshape=False):
@@ -184,34 +179,37 @@ class SampledSoftmax(FullSoftmax):
         Returns:
         -------
         This module behaves exactly as FullSoftmax during evaluation but differently
-        during training. During training the arg `targets` has to be passed and it used
-        to sample the new targets. The output is then the logits corresponding to
-        the sampled targets and the sampled targets themselves, which are necessary
+        during training. During training, `targets` has to be passed and it's used
+        to sample the new targets. The output is then the logits corresponding
+        to the sampled targets and the sampled targets themselves, which are necessary
         to compute the loss.
 
         - output, new_targets: ((seq_len *) batch_size x nsampled), (nsampled)
         """
         seq_len = 1 if output.dim() == 2 else output.size(0)
         output = output.view(-1, self.hid_dim)  # collapse seq_len and batch
-        new_targets = None
+
+        if hasattr(self, 'deepout'):
+            output = self.deepout(output)
+        if hasattr(self, 'intermediate'):
+            output = self.intermediate(output)
 
         if self.training:
             if targets is None:
                 raise ValueError("SampledSoftmax requires `targets` during training")
-            output, new_targets = self.sampled(output, targets)
+            if reshape or normalize:
+                raise ValueError("SampledSoftmax doesn't support `normalize` "
+                                 "or `reshape` during training")
+            return self.sampled(output, targets)
 
-        else:
-            output = super(SampledSoftmax, self).forward(output, normalize=normalize)
+        output = self.output_emb(output)  # ((seq_len *) batch x vocab)
 
+        if normalize:
+            output = F.log_softmax(output, dim=1)
         if reshape:
-            # => (seq_len x batch x vocab)
             output = output.view(seq_len, -1, self.vocab)
 
-        if self.training:
-            return output, new_targets
-
-        else:
-            return output
+        return output
 
     def sampled(self, output, targets, remove_accidental_match=True):
         """
@@ -226,9 +224,8 @@ class SampledSoftmax(FullSoftmax):
         new_targets: ((seq_len *) batch_size)
         """
         # sample and wrap as variables
-        np_targets = targets.data.cpu().numpy()
-        sample_ids, true_freq, sample_freq = _sampler.sample(
-            self.nsampled, np_targets)
+        sample_ids, true_freq, sample_freq = _SAMPLER.sample(
+            self.nsampled, targets.data.cpu().numpy())
         sample_ids = Variable(output.data.new(sample_ids).long())
         true_freq = Variable(output.data.new(true_freq))
         sample_freq = Variable(output.data.new(sample_freq))
@@ -242,19 +239,23 @@ class SampledSoftmax(FullSoftmax):
         sample_bias = self.output_emb.bias[sample_ids]
 
         # calculate logits
-        true_logits = (output * true_weights).sum(dim=1) + true_bias
+        # row-wise dot-product of model output with output embedding
+        # => diag(output @ true_weights.t()) + true_bias => (batch_size)
+        true_logits = torch.sum(torch.mul(output, true_weights), dim=1) + true_bias
+        # dot-product of model output with each of the sampled output embeddings
+        # (batch_size x hid_dim) * (hid_dim x nsampled) => (batch_size x nsampled)
         sample_logits = torch.matmul(output, sample_weights.t()) + sample_bias
 
         # remove true targets from sample set
         if remove_accidental_match:
-            acc_hits = _sampler.accidental_match(
-                np_targets, sample_ids.data.cpu().numpy())
+            acc_hits = _SAMPLER.accidental_match(
+                targets.data.cpu().numpy(), sample_ids.data.cpu().numpy())
             if len(acc_hits) > 0:
                 sample_logits[list(zip(*acc_hits))] = -1e37
 
         # perform correction
-        true_logits = true_logits - true_freq.log()
-        sample_logits = sample_logits - sample_freq.log()
+        true_logits = true_logits.sub(torch.log(true_freq))
+        sample_logits = sample_logits.sub(torch.log(sample_freq))
 
         # return logits and new_targets
         logits = torch.cat([true_logits.unsqueeze(1), sample_logits], dim=1)

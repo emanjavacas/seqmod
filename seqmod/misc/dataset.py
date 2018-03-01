@@ -276,7 +276,9 @@ class Dict(object):
             if self.unk_token and self.unk_token not in self.reserved:
                 self.reserved.add(self.unk_token)
 
-        # create tables
+        # create tables (vocab is kept in sorted order which is needed for
+        # efficient candidate sampling; reserved symbols are added as most
+        # frequent at the top of the list)
         self.vocab = [s for s in self.reserved] + \
                      [k for k, v in most_common if v >= self.min_freq]
         self.s2i = {s: i for i, s in enumerate(self.vocab)}

@@ -12,6 +12,33 @@ from seqmod.misc.loggers import StdLogger
 from seqmod import utils as u
 
 
+def load_pairs(*paths, root=None, max_len=-1, processor=text_processor()):
+    for path in paths:
+        if root is not None:
+            path = os.path.join(root, path)
+        with open(path, 'r+') as f:
+            prev = None
+            for line in f:
+                line = processor(line.strip())
+                if max_len > 0 and len(line) >= max_len:
+                    prev = None
+                    continue
+                if prev is not None:
+                    yield prev, line
+                    prev = line
+                else:
+                    prev = line
+
+
+def pairs2sents(*paths, **kwargs):
+    last = None
+    for prev, line in load_pairs(*paths, **kwargs):
+        if last != prev:
+            yield prev
+        yield line
+        last = line
+
+
 def load_sents(*paths, root=None, max_len=-1, processor=text_processor()):
     for path in paths:
         if root is not None:
@@ -111,6 +138,7 @@ if __name__ == '__main__':
     parser.add_argument('--cell', default='LSTM')
     parser.add_argument('--encoder_summary', default='mean-max')
     parser.add_argument('--train_init', action='store_true')
+    parser.add_argument('--sampled_softmax', action='store_true')
     parser.add_argument('--init_embeddings', action='store_true')
     parser.add_argument('--embeddings_path',
                         default='/home/corpora/word_embeddings/' +
@@ -136,18 +164,20 @@ if __name__ == '__main__':
     print("Loading data...")
     processor = text_processor(
         lower=args.lower, num=args.num, level=args.level)
-    train = list(load_sents(*args.path, max_len=args.max_len, processor=processor))
     d = Dict(eos_token=u.EOS, bos_token=u.BOS, unk_token=u.UNK,
              pad_token=u.PAD, max_size=args.max_size, force_unk=True
-    ).fit(train)
-    train, valid = SkipthoughtDataset(
-        train, None, {'src': d}, batch_size=args.batch_size, gpu=args.gpu
+    ).fit(pairs2sents(*args.path, max_len=args.max_len, processor=processor))
+    pairs = load_pairs(*args.path, max_len=args.max_len, processor=processor)
+    p1, p2 = zip(*list(pairs))
+    train, valid = PairedDataset(
+        p1, p2, {'src': d, 'trg': d}, batch_size=args.batch_size, gpu=args.gpu
     ).splits(dev=None, test=args.dev_split)
 
     print("Building model...")
     m = make_rnn_encoder_decoder(
         args.num_layers, args.emb_dim, args.hid_dim, d, cell=args.cell,
         encoder_summary=args.encoder_summary, dropout=args.dropout,
+        sampled_softmax=args.sampled_softmax,
         reuse_hidden=False, add_init_jitter=True, input_feed=False, att_type=None,
         tie_weights=True, word_dropout=args.word_dropout, reverse=args.reverse)
 

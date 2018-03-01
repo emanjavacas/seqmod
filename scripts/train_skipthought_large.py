@@ -2,12 +2,11 @@
 import torch.optim as optim
 
 from seqmod.modules.encoder_decoder import make_rnn_encoder_decoder
-from seqmod.misc import Trainer, Checkpoint
+from seqmod.misc import Trainer, Checkpoint, PairedDataset
 from seqmod.misc.loggers import StdLogger
 from seqmod import utils as u
 
 from train_skipthought import make_validation_hook, make_report_hook
-from train_skipthought import SkipthoughtDataset
 
 
 def make_lr_hook(optimizer, factor, checkpoints):
@@ -39,6 +38,7 @@ if __name__ == '__main__':
     parser.add_argument('--num_layers', type=int, default=1)
     parser.add_argument('--cell', default='LSTM')
     parser.add_argument('--encoder_summary', default='mean-max')
+    parser.add_argument('--sampled_softmax', action='store_true')
     parser.add_argument('--train_init', action='store_true')
     parser.add_argument('--init_embeddings', action='store_true')
     parser.add_argument('--embeddings_path',
@@ -69,6 +69,7 @@ if __name__ == '__main__':
     m = make_rnn_encoder_decoder(
         args.num_layers, args.emb_dim, args.hid_dim, d, cell=args.cell,
         encoder_summary=args.encoder_summary, dropout=args.dropout,
+        sampled_softmax=args.sampled_softmax,
         reuse_hidden=True, add_init_jitter=True, input_feed=False, att_type=None,
         tie_weights=True, word_dropout=args.word_dropout, reverse=args.reverse)
 
@@ -106,8 +107,9 @@ if __name__ == '__main__':
             # prepare data subset
             print("Training on subset [{}/{}]: {}".format(idx+1, len(args.path), path))
             print("Loading data...")
-            train = SkipthoughtDataset(
-                u.load_model(path), None, {'src': d},
+            train = u.load_model(path)
+            train = PairedDataset(
+                train['p1'], train['p2'], {'src': d, 'trg': d},
                 batch_size=args.batch_size, fitted=True, gpu=args.gpu)
             if valid is None:
                 train, valid = train.splits(dev=None, test=args.dev_split)

@@ -69,6 +69,7 @@ if __name__ == '__main__':
     parser.add_argument('--word_dropout', default=0.0, type=float)
     parser.add_argument('--tie_weights', action='store_true')
     parser.add_argument('--mixtures', default=0, type=int)
+    parser.add_argument('--sampled_softmax', action='store_true')
     parser.add_argument('--deepout_layers', default=0, type=int)
     parser.add_argument('--deepout_act', default='MaxOut')
     parser.add_argument('--maxouts', default=2, type=int)
@@ -174,7 +175,7 @@ if __name__ == '__main__':
            att_dim=args.att_dim, tie_weights=args.tie_weights, mixtures=args.mixtures,
            deepout_layers=args.deepout_layers, train_init=args.train_init,
            deepout_act=args.deepout_act, maxouts=args.maxouts,
-           word_dropout=args.word_dropout)
+           sampled_softmax=args.sampled_softmax, word_dropout=args.word_dropout)
 
     u.initialize_model(m, rnn={'type': 'orthogonal', 'args': {'gain': 1.0}})
     m.embeddings.weight.data.uniform_(-0.1, 0.1)

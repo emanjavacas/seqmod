@@ -5,7 +5,7 @@ import time
 from seqmod.misc import text_processor, Dict
 from seqmod import utils as u
 
-from train_skipthought import load_sents
+from train_skipthought import load_sents, load_pairs, pairs2sents
 
 
 def make_dataset_fname(args, split=None):
@@ -57,20 +57,20 @@ if __name__ == '__main__':
     if args.num_splits == 1:
         print("Fitting dictionary")
         start = time.time()
-        sents = list(load_sents(*args.path, max_len=args.max_len, processor=processor))
+        sents = list(pairs2sents(*args.path, max_len=args.max_len, processor=processor))
         d.fit(sents)
         u.save_model(d, '{}.{}.dict'.format(args.output, infix))
         print("... took {:.3f} secs".format(time.time() - start))
         print()
 
         print("Saving dataset")
-        u.save_model(sents, '{}.{}'.format(args.output, infix))
+        u.save_model(list(d.transform(sents)), '{}.{}'.format(args.output, infix))
 
     else:
         print("Fitting dictionary")
         # iterate through chunks to be able to count the total number of sequences
         start, num_sents = time.time(), 0
-        sents = load_sents(*args.path, max_len=args.max_len, processor=processor)
+        sents = pairs2sents(*args.path, max_len=args.max_len, processor=processor)
         for chunk in chunk_seq(sents, 10000):
             num_sents += len(chunk)
             d.partial_fit(chunk)
@@ -81,11 +81,13 @@ if __name__ == '__main__':
     
         print("Processing dataset")
         start, chunk_size = time.time(), (num_sents // args.num_splits) + 1
-        sents = load_sents(*args.path, max_len=args.max_len, processor=processor)
+        pairs = load_pairs(*args.path, max_len=args.max_len, processor=processor)
 
         # iterate through chunks of size proportional to the number of desired chunks
-        for idx, chunk in enumerate(chunk_seq(sents, chunk_size)):
+        for idx, chunk in enumerate(chunk_seq(pairs, chunk_size)):
             print("Processing chunk num {}/{}".format(idx+1, args.num_splits))
             infix = make_dataset_fname(args, split=idx+1)
-            u.save_model(list(d.transform(chunk)), '{}.{}'.format(args.output, infix))
+            p1, p2 = zip(*list(chunk))
+            p1, p2 = list(d.transform(p1)), list(d.transform(p2))
+            u.save_model({'p1': p1, 'p2': p2}, '{}.{}'.format(args.output, infix))
         print("... took {:.3f} secs".format(time.time() - start))
