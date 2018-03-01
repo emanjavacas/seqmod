@@ -401,7 +401,7 @@ class Trainer(object):
 
         return loss
 
-    def get_batch_order(self, shuffle, num_batches):
+    def _get_batch_mode_batch_order(self, shuffle, num_batches):
         "Get batch order for an undefined number of batches"
         batch_order = list(range(len(self.datasets['train'])))
         if shuffle:
@@ -420,12 +420,16 @@ class Trainer(object):
 
         return batch_order[:num_batches]
 
-    def get_epoch_batch_order(self, shuffle):
+    def get_batch_order(self, shuffle, num_batches=None):
         "Get batch order for a single epoch"
-        batch_order = list(range(len(self.datasets['train'])))
-        if shuffle:
-            random.shuffle(batch_order)
-        return batch_order
+        if num_batches is None:
+            batch_order = list(range(len(self.datasets['train'])))
+            if shuffle:
+                random.shuffle(batch_order)
+            return batch_order
+
+        else:
+            return self._get_batch_mode_batch_order(shuffle, num_batches)
 
     def run_inner_loop(self, epoch, checkpoint, batch_order, **kwargs):
         "General train loop for a single run"
@@ -475,24 +479,22 @@ class Trainer(object):
         start = time.time()
 
         # check run mode (training for epochs or number of batches)
-        batch_first = epochs is None
-        if batch_first:
+        _batch_mode = epochs is None
+        if _batch_mode:
             epochs = 1
 
         try:
             for e in range(epochs):
                 epoch_start = time.time()
-                # train
                 self.model.train()
 
-                if batch_first:
-                    batch_order = self.get_batch_order(shuffle, num_batches)
+                if _batch_mode:
                     e = self.batch_run   # report number of runs as epoch
                     self.batch_run += 1  # increase number of runs
                 else:
-                    batch_order = self.get_epoch_batch_order(shuffle)
                     self.on_epoch_begin(e)
 
+                batch_order = self.get_batch_order(shuffle, num_batches=num_batches)
                 run_loss = self.run_inner_loop(
                     e, checkpoint, batch_order, **kwargs)
 
