@@ -369,17 +369,25 @@ def make_rnn_encoder_decoder(
     src_embeddings, trg_embeddings = make_embeddings(
         src_dict, trg_dict, emb_dim, word_dropout)
 
-    encoder = RNNEncoder(src_embeddings, hid_dim, num_layers, cell=cell,
+    if isinstance(num_layers, tuple):
+        enc_layers, dec_layers = num_layers
+    else:
+        enc_layers, dec_layers = num_layers, num_layers
+
+    if reuse_hidden and enc_layers != dec_layers:
+        raise ValueError("`reuse_hidden` requires equal number of layers")
+
+    encoder = RNNEncoder(src_embeddings, hid_dim, enc_layers, cell=cell,
                          bidi=bidi, dropout=dropout, summary=encoder_summary,
                          train_init=False, add_init_jitter=False)
-
-    encoder_dims, encoder_size = encoder.encoding_size
 
     if context_feed is None:
         # only disable it if it explicitely desired (passing False)
         context_feed = att_type is None or att_type.lower() == 'none'
 
-    decoder = RNNDecoder(trg_embeddings, hid_dim, num_layers, cell, encoder_size,
+    encoder_dims, encoder_size = encoder.encoding_size
+
+    decoder = RNNDecoder(trg_embeddings, hid_dim, dec_layers, cell, encoder_size,
                          dropout=dropout, variational=variational, input_feed=input_feed,
                          context_feed=context_feed, sampled_softmax=sampled_softmax,
                          att_type=att_type, deepout_layers=deepout_layers,

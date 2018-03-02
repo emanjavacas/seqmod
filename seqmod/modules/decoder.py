@@ -185,13 +185,14 @@ class RNNDecoder(BaseDecoder):
             h_0, _ = enc_hidden
         else:
             h_0 = enc_hidden
+        batch = h_0.size(1)
 
         # compute h_0
         if self.train_init:
-            h_0 = self.h_0.repeat(1, h_0.size(1), 1)
+            h_0 = self.h_0.repeat(1, batch, 1)
         else:
             if not self.reuse_hidden:
-                h_0 = torch.zeros_like(h_0)
+                h_0 = Variable(h_0.data.new(self.num_layers, batch, self.hid_dim))
 
         if self.add_init_jitter:
             h_0 = h_0 + torch.normal(torch.zeros_like(h_0), 0.3)
@@ -280,7 +281,7 @@ class RNNDecoder(BaseDecoder):
         if self.conditional:
             inp = torch.cat([inp, state.conds], 1)
 
-        out, hidden = self.rnn(inp, state.hidden, )
+        out, hidden = self.rnn(inp, state.hidden)
 
         weight = None
         if self.has_attention:

@@ -43,7 +43,7 @@ if __name__ == '__main__':
     parser.add_argument('--init_embeddings', action='store_true')
     parser.add_argument('--embeddings_path',
                         default='/home/corpora/word_embeddings/' +
-                        'glove.6B.300d.txt')
+                        'glove.840B.300d.txt')
     parser.add_argument('--reverse', action='store_true')
     # training
     parser.add_argument('--dropout', type=float, default=0.15)
@@ -67,10 +67,10 @@ if __name__ == '__main__':
 
     print("Building model...")
     m = make_rnn_encoder_decoder(
-        args.num_layers, args.emb_dim, args.hid_dim, d, cell=args.cell,
+        (args.num_layers, 1), args.emb_dim, args.hid_dim, d, cell=args.cell,
         encoder_summary=args.encoder_summary, dropout=args.dropout,
         sampled_softmax=args.sampled_softmax,
-        reuse_hidden=True, add_init_jitter=True, input_feed=False, att_type=None,
+        reuse_hidden=False, add_init_jitter=True, input_feed=False, att_type=None,
         tie_weights=True, word_dropout=args.word_dropout, reverse=args.reverse)
 
     print(m)
@@ -111,6 +111,7 @@ if __name__ == '__main__':
             train = PairedDataset(
                 train['p1'], train['p2'], {'src': d, 'trg': d},
                 batch_size=args.batch_size, fitted=True, gpu=args.gpu)
+            train.sort_(sort_by='trg')
             if valid is None:
                 train, valid = train.splits(dev=None, test=args.dev_split)
 
@@ -124,7 +125,6 @@ if __name__ == '__main__':
                 trainer.add_hook(lr_hook, num_checkpoints=args.num_checkpoints)
             # train
             trainer.train(1, args.checkpoint, shuffle=True)
-            del trainer
 
     if not args.test:
         if not u.prompt("Do you want to keep intermediate results? (yes/no)"):
