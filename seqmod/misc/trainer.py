@@ -139,11 +139,11 @@ class Checkpoint(object):
         self.ext = ext
         self.is_setup = False
 
-    def _joinpath(self, *path):
-        return os.path.join(self.topdir, self.subdir, *path)
+    def get_modelname(self, loss):
+        return self.checkpoint_path('model-{:.4f}'.format(loss))
 
-    def _modelname(self, loss):
-        return self._joinpath('model-{:.4f}'.format(loss))
+    def checkpoint_path(self, *path):
+        return os.path.join(self.topdir, self.subdir, *path)
 
     def setup(self, args=None, d=None):
         """
@@ -167,11 +167,11 @@ class Checkpoint(object):
             args['git-commit'] = commit
             args['git-branch'] = branch
             # dump
-            with open(self._joinpath('params.yml'), 'w') as f:
+            with open(self.checkpoint_path('params.yml'), 'w') as f:
                 yaml.dump(args, f, default_flow_style=False)
 
         if d is not None:
-            u.save_model(d, self._joinpath('dict'), mode=self.ext)
+            u.save_model(d, self.checkpoint_path('dict'), mode=self.ext)
 
         self.is_setup = True
 
@@ -192,7 +192,7 @@ class Checkpoint(object):
             else:
                 return
 
-        modelname = u.save_model(model, self._modelname(loss), mode=self.ext)
+        modelname = u.save_model(model, self.get_modelname(loss), mode=self.ext)
         self.buf.append((modelname, loss))
         self.buf.sort(key=itemgetter(1))
 
