@@ -134,10 +134,12 @@ class EmbeddingLoader(object):
 
 def load_lines(path, max_len=None, processor=text_processor()):
     """Auxiliary function for sentence-per-line data"""
-    if os.path.isfile(path):
+    if os.path.isdir(path):
+        input_files = [os.path.join(path, f) for f in os.listdir(path)]
+    elif os.path.isfile(path):
         input_files = [path]
     else:
-        input_files = [os.path.join(path, f) for f in os.listdir(path)]
+        return
 
     for path in input_files:
         with open(os.path.expanduser(path)) as f:
