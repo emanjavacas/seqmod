@@ -104,7 +104,7 @@ class EncoderDecoder(nn.Module):
             out, true = shard['out'], shard['trg'].view(-1)
             if isinstance(self.decoder.project, SampledSoftmax) and self.training:
                 out, new_true = self.decoder.project(
-                    out, targets=new_true, normalize=False, reshape=False)
+                    out, targets=true, normalize=False, reshape=False)
                 shard_loss = F.cross_entropy(out, new_true, size_average=False)
             else:
                 shard_loss = F.nll_loss(
