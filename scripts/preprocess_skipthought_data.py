@@ -57,14 +57,16 @@ if __name__ == '__main__':
     if args.num_splits == 1:
         print("Fitting dictionary")
         start = time.time()
-        sents = list(pairs2sents(*args.path, max_len=args.max_len, processor=processor))
-        d.fit(sents)
+        pairs = load_pairs(*args.path, max_len=args.max_len, processor=processor)
+        p1, p2 = zip(*list(pairs))
+        d.fit(p1, p2)
         u.save_model(d, '{}.{}.dict'.format(args.output, infix))
         print("... took {:.3f} secs".format(time.time() - start))
         print()
 
-        print("Saving dataset")
-        u.save_model(list(d.transform(sents)), '{}.{}'.format(args.output, infix))
+        print("Saving dataset...")
+        u.save_model({'p1': list(d.transform(p1)), 'p2': list(d.transform(p2))},
+                     '{}.{}'.format(args.output, infix))
 
     else:
         print("Fitting dictionary")
