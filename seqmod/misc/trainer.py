@@ -211,8 +211,8 @@ class Checkpoint(object):
 
 class Trainer(object):
     def __init__(self, model, datasets, optimizer, scheduler=None, checkpoint=None,
-                 early_stopping=None, test_name='test', valid_name='valid',
-                 max_norm=None, losses=('loss',), weights=None, verbose=True):
+                 early_stopping=None, max_norm=None, losses=('loss',), weights=None,
+                 verbose=True):
         """
         Parameter:
         ----------
@@ -242,9 +242,6 @@ class Trainer(object):
         self.batch_state = {}  # instance var to share state across batches
         self.last_batch_order = None
         self.batch_run = 0
-        # properties
-        self.test_name = test_name
-        self.valid_name = valid_name
 
     # logging
     def add_loggers(self, *loggers):
@@ -386,11 +383,11 @@ class Trainer(object):
             (e.g. best model resulting from early stopping)
         - kwargs: extra arguments passed to model.loss
         """
-        if test and self.test_name not in self.datasets:
+        if test and 'test' not in self.datasets:
             raise ValueError("Can not validate on test set, "
                              "no test set available.")
 
-        dataset = self.datasets[self.test_name if test else self.valid_name]
+        dataset = self.datasets['test' if test else 'valid']
         model, loss = model or self.model, self.loss.init()
 
         for batch_num in range(len(dataset)):
@@ -502,7 +499,7 @@ class Trainer(object):
                 self.on_epoch_end(e, run_loss, run_loss.examples, run_time)
 
                 # valid
-                if self.valid_name in self.datasets:
+                if 'valid' in self.datasets:
                     self.model.eval()
                     self.on_validation_begin(e)
                     valid_loss = self.validate_model(**kwargs)
@@ -527,11 +524,13 @@ class Trainer(object):
 
         # prepare best model
         if best_model is None:
-            best_model = copy.deepcopy(self.model)
+            best_model = self.model
         best_model.eval()
 
-        if run_test and self.test_name in self.datasets:
+        if run_test and 'test' in self.datasets:
             self.on_test_begin(self.batch_run)
+            if self.dataset['test'].gpu:  # might be on cpu if coming from ES
+                best_model.cuda()
             test_loss = self.validate_model(test=True, model=best_model, **kwargs)
             self.on_test_end(test_loss)
             test_loss = test_loss.reduce()
