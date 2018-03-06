@@ -142,14 +142,14 @@ if __name__ == '__main__':
     parser.add_argument('--init_embeddings', action='store_true')
     parser.add_argument('--embeddings_path',
                         default='/home/corpora/word_embeddings/' +
-                        'glove.6B.300d.txt')
+                        'glove.840B.300d.txt')
     parser.add_argument('--reverse', action='store_true')
     # training
     parser.add_argument('--dropout', type=float, default=0.3)
     parser.add_argument('--word_dropout', type=float, default=0.0)
     parser.add_argument('--optimizer', default='Adam')
     parser.add_argument('--lr', type=float, default=0.001)
-    parser.add_argument('--lr_schedule_epochs', type=int, default=1)
+    parser.add_argument('--lr_schedule_checkpoints', type=int, default=1)
     parser.add_argument('--lr_schedule_factor', type=float, default=1)
     parser.add_argument('--max_norm', type=float, default=5.)
     parser.add_argument('--patience', default=0, type=int)
@@ -209,7 +209,7 @@ if __name__ == '__main__':
     if args.lr_schedule_factor < 1.0:
         hook = make_lr_hook(
             optimizer, args.lr_schedule_factor, args.lr_schedule_checkpoints)
-        trainer.add_hook(hook, hooks_per_epoch=args.lr_schedule_epochs)
+        trainer.add_hook(hook, hooks_per_epoch=1)
 
     (best_model, valid_loss), test_loss = trainer.train(
         args.epochs, args.checkpoint)

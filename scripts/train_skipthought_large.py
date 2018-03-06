@@ -67,7 +67,7 @@ if __name__ == '__main__':
 
     print("Building model...")
     m = make_rnn_encoder_decoder(
-        (args.num_layers, 1), args.emb_dim, args.hid_dim, d, cell=args.cell,
+        args.num_layers, args.emb_dim, args.hid_dim, d, cell=args.cell,
         encoder_summary=args.encoder_summary, dropout=args.dropout,
         sampled_softmax=args.sampled_softmax,
         reuse_hidden=False, add_init_jitter=True, input_feed=False, att_type=None,
@@ -111,9 +111,10 @@ if __name__ == '__main__':
             train = PairedDataset(
                 train['p1'], train['p2'], {'src': d, 'trg': d},
                 batch_size=args.batch_size, fitted=True, gpu=args.gpu)
-            train.sort_(sort_by='trg')
             if valid is None:
-                train, valid = train.splits(dev=None, test=args.dev_split)
+                train, valid = train.splits(dev=None, test=args.dev_split, shuffle=True)
+            train.sort_(sort_by='trg')
+            valid.sort_(sort_by='trg')
 
             # setup trainer
             trainer = Trainer(m, {'train': train, 'valid': valid}, optimizer,
@@ -125,6 +126,9 @@ if __name__ == '__main__':
                 trainer.add_hook(lr_hook, num_checkpoints=args.num_checkpoints)
             # train
             trainer.train(1, args.checkpoint, shuffle=True)
+            # ensure model is on gpu after training
+            if args.gpu:
+                m.cuda()
 
     if not args.test:
         if not u.prompt("Do you want to keep intermediate results? (yes/no)"):

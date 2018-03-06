@@ -75,15 +75,24 @@ class MaxoutWindowEncoder(BaseEncoder):
     """
     Pseudo-CNN encoding on top of embedding features with MaxOut activations
     """
-    def __init__(self, embedding, layers, maxouts=2, dropout=0.0):
+    def __init__(self, embedding, layers, maxouts=2, downproj=None, dropout=0.0):
         self.layers = layers
         self.dropout = dropout
         super(MaxoutWindowEncoder, self).__init__()
 
+        # embedding
         self.embedding = embedding
+        inp_dim = embedding.embedding_dim
+        # down projection
+        if downproj is not None:
+            self.downproj = nn.Linear(inp_dim, downproj)
+            inp_dim = downproj
+        # maxouts
         self.maxouts = nn.ModuleList(
-            [MaxOut(embedding.embedding_dim * 3, embedding.embedding_dim, maxouts)
+            [MaxOut(inp_dim * 3, inp_dim, maxouts)
              for _ in range(layers)])
+
+        self.inp_dim = inp_dim
 
     def extract_window(self, inp):
         """
@@ -111,6 +120,9 @@ class MaxoutWindowEncoder(BaseEncoder):
 
         emb = self.embedding(inp)
 
+        if hasattr(self, 'downproj'):
+            emb = self.downproj(emb)
+
         for maxout in self.maxouts:
             emb = self.extract_window(emb)
             emb = F.dropout(emb, p=self.dropout, training=self.training)
@@ -120,4 +132,4 @@ class MaxoutWindowEncoder(BaseEncoder):
 
     @property
     def encoding_size(self):
-        return 2, self.embedding.embedding_dim * 2
+        return 2, self.inp_dim * 2

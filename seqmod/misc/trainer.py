@@ -523,6 +523,7 @@ class Trainer(object):
         self.log("info", "Trained for [{:.3f} secs]".format(time.time()-start))
 
         # prepare best model
+        self.model.cpu()        # free gpu
         if best_model is None:
             best_model = self.model
         best_model.eval()

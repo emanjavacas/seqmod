@@ -40,12 +40,11 @@ class StackedResidualCNN(nn.Module):
                 output = conv(F.dropout(inp, p=self.dropout, training=self.training))
                 output, gate = output.split(int(output.size(1) / 2), dim=1)
                 output = output * F.sigmoid(gate)
+                output *= (0.5 ** 0.5)  # scale up activation to preserve variance
             else:
                 output = getattr(F, self.act)(inp)
 
             output = inp + output   # residual connection
-            output *= (0.5 ** 0.5)  # scale up activation to preserve variance
-
             inp = output
 
         return output
@@ -59,13 +58,18 @@ class CNNEncoder(BaseEncoder):
         super(CNNEncoder, self).__init__()
 
         self.embeddings = embeddings
-        # projection from embedding dim to cnn input dimension
-        self.linear = nn.Linear(embeddings.embedding_dim, hid_dim)
+
+        if embeddings.embedding_dim != hid_dim:
+            # projection from embedding dim to cnn input dimension
+            self.linear = nn.Linear(embeddings.embedding_dim, hid_dim)
+
         self.conv = StackedResidualCNN(hid_dim, kernel_size, layers, **kwargs)
 
     def forward(self, inp, lengths=None):
         # (seq_len x batch x hid_dim)
-        emb = self.linear(self.embeddings(inp))
+        emb = self.embeddings(inp)
+        if hasattr(self, 'linear'):
+            emb = self.linear(emb)
         emb = emb.transpose(0, 1)  # (batch x seq_len x hid_dim)
         emb = emb.transpose(1, 2)  # (batch x hid_dim x seq_len)
         emb = emb.unsqueeze(3)     # (batch x hid_dim x seq_len x 1)
@@ -80,4 +84,4 @@ class CNNEncoder(BaseEncoder):
 
     @property
     def encoding_size(self):
-        return (3, self.conv.inp_dim)
+        return 3, self.conv.inp_dim
