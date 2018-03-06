@@ -189,7 +189,7 @@ class EncoderDecoder(nn.Module):
             on_init_state(self, dec_state)
 
         scores, hyps, weights = 0, [], []
-        mask = src.data.new(batch_size).zero_().float() + 1
+        mask = torch.ones(batch_size).long()
         prev = Variable(src.data.new([bos]).expand(batch_size), volatile=True)
 
         for _ in range(len(src) * max_decode_len):
@@ -199,9 +199,8 @@ class EncoderDecoder(nn.Module):
             out, weight = self.decoder(prev, dec_state)
             # decode
             logprobs = self.decoder.project(out)
-
             if sample:
-                prev = logprobs.div_(tau).exp().multinomial(1).squeeze()
+                prev = (logprobs / tau).exp().multinomial(1).squeeze(1)
                 logprobs = select_cols(logprobs, prev)
             else:
                 logprobs, prev = logprobs.max(1)
@@ -209,13 +208,17 @@ class EncoderDecoder(nn.Module):
             # accumulate
             hyps.append(prev.data)
             if self.decoder.has_attention:
-                weights.append(weight.data)
-            scores += logprobs.data
-            # update mask
-            mask = mask * (prev.data != eos).float()
+                weights.append(weight.data.cpu())
 
+            # update mask
+            mask = mask * (prev.data.cpu() != eos).long()
             if mask.sum() == 0:
                 break
+
+            # update and accumulate scores
+            logprobs = logprobs.cpu()
+            logprobs.data[mask == 0] = 0
+            scores += logprobs.data
 
         hyps = torch.stack(hyps).transpose(0, 1).tolist()  # batch first
         scores = scores.tolist()
