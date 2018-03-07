@@ -637,6 +637,15 @@ class PairedDataset(Dataset):
 
         return self
 
+    def shuffle_(self):
+        """Shuffle underlying data keeping the src to trg pairings"""
+        if self.autoregressive:
+            random.shuffle(self.data['src'])
+        else:
+            shuffle_pairs(self.data['src'], self.data['trg'])
+
+        return self
+
     def splits(self, test=0.1, dev=0.2, shuffle=False, sort=False, **kwargs):
         """
         Compute splits on dataset instance. For convenience, it can return
@@ -650,10 +659,7 @@ class PairedDataset(Dataset):
         - shuffle: bool, whether to shuffle the datasets prior to splitting
         """
         if shuffle:
-            if self.autoregressive:
-                random.shuffle(self.data['src'])
-            else:
-                shuffle_pairs(self.data['src'], self.data['trg'])
+            self.shuffle_()
 
         splits, sets = get_splits(len(self.data['src']), test, dev=dev), []
 
