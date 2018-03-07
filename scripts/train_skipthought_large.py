@@ -1,4 +1,5 @@
 
+import random
 import torch.optim as optim
 
 from seqmod.modules.encoder_decoder import make_rnn_encoder_decoder
@@ -62,6 +63,7 @@ if __name__ == '__main__':
     parser.add_argument('--test', action='store_true')
     args = parser.parse_args()
 
+
     print("Loading data...")
     d = u.load_model(args.dict_path)
 
@@ -93,7 +95,10 @@ if __name__ == '__main__':
     checkpoint = None
     if not args.test:
         checkpoint = Checkpoint('Skipthought', buffer_size=3).setup(args)
-    validation_hook = make_validation_hook(args.patience, checkpoint)
+    # no early stopping
+    validation_hook = make_validation_hook(0, checkpoint)
+    if args.patience:
+        print("Ignoring early stopping parameters")
     # lr_hook
     lr_hook = None
     if args.lr_schedule_factor < 1.0:
@@ -113,8 +118,8 @@ if __name__ == '__main__':
                 batch_size=args.batch_size, fitted=True, gpu=args.gpu)
             if valid is None:
                 train, valid = train.splits(dev=None, test=args.dev_split, shuffle=True)
+                valid.sort_(sort_by='trg')
             train.sort_(sort_by='trg')
-            valid.sort_(sort_by='trg')
 
             # setup trainer
             trainer = Trainer(m, {'train': train, 'valid': valid}, optimizer,

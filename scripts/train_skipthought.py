@@ -20,6 +20,8 @@ def load_pairs(*paths, root=None, max_len=-1, processor=text_processor()):
             prev = None
             for line in f:
                 line = processor(line.strip())
+                if len(line) == 0:
+                    continue
                 if max_len > 0 and len(line) >= max_len:
                     prev = None
                     continue
@@ -74,11 +76,14 @@ def make_validation_hook(patience, checkpoint):
         early_stopping = EarlyStopping(patience)
 
     def hook(trainer, epoch, batch, check):
+        loss = None
         if early_stopping is not None:
             loss = trainer.validate_model()
             trainer.log("validation_end", {"epoch": epoch, "loss": loss.pack()})
             early_stopping.add_checkpoint(loss.reduce(), copy.deepcopy(trainer.model))
         if checkpoint is not None:
+            if loss is None:
+                loss = trainer.validate_model()
             checkpoint.save(trainer.model, loss.reduce())
 
     return hook
