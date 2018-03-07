@@ -605,23 +605,29 @@ class PairedDataset(Dataset):
             if key is None:
                 raise ValueError('Got multi-input dataset but no input `key`')
 
-        # group lables by value
-        data = key(self.data[target])
-        grouped = defaultdict(list)
+        # group labels by value
+        data, grouped = key(self.data[target]), defaultdict(list)
         for idx, val in enumerate(data):
             grouped[val].append(idx)
 
         total = len(data)
-        probs = {key: len(vals)/total for key, vals in grouped.items()}
-        # sample according to distribution to generate index
+        probs = {key: len(vals) / total for key, vals in grouped.items()}
+
+        # stratify according to distribution to generate index
         index = []
-        for _ in range(len(self)):
+        for _ in range(0, total, self.batch_size):
             batch = []
             for key, prob in probs.items():
-                prop = math.floor(self.batch_size * prob)
-                batch.extend([grouped[key].pop() for _ in range(prop)])
+                n, rest = divmod(prob * self.batch_size, 1)
+                if random.random() <= rest:
+                    n += 1
+                for _ in range(int(n)):
+                    try:
+                        batch.append(grouped[key].pop())
+                    except:
+                        continue
             index.extend(batch)
-        for _, vals in grouped.items():
+        for _, vals in grouped.items():  # remaining items
             index.extend(vals)
 
         # reorder according to sampled index
