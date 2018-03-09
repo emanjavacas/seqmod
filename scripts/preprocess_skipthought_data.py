@@ -52,6 +52,17 @@ def chunk_seq(seq, n):
             buf = []
 
 
+def pop_dev_split(p1, p2, split):
+    props = int(len(p1) * split)
+    p1_dev, p2_dev = [], []
+    for _ in range(props):
+        idx = random.randint(0, len(p1) - 1)
+        p1_dev.append(p1.pop(idx))
+        p2_dev.append(p2.pop(idx))
+
+    return p1_dev, p2_dev
+
+
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
@@ -59,6 +70,7 @@ if __name__ == '__main__':
     parser.add_argument('--output', help='prefix for the stored dataset', required=True)
     parser.add_argument('--max_size', type=int, default=100000)
     parser.add_argument('--max_len', type=int, default=100)
+    parser.add_argument('--dev_split', type=float, default=0.05)
     parser.add_argument('--lower', action='store_true')
     parser.add_argument('--num', action='store_true')
     parser.add_argument('--level', default='char')
@@ -85,8 +97,11 @@ if __name__ == '__main__':
         print()
 
         print("Saving dataset...")
-        u.save_model({'p1': list(d.transform(p1)), 'p2': list(d.transform(p2))},
-                     '{}.{}'.format(args.output, infix))
+        p1, p2 = list(d.transform(p1)), list(d.transform(p2))
+        p1_dev, p2_dev = pop_dev_split(p1, p2, args.dev_split)
+        u.save_model({'p1': p1, 'p2': p2}, '{}.{}'.format(args.output, infix))
+        u.save_model({'p1': p1_dev, 'p2': p2_dev},
+                     '{}.{}.dev'.format(args.output, infix))
 
     else:
         print("Fitting dictionary")
@@ -105,11 +120,17 @@ if __name__ == '__main__':
         start, chunk_size = time.time(), (num_sents // args.num_splits) + 1
         pairs = load_pairs(*paths, max_len=args.max_len, processor=processor)
 
+        p1_dev, p2_dev = [], []
         # iterate through chunks of size proportional to the number of desired chunks
         for idx, chunk in enumerate(chunk_seq(pairs, chunk_size)):
             print("Processing chunk num {}/{}".format(idx+1, args.num_splits))
             infix = make_dataset_fname(args, split=idx+1)
             p1, p2 = zip(*list(chunk))
             p1, p2 = list(d.transform(p1)), list(d.transform(p2))
+            p1_dev_i, p2_dev_i = pop_dev_split(p1, p2, args.dev_split)
+            p1_dev.extend(p1_dev_i)
+            p2_dev.extend(p2_dev_i)
             u.save_model({'p1': p1, 'p2': p2}, '{}.{}'.format(args.output, infix))
         print("... took {:.3f} secs".format(time.time() - start))
+        dev_fname = '{}.{}.dev'.format(args.output, make_dataset_fname(args))
+        u.save_model({'p1': p1_dev, 'p2': p2_dev}, dev_fname)
