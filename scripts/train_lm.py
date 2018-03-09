@@ -129,12 +129,19 @@ if __name__ == '__main__':
             train = BlockDataset(load_from_file(args.path), )
         else:
             # assume path is prefix to train/test splits
-            train, valid = BlockDataset(
-                load_from_file(args.path + '.train.npz'), d, args.batch_size, args.bptt,
-                gpu=args.gpu, fitted=True).splits(test=args.dev_split, dev=None)
-            test = BlockDataset(
-                load_from_file(args.path + '.test.npz'), d, args.batch_size, args.bptt,
-                gpu=args.gpu, fitted=True)
+            train = load_from_file(args.path + '.train.npz')
+            if os.path.isfile(args.path + '.test.npz'):
+                train, valid = BlockDataset(
+                    train, d, args.batch_size, args.bptt,
+                    gpu=args.gpu, fitted=True).splits(test=args.dev_split, dev=None)
+                test = BlockDataset(
+                    load_from_file(args.path + '.test.npz'), d,
+                    args.batch_size, args.bptt, gpu=args.gpu, fitted=True)
+            else:
+                train, valid, test = BlockDataset(
+                    train, d, args.batch_size, args.bptt,
+                    gpu=args.gpu, fitted=True
+                ).splits(test=args.test_split, dev=args.dev_split)
 
     else:
         print("Processing datasets...")

@@ -1,4 +1,5 @@
 
+import os
 import random
 import torch.optim as optim
 
@@ -27,6 +28,7 @@ if __name__ == '__main__':
     # data
     parser.add_argument('--path', nargs='+', required=True)
     parser.add_argument('--dict_path', required=True)
+    parser.add_argument('--dev_path')
     parser.add_argument('--max_size', type=int, default=100000)
     parser.add_argument('--max_len', type=int, default=100)
     parser.add_argument('--lower', action='store_true')
@@ -106,6 +108,12 @@ if __name__ == '__main__':
             optimizer, args.lr_schedule_factor, args.lr_schedule_checkpoints)
 
     valid = None
+    if args.dev_path and os.path.isfile(args.dev_path):
+        valid = u.load_model(args.dev_path)
+        valid = PairedDataset(
+            valid['p1'], valid['p2'], {'src': d, 'trg': d},
+            batch_size=args.batch_size, fitted=True, gpu=args.gpu
+        ).sort_(sort_by='trg')
 
     for epoch in range(args.epochs):
         for idx, path in enumerate(args.path):
