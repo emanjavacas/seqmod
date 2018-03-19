@@ -65,22 +65,28 @@ class RNNEncoder(BaseEncoder):
             if embeddings.weight.size(1) != lm.embeddings.weight.size(1):
                 raise ValueError("Uncompatible embedding matrices")
 
-            # initialize embeddings to random values to account for OOVs
-            import seqmod.utils as u
-            u.initialize_model(embeddings)
+            # Initialize embeddings to random values to account for OOVs
+            # or use the unknown embedding from the LM instead if available
+            vocab, unk = len(embeddings.d), lm.embeddings.d.get_unk()
+            if unk is not None:
+                embeddings.weight.data.copy_(
+                    lm.embeddings.weight.data[unk].unsqueeze(0).expand(
+                        vocab, embeddings.embedding_dim))
+            else:
+                import seqmod.utils as u
+                u.initialize_model(embeddings)
 
-            found_embs, total_embs = 0, len(embeddings.d)
-            target_embs = {w: idx for idx, w in enumerate(lm.embeddings.d.vocab)}
+            found, target = 0, {w: idx for idx, w in enumerate(lm.embeddings.d.vocab)}
             for idx, w in enumerate(embeddings.d.vocab):
-                if w in target_embs:
-                    found_embs += 1
-                    emb = lm.embeddings.weight.data[target_embs[w]]
-                    embeddings.weight.data[idx].copy_(emb)
-            warnings.warn("Initialized [%d/%d] embs from LM" % (found_embs, total_embs))
+                if w not in target:
+                    continue
+                found += 1
+                embeddings.weight.data[idx].copy_(lm.embeddings.weight.data[target[w]])
+            warnings.warn("Initialized [%d/%d] embs from LM" % (found, vocab))
 
         else:
             warnings.warn("Reusing LM embedding vocabulary. This vocabulary might not "
-                          "correspond to the input data if this wasn't processed with "
+                          "correspond to the input data if it wasn't processed with "
                           "the same Dict")
             embeddings = lm.embeddings
 
