@@ -10,11 +10,10 @@ from seqmod.modules.torch_utils import init_hidden_for, pack_sort, repackage_bid
 
 class RNNEncoder(BaseEncoder):
     """
-    RNN Encoder that computes a sentence matrix representation with a RNN.
+    Encoder that computes a dense representation of a sentence with a RNN.
     """
     def __init__(self, embeddings, hid_dim, num_layers, cell, bidi=True,
-                 dropout=0.0, summary='full', train_init=False,
-                 add_init_jitter=False):
+                 dropout=0.0, summary='full', train_init=False, add_init_jitter=False):
 
         super(BaseEncoder, self).__init__()
 
