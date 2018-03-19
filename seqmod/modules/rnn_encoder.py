@@ -1,4 +1,6 @@
 
+import warnings
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -56,6 +58,42 @@ class RNNEncoder(BaseEncoder):
             # A structured self-attentive sentence embedding
             # https://arxiv.org/pdf/1703.03130.pdf
             raise NotImplementedError
+
+    @classmethod
+    def from_lm(cls, lm, embeddings=None, **kwargs):
+        if embeddings is not None:
+            if embeddings.weight.size(1) != lm.embeddings.weight.size(1):
+                raise ValueError("Uncompatible embedding matrices")
+
+            # initialize embeddings to random values to account for OOVs
+            import seqmod.utils as u
+            u.initialize_model(embeddings)
+
+            found_embs, total_embs = 0, len(embeddings.d)
+            target_embs = {w: idx for idx, w in enumerate(lm.embeddings.d.vocab)}
+            for idx, w in enumerate(embeddings.d.vocab):
+                if w in target_embs:
+                    found_embs += 1
+                    emb = lm.embeddings.weight.data[target_embs[w]]
+                    embeddings.weight.data[idx].copy_(emb)
+            warnings.warn("Initialized [%d/%d] embs from LM" % (found_embs, total_embs))
+
+        else:
+            warnings.warn("Reusing LM embedding vocabulary. This vocabulary might not "
+                          "correspond to the input data if this wasn't processed with "
+                          "the same Dict")
+            embeddings = lm.embeddings
+
+        hid_dim, layers = lm.rnn.hidden_size, lm.rnn.num_layers
+        cell, bidi = type(lm.rnn).__name__, kwargs.pop('bidi', False)
+        if bidi:
+            warnings.warn('Cannot initialize bidirectional layers from sequential LM. '
+                          'The bidirectional option will be ignored')
+        inst = cls(embeddings, hid_dim, layers, cell, bidi=False, **kwargs)
+        for param, weight in inst.rnn.named_parameters():
+            weight.data.copy_(getattr(lm.rnn, param).data)
+
+        return inst
 
     def init_hidden_for(self, inp):
         return init_hidden_for(
