@@ -530,7 +530,7 @@ class Trainer(object):
 
         if run_test and 'test' in self.datasets:
             self.on_test_begin(self.batch_run)
-            if self.dataset['test'].gpu:  # might be on cpu if coming from ES
+            if self.datasets['test'].gpu:  # might be on cpu if coming from ES
                 best_model.cuda()
             test_loss = self.validate_model(test=True, model=best_model, **kwargs)
             self.on_test_end(test_loss)
