@@ -346,8 +346,8 @@ def make_rnn_encoder_decoder(
     - deepout_layers: int, Whether to use a highway layer before the output
         projection in the decoder.
     - deepout_act: str, Non-linear activation in the deepout layer if given.
-    - tie_weights: bool, Whether to tie embedding input and output weights.
-        It wouldn't make much sense in bilingual settings.
+    - tie_weights: bool, Whether to tie embedding input and output weights
+        in the decoder.
     - reuse_hidden: bool, whether to reuse encoder hidden for initializing the
         decoder.
     - train_init: bool, whether to train the initial hidden state of both
