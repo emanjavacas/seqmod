@@ -23,7 +23,7 @@ def load_model(path):
         import pickle as p
         load_fn = p.load
     elif path.endswith('pt'):
-        load_fn = torch.load
+        load_fn = lambda f: torch.load(f, map_location=lambda storage, _: storage)
     elif path.endswith('npy'):
         import numpy as np
         load_fn = np.load
