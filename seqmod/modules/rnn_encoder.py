@@ -1,5 +1,5 @@
 
-import warnings
+import logging
 
 import torch
 import torch.nn as nn
@@ -82,19 +82,19 @@ class RNNEncoder(BaseEncoder):
                     continue
                 found += 1
                 embeddings.weight.data[idx].copy_(lm.embeddings.weight.data[target[w]])
-            warnings.warn("Initialized [%d/%d] embs from LM" % (found, vocab))
+            logging.warn("Initialized [%d/%d] embs from LM" % (found, vocab))
 
         else:
-            warnings.warn("Reusing LM embedding vocabulary. This vocabulary might not "
-                          "correspond to the input data if it wasn't processed with "
-                          "the same Dict")
+            logging.warn("Reusing LM embedding vocabulary. This vocabulary might not "
+                         "correspond to the input data if it wasn't processed with "
+                         "the same Dict")
             embeddings = lm.embeddings
 
         hid_dim, layers = lm.rnn.hidden_size, lm.rnn.num_layers
         cell, bidi = type(lm.rnn).__name__, kwargs.pop('bidi', False)
         if bidi:
-            warnings.warn('Cannot initialize bidirectional layers from sequential LM. '
-                          'The bidirectional option will be ignored')
+            logging.warn('Cannot initialize bidirectional layers from sequential LM. '
+                         'The bidirectional option will be ignored')
         inst = cls(embeddings, hid_dim, layers, cell, bidi=False, **kwargs)
         for param, weight in inst.rnn.named_parameters():
             weight.data.copy_(getattr(lm.rnn, param).data)
