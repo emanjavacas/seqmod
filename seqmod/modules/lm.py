@@ -610,7 +610,8 @@ class LM(BaseLM):
 
         # compute loss and backward
         if isinstance(self.project, SampledSoftmax) and self.training:
-            logits, new_targets = self.project(outs, targets=targets.view(-1))
+            logits, new_targets = self.project(
+                outs, targets=targets.view(-1), normalize=False, reshape=False)
             loss = F.cross_entropy(logits, new_targets, size_average=True)
         else:
             loss = F.nll_loss(self.project(outs), targets.view(-1), size_average=True)

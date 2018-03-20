@@ -7,6 +7,7 @@ from torch.autograd import Variable
 from seqmod.misc.beam_search import Beam
 from seqmod.modules.encoder import GRLWrapper
 from seqmod.modules.rnn_encoder import RNNEncoder
+from seqmod.modules.softmax import SampledSoftmax
 from seqmod.modules.decoder import RNNDecoder
 from seqmod.modules.embedding import Embedding
 from seqmod.modules.torch_utils import flip, shards, select_cols
@@ -101,8 +102,13 @@ class EncoderDecoder(nn.Module):
 
         for shard in shards(shard_data, size=split, test=test):
             out, true = shard['out'], shard['trg'].view(-1)
-            pred = self.decoder.project(out)
-            shard_loss = F.nll_loss(pred, true, weight, size_average=False)
+            if isinstance(self.decoder.project, SampledSoftmax) and self.training:
+                out, new_true = self.decoder.project(
+                    out, targets=true, normalize=False, reshape=False)
+                shard_loss = F.cross_entropy(out, new_true, size_average=False)
+            else:
+                shard_loss = F.nll_loss(
+                    self.decoder.project(out), true, weight, size_average=False)
             shard_loss /= num_examples
             loss += shard_loss
 
@@ -183,7 +189,7 @@ class EncoderDecoder(nn.Module):
             on_init_state(self, dec_state)
 
         scores, hyps, weights = 0, [], []
-        mask = src.data.new(batch_size).zero_().float() + 1
+        mask = torch.ones(batch_size).long()
         prev = Variable(src.data.new([bos]).expand(batch_size), volatile=True)
 
         for _ in range(len(src) * max_decode_len):
@@ -193,9 +199,8 @@ class EncoderDecoder(nn.Module):
             out, weight = self.decoder(prev, dec_state)
             # decode
             logprobs = self.decoder.project(out)
-
             if sample:
-                prev = logprobs.div_(tau).exp().multinomial(1).squeeze()
+                prev = (logprobs / tau).exp().multinomial(1).squeeze(1)
                 logprobs = select_cols(logprobs, prev)
             else:
                 logprobs, prev = logprobs.max(1)
@@ -203,13 +208,17 @@ class EncoderDecoder(nn.Module):
             # accumulate
             hyps.append(prev.data)
             if self.decoder.has_attention:
-                weights.append(weight.data)
-            scores += logprobs.data
-            # update mask
-            mask = mask * (prev.data != eos).float()
+                weights.append(weight.data.cpu())
 
+            # update mask
+            mask = mask * (prev.data.cpu() != eos).long()
             if mask.sum() == 0:
                 break
+
+            # update and accumulate scores
+            logprobs = logprobs.cpu()
+            logprobs.data[mask == 0] = 0
+            scores += logprobs.data
 
         hyps = torch.stack(hyps).transpose(0, 1).tolist()  # batch first
         scores = scores.tolist()
@@ -312,6 +321,7 @@ def make_rnn_encoder_decoder(
         bidi=True,
         encoder_summary='full',
         att_type=None,
+        sampled_softmax=False,
         dropout=0.0,
         variational=False,
         input_feed=True,
@@ -362,24 +372,31 @@ def make_rnn_encoder_decoder(
     src_embeddings, trg_embeddings = make_embeddings(
         src_dict, trg_dict, emb_dim, word_dropout)
 
-    encoder = RNNEncoder(src_embeddings, hid_dim, num_layers, cell=cell,
+    if isinstance(num_layers, tuple):
+        enc_layers, dec_layers = num_layers
+    else:
+        enc_layers, dec_layers = num_layers, num_layers
+
+    if reuse_hidden and enc_layers != dec_layers:
+        raise ValueError("`reuse_hidden` requires equal number of layers")
+
+    encoder = RNNEncoder(src_embeddings, hid_dim, enc_layers, cell=cell,
                          bidi=bidi, dropout=dropout, summary=encoder_summary,
                          train_init=False, add_init_jitter=False)
-
-    encoder_dims, encoder_size = encoder.encoding_size
 
     if context_feed is None:
         # only disable it if it explicitely desired (passing False)
         context_feed = att_type is None or att_type.lower() == 'none'
 
-    decoder = RNNDecoder(trg_embeddings, hid_dim, num_layers, cell, encoder_size,
+    encoder_dims, encoder_size = encoder.encoding_size
+
+    decoder = RNNDecoder(trg_embeddings, hid_dim, dec_layers, cell, encoder_size,
                          dropout=dropout, variational=variational, input_feed=input_feed,
-                         context_feed=context_feed,
+                         context_feed=context_feed, sampled_softmax=sampled_softmax,
                          att_type=att_type, deepout_layers=deepout_layers,
                          deepout_act=deepout_act,
                          tie_weights=tie_weights, reuse_hidden=reuse_hidden,
-                         train_init=train_init,
-                         add_init_jitter=add_init_jitter,
+                         train_init=train_init, add_init_jitter=add_init_jitter,
                          cond_dims=cond_dims, cond_vocabs=cond_vocabs)
 
     if decoder.has_attention:

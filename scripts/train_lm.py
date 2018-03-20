@@ -69,6 +69,7 @@ if __name__ == '__main__':
     parser.add_argument('--word_dropout', default=0.0, type=float)
     parser.add_argument('--tie_weights', action='store_true')
     parser.add_argument('--mixtures', default=0, type=int)
+    parser.add_argument('--sampled_softmax', action='store_true')
     parser.add_argument('--deepout_layers', default=0, type=int)
     parser.add_argument('--deepout_act', default='MaxOut')
     parser.add_argument('--maxouts', default=2, type=int)
@@ -128,12 +129,19 @@ if __name__ == '__main__':
             train = BlockDataset(load_from_file(args.path), )
         else:
             # assume path is prefix to train/test splits
-            train, valid = BlockDataset(
-                load_from_file(args.path + '.train.npz'), d, args.batch_size, args.bptt,
-                gpu=args.gpu, fitted=True).splits(test=args.dev_split, dev=None)
-            test = BlockDataset(
-                load_from_file(args.path + '.test.npz'), d, args.batch_size, args.bptt,
-                gpu=args.gpu, fitted=True)
+            train = load_from_file(args.path + '.train.npz')
+            if os.path.isfile(args.path + '.test.npz'):
+                train, valid = BlockDataset(
+                    train, d, args.batch_size, args.bptt,
+                    gpu=args.gpu, fitted=True).splits(test=args.dev_split, dev=None)
+                test = BlockDataset(
+                    load_from_file(args.path + '.test.npz'), d,
+                    args.batch_size, args.bptt, gpu=args.gpu, fitted=True)
+            else:
+                train, valid, test = BlockDataset(
+                    train, d, args.batch_size, args.bptt,
+                    gpu=args.gpu, fitted=True
+                ).splits(test=args.test_split, dev=args.dev_split)
 
     else:
         print("Processing datasets...")
@@ -174,7 +182,7 @@ if __name__ == '__main__':
            att_dim=args.att_dim, tie_weights=args.tie_weights, mixtures=args.mixtures,
            deepout_layers=args.deepout_layers, train_init=args.train_init,
            deepout_act=args.deepout_act, maxouts=args.maxouts,
-           word_dropout=args.word_dropout)
+           sampled_softmax=args.sampled_softmax, word_dropout=args.word_dropout)
 
     u.initialize_model(m, rnn={'type': 'orthogonal', 'args': {'gain': 1.0}})
     m.embeddings.weight.data.uniform_(-0.1, 0.1)

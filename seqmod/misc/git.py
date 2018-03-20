@@ -1,6 +1,6 @@
 
 import os
-import warnings
+import logging
 from subprocess import check_output, CalledProcessError
 from contextlib import contextmanager
 import sys
@@ -34,7 +34,7 @@ class GitInfo:
             self.dirname = None
 
         if not os.path.isfile(fname) and not os.path.isdir(fname):
-            warnings.warn("[GitInfo]: Input file doesn't exit")
+            logging.warn("[GitInfo]: Input file doesn't exit")
 
         else:
             try:
@@ -42,14 +42,14 @@ class GitInfo:
                     check_output(['git', '--version'], cwd=self.dirname)
             except FileNotFoundError:
                 self.dirname = None
-                warnings.warn("[GitInfo]: Git doesn't seem to be installed")
+                logging.warn("[GitInfo]: Git doesn't seem to be installed")
             except CalledProcessError as e:
                 self.dirname = None
                 code, _ = e.args
                 if code == 128:
-                    warnings.warn("[GitInfo]: Script not git-tracked")
+                    logging.warn("[GitInfo]: Script not git-tracked")
                 else:
-                    warnings.warn("[GitInfo]: Unrecognized git error")
+                    logging.warn("[GitInfo]: Unrecognized git error")
 
     def run(self, cmd):
         if self.dirname is None:

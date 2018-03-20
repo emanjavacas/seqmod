@@ -1,4 +1,6 @@
 
+import logging
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -10,11 +12,10 @@ from seqmod.modules.torch_utils import init_hidden_for, pack_sort, repackage_bid
 
 class RNNEncoder(BaseEncoder):
     """
-    RNN Encoder that computes a sentence matrix representation with a RNN.
+    Encoder that computes a dense representation of a sentence with a RNN.
     """
     def __init__(self, embeddings, hid_dim, num_layers, cell, bidi=True,
-                 dropout=0.0, summary='full', train_init=False,
-                 add_init_jitter=False):
+                 dropout=0.0, summary='full', train_init=False, add_init_jitter=False):
 
         super(BaseEncoder, self).__init__()
 
@@ -57,6 +58,48 @@ class RNNEncoder(BaseEncoder):
             # A structured self-attentive sentence embedding
             # https://arxiv.org/pdf/1703.03130.pdf
             raise NotImplementedError
+
+    @classmethod
+    def from_lm(cls, lm, embeddings=None, **kwargs):
+        if embeddings is not None:
+            if embeddings.weight.size(1) != lm.embeddings.weight.size(1):
+                raise ValueError("Uncompatible embedding matrices")
+
+            # Initialize embeddings to random values to account for OOVs
+            # or use the unknown embedding from the LM instead if available
+            vocab, unk = len(embeddings.d), lm.embeddings.d.get_unk()
+            if unk is not None:
+                embeddings.weight.data.copy_(
+                    lm.embeddings.weight.data[unk].unsqueeze(0).expand(
+                        vocab, embeddings.embedding_dim))
+            else:
+                import seqmod.utils as u
+                u.initialize_model(embeddings)
+
+            found, target = 0, {w: idx for idx, w in enumerate(lm.embeddings.d.vocab)}
+            for idx, w in enumerate(embeddings.d.vocab):
+                if w not in target:
+                    continue
+                found += 1
+                embeddings.weight.data[idx].copy_(lm.embeddings.weight.data[target[w]])
+            logging.warn("Initialized [%d/%d] embs from LM" % (found, vocab))
+
+        else:
+            logging.warn("Reusing LM embedding vocabulary. This vocabulary might not "
+                         "correspond to the input data if it wasn't processed with "
+                         "the same Dict")
+            embeddings = lm.embeddings
+
+        hid_dim, layers = lm.rnn.hidden_size, lm.rnn.num_layers
+        cell, bidi = type(lm.rnn).__name__, kwargs.pop('bidi', False)
+        if bidi:
+            logging.warn('Cannot initialize bidirectional layers from sequential LM. '
+                         'The bidirectional option will be ignored')
+        inst = cls(embeddings, hid_dim, layers, cell, bidi=False, **kwargs)
+        for param, weight in inst.rnn.named_parameters():
+            weight.data.copy_(getattr(lm.rnn, param).data)
+
+        return inst
 
     def init_hidden_for(self, inp):
         return init_hidden_for(

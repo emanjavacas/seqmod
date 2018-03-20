@@ -11,7 +11,7 @@ import seqmod.utils as u
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--path', nargs='+', required=True)
+    parser.add_argument('--path', required=True)
     parser.add_argument('--output', help='prefix for the stored dataset', required=True)
     parser.add_argument('--max_size', type=int, default=100000)
     parser.add_argument('--min_freq', default=1, type=int)
@@ -46,9 +46,10 @@ if __name__ == '__main__':
             vector.extend(line)
         np.save(f, np.array(vector))
 
-    print("Transforming test data")
-    with open(outputformat("test"), 'wb+') as f:
-        vector = []
-        for line in d.transform(load_lines(testpath, processor=processor)):
-            vector.extend(line)
-        np.save(f, np.array(vector))
+    if os.path.isfile(testpath):
+        print("Transforming test data")
+        with open(outputformat("test"), 'wb+') as f:
+            vector = []
+            for line in d.transform(load_lines(testpath, processor=processor)):
+                vector.extend(line)
+            np.save(f, np.array(vector))

@@ -23,7 +23,7 @@ def load_model(path):
         import pickle as p
         load_fn = p.load
     elif path.endswith('pt'):
-        load_fn = torch.load
+        load_fn = lambda f: torch.load(f, map_location=lambda storage, _: storage)
     elif path.endswith('npy'):
         import numpy as np
         load_fn = np.load
@@ -318,7 +318,7 @@ def make_lm_hook(d, seed_texts=None, max_seq_len=25, gpu=False,
             if early_stopping is not None:
                 trainer.log("info", "Registering early stopping loss...")
                 early_stopping.add_checkpoint(
-                    loss.reduce(), copy.deepcopy(trainer.model))
+                    loss.reduce(), copy.deepcopy(trainer.model).cpu())
 
             if checkpoint is not None:
                 checkpoint.save(trainer.model, loss.reduce())
@@ -354,7 +354,7 @@ def make_mlm_hook(d, seed_texts=None, max_seq_len=25, gpu=False,
             if early_stopping is not None:
                 trainer.log("info", "Registering early stopping loss...")
                 early_stopping.add_checkpoint(
-                    loss.reduce(), copy.deepcopy(trainer.model))
+                    loss.reduce(), copy.deepcopy(trainer.model).cpu())
         trainer.log("info", "Generating text...")
         for head in trainer.model.project:
             trainer.log("info", "Head: {}".format(head))

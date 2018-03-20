@@ -68,6 +68,10 @@ class MaxOut(nn.Module):
         super(MaxOut, self).__init__()
         self.projection = nn.Linear(in_dim, k * out_dim)
 
+    def custom_init(self):
+        torch.nn.init.xavier_uniform(self.projection.weight)
+        torch.nn.init.constant(self.projection.bias, 0)
+
     def forward(self, inp):
         """
         Because of the linear projection we are bound to 1-d input

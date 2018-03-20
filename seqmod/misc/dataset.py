@@ -174,13 +174,16 @@ class Dict(object):
     """
     def __init__(self, pad_token=None, eos_token=None, bos_token=None,
                  unk_token=UNK, force_unk=False, max_size=None, min_freq=1,
-                 sequential=True, max_len=None, use_vocab=True,
+                 sequential=True, max_len=None, use_vocab=True, dtype=int,
                  preprocessing=None):
-        force_unk = force_unk or sequential  # force unk for sequential dicts
+
         self.counter = Counter()
+        self.vocab = []
+        self.s2i = {}
         self.reserved = set()
         self.fitted = False
         self.use_vocab = use_vocab
+        self.dtype = dtype
         self.pad_token = pad_token
         self.eos_token = eos_token
         self.bos_token = bos_token
@@ -190,7 +193,7 @@ class Dict(object):
         # only index unk_token if needed or requested
         if self.use_vocab:
             self.reserved = {t for t in [pad_token, eos_token, bos_token] if t}
-            if force_unk:
+            if force_unk or sequential:  # force unk for sequential dicts
                 if unk_token is None:
                     raise ValueError("<unk> token needed")
                 self.reserved.add(self.unk_token)
@@ -236,9 +239,7 @@ class Dict(object):
         for dataset in datasets:
             if not self.sequential:
                 if self.preprocessing is not None:
-                    self.counter.update(
-                        self.preprocessing(example)
-                        for example in dataset)
+                    self.counter.update(self.preprocessing(ex) for ex in dataset)
                 else:
                     self.counter.update(dataset)
             else:
@@ -261,6 +262,7 @@ class Dict(object):
             raise ValueError('Dict is already fitted')
 
         if not self.use_vocab:
+            logging.warn("Dict is setup to not use a vocabulary. `fit` will be ignored")
             return self
 
         self.partial_fit(*datasets)
@@ -276,7 +278,9 @@ class Dict(object):
             if self.unk_token and self.unk_token not in self.reserved:
                 self.reserved.add(self.unk_token)
 
-        # create tables
+        # create tables (vocab is kept in sorted order which is needed for
+        # efficient candidate sampling; reserved symbols are added as most
+        # frequent at the top of the list)
         self.vocab = [s for s in self.reserved] + \
                      [k for k, v in most_common if v >= self.min_freq]
         self.s2i = {s: i for i, s in enumerate(self.vocab)}
@@ -289,20 +293,29 @@ class Dict(object):
         - examples: list of examples. An example is either an iterable if
             sequential or a hashable.
         """
-        if not self.fitted:
+        if not self.fitted and self.use_vocab:
             raise ValueError("Attempt to index without fitted data")
 
+        # only for sequential models
         bos = [self.get_bos()] if self.bos_token else []
         eos = [self.get_eos()] if self.eos_token else []
+
         for example in examples:
+            # preprocess if needed
             if self.preprocessing is not None:
                 example = self.preprocessing(example)
+
             if self.sequential:
                 if self.max_len is not None and len(example) > self.max_len:
                     example = example[:self.max_len]
-                yield bos + [self.index(s) for s in example] + eos
+                if self.use_vocab:
+                    example = [self.index(s) for s in example]
+                yield bos + example + eos
             else:
-                yield self.index(example)
+                if self.use_vocab:
+                    yield self.index(example)
+                else:
+                    yield example
 
     def pack(self, batch_data, return_lengths=False, align_right=False):
         """
@@ -319,7 +332,10 @@ class Dict(object):
             return pad_batch(
                 batch_data, self.get_pad(), return_lengths, align_right)
         else:
-            return torch.LongTensor(batch_data)
+            if self.dtype is int:
+                return torch.LongTensor(batch_data)
+            else:
+                return torch.FloatTensor(batch_data)
 
 
 class MultiDict(object):
@@ -516,13 +532,12 @@ class PairedDataset(Dataset):
                 "All input datasets must be equal size"
             assert len(data) == len(dicts), \
                 "Equal number of input sequences and Dicts needed"
-            fitted = (d.transform(subset) if d.use_vocab else subset
-                      for subset, d in zip(data, dicts))
+            fitted = (d.transform(subset) for subset, d in zip(data, dicts))
             return list(zip(*fitted))
 
         # single input
         else:
-            return list(dicts.transform(data)) if dicts.use_vocab else data
+            return list(dicts.transform(data))
 
     def _pack(self, batch, dicts):
         # multi-input dataset
@@ -603,29 +618,44 @@ class PairedDataset(Dataset):
             if key is None:
                 raise ValueError('Got multi-input dataset but no input `key`')
 
-        # group lables by value
-        data = key(self.data[target])
-        grouped = defaultdict(list)
+        # group labels by value
+        data, grouped = key(self.data[target]), defaultdict(list)
         for idx, val in enumerate(data):
             grouped[val].append(idx)
 
         total = len(data)
-        probs = {key: len(vals)/total for key, vals in grouped.items()}
-        # sample according to distribution to generate index
+        probs = {key: len(vals) / total for key, vals in grouped.items()}
+
+        # stratify according to distribution to generate index
         index = []
-        for _ in range(len(self)):
+        for _ in range(0, total, self.batch_size):
             batch = []
             for key, prob in probs.items():
-                prop = math.floor(self.batch_size * prob)
-                batch.extend([grouped[key].pop() for _ in range(prop)])
+                n, rest = divmod(prob * self.batch_size, 1)
+                if random.random() <= rest:
+                    n += 1
+                for _ in range(int(n)):
+                    try:
+                        batch.append(grouped[key].pop())
+                    except:
+                        continue
             index.extend(batch)
-        for _, vals in grouped.items():
+        for _, vals in grouped.items():  # remaining items
             index.extend(vals)
 
         # reorder according to sampled index
         self.data['src'] = [self.data['src'][i] for i in index]
         if not self.autoregressive:
             self.data['trg'] = [self.data['trg'][i] for i in index]
+
+        return self
+
+    def shuffle_(self):
+        """Shuffle underlying data keeping the src to trg pairings"""
+        if self.autoregressive:
+            random.shuffle(self.data['src'])
+        else:
+            shuffle_pairs(self.data['src'], self.data['trg'])
 
         return self
 
@@ -642,10 +672,7 @@ class PairedDataset(Dataset):
         - shuffle: bool, whether to shuffle the datasets prior to splitting
         """
         if shuffle:
-            if self.autoregressive:
-                random.shuffle(self.data['src'])
-            else:
-                shuffle_pairs(self.data['src'], self.data['trg'])
+            self.shuffle_()
 
         splits, sets = get_splits(len(self.data['src']), test, dev=dev), []
 
@@ -709,9 +736,8 @@ class BlockDataset(Dataset):
     def _fit(self, examples, dicts, batch_size):
         # multiple input dataset with MultiDict
         if isinstance(dicts, MultiDict):
-            fitted = dicts.transform(examples) if dicts.use_vocab else examples
-            fitted = ([i for seq in subset for i in seq] for subset in fitted)
-            return tuple(fitted)
+            fitted = dicts.transform(examples)
+            return tuple([i for seq in subset for i in seq] for subset in fitted)
 
         # multiple input dataset
         if isinstance(examples, tuple) or isinstance(dicts, tuple):
@@ -727,18 +753,15 @@ class BlockDataset(Dataset):
                 raise ValueError("Not enough data for batch [{}]"
                                  .format(batch_size))
 
-            fitted = [d.transform(e) if d.use_vocab else e
-                      for d, e in zip(dicts, examples)]
-            fitted = ([i for seq in subset for i in seq] for subset in fitted)
-            return tuple(fitted)
+            fitted = [d.transform(e) for d, e in zip(dicts, examples)]
+            return tuple([i for seq in subset for i in seq] for subset in fitted)
 
         # single input dataset
         else:
             if len(examples) // batch_size == 0:
                 raise ValueError("Not enough data for batch [{}]"
                                  .format(batch_size))
-            fitted = dicts.transform(examples) if dicts.use_vocab else examples
-            return [i for seq in fitted for i in seq]
+            return [i for seq in dicts.transform(examples) for i in seq]
 
     def _get_batch(self, data, idx):
         """

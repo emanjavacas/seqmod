@@ -1,13 +1,14 @@
 
-from hashlib import sha1, md5
-from collections import Counter
 import unittest
+from hashlib import sha1, md5
+from collections import Counter, defaultdict
 
 import lorem
-
+import numpy as np
 import torch
 
 from seqmod.misc import Dict, BlockDataset, PairedDataset, CompressionTable
+from seqmod.misc.dataset import argsort
 from seqmod import utils as u
 
 
@@ -226,3 +227,53 @@ class TestPairedDataset(unittest.TestCase):
         self.dataset = PairedDataset(
             self.corpus, (self.tag1_corpus, self.tag2_corpus),
             {'src': self.seq_d, 'trg': (self.tag1_d, self.tag2_d)})
+
+
+class TestStratify(unittest.TestCase):
+    def setUp(self):
+        self.sents = [lorem.sentence().split() for _ in range(1000)]
+        self.labels = np.random.randint(0, 10, size=(1000,))
+        d = Dict(pad_token='<PAD>').fit(self.sents)
+        ld = Dict(sequential=False).fit(self.labels)
+        self.dataset = PairedDataset(
+            self.sents, self.labels, {'src': d, 'trg': ld}, batch_size=50)
+
+    @staticmethod
+    def reconstruct_set(dataset):
+        sents = [[dataset.d['src'].vocab[w] for w in sent] for sent in dataset.data['src']]
+        labels = [dataset.d['trg'].vocab[l] for l in dataset.data['trg']]
+        return sents, labels
+
+    @staticmethod
+    def argsort_dataset(sents, labels):
+        sort = argsort([' '.join(sent) for sent in sents])
+        return [sents[i] for i in sort], [labels[i] for i in sort]
+
+    def test_pairing(self):
+        self.dataset.sort_().shuffle_().stratify_()
+        rec_sents, rec_labels = TestStratify.reconstruct_set(self.dataset)
+        sort_rec_sents, sort_rec_labels = TestStratify.argsort_dataset(rec_sents, rec_labels)
+        sort_sents, sort_labels = TestStratify.argsort_dataset(self.sents, self.labels)
+        self.assertEqual(sort_rec_sents, sort_sents)
+        self.assertEqual(sort_rec_labels, sort_labels)
+
+    @staticmethod
+    def dataset_mean_stddev(dataset):
+        counts = defaultdict(list)
+        for _, labels in dataset:
+            for key, n in Counter(labels.data.tolist()).items():
+                counts[key].append(n)
+
+        from statistics import mean, stdev
+        return {key: (mean(vals), stdev(vals)) for key, vals in counts.items()}
+
+    @staticmethod
+    def dataset_props(labels, batch_size):
+        return {key: val / batch_size for key, val in Counter(labels).items()}
+
+    def test_stratification(self):
+        self.dataset.sort_().shuffle_().stratify_()
+        mean_stddev = TestStratify.dataset_mean_stddev(self.dataset)
+        props = TestStratify.dataset_props(self.dataset.data['trg'], len(self.dataset))
+        for key in mean_stddev:
+            self.assertAlmostEqual(mean_stddev[key][0], props[key], delta=0.01)  # ignore stddev
