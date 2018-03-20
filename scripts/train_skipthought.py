@@ -203,11 +203,12 @@ if __name__ == '__main__':
         m, {'train': train, 'valid': valid}, optimizer, losses=('ppl',),
         max_norm=args.max_norm)
 
-    checkpoint = None
+    checkpoint, logfile = None, None
     if not args.test:
         checkpoint = Checkpoint('Skipthought', buffer_size=3).setup(args)
+        logfile = checkpoint.checkpoint_path('training.log')
 
-    trainer.add_loggers(StdLogger())
+    trainer.add_loggers(StdLogger(outputfile=logfile))
     trainer.add_hook(make_validation_hook(args.patience, checkpoint),
                      hooks_per_epoch=args.hooks_per_epoch)
     trainer.add_hook(make_report_hook(), hooks_per_epoch=args.hooks_per_epoch)

@@ -302,7 +302,7 @@ class Trainer(object):
                 rep = max(1, batches // (checkpoint * hook['hooks_per_epoch']) - 1)
                 if num_checkpoints % rep == 0:
                     hook['hook'](self, epoch, batch_num, num_checkpoints)
-            else:  # assume num_checkpoints
+            elif 'num_checkpoints' in hook:
                 if num_checkpoints % hook['num_checkpoints'] == 0:
                     hook['hook'](self, epoch, batch_num, num_checkpoints)
 

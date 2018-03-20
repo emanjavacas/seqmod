@@ -90,13 +90,14 @@ if __name__ == '__main__':
         m.cuda()
 
     optimizer = getattr(optim, args.optimizer)(m.parameters(), lr=args.lr)
-    # reporting
-    logger = StdLogger()
-    report_hook = make_report_hook()
     # validation hook
-    checkpoint = None
+    checkpoint, logfile = None, None
     if not args.test:
         checkpoint = Checkpoint('Skipthought', buffer_size=3).setup(args)
+        logfile = checkpoint.checkpoint_path('training.log')
+    # reporting
+    logger = StdLogger(outputfile=logfile)
+    report_hook = make_report_hook()
     # no early stopping
     validation_hook = make_validation_hook(0, checkpoint)
     if args.patience:
