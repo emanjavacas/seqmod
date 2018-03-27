@@ -170,7 +170,7 @@ class Dict(object):
     def __init__(self, pad_token=None, eos_token=None, bos_token=None,
                  unk_token=UNK, force_unk=False, max_size=None, min_freq=1,
                  sequential=True, max_len=None, use_vocab=True, dtype=int,
-                 preprocessing=None):
+                 preprocessing=None, align_right=False):
 
         self.counter = Counter()
         self.vocab = []
@@ -184,6 +184,7 @@ class Dict(object):
         self.bos_token = bos_token
         self.unk_token = unk_token
         self.preprocessing = preprocessing
+        self.align_right = align_right
 
         # only index unk_token if needed or requested
         if self.use_vocab:
@@ -333,7 +334,7 @@ class Dict(object):
                 else:
                     yield example
 
-    def pack(self, batch_data, return_lengths=False, align_right=False):
+    def pack(self, batch_data, return_lengths=False):
         """
         Convert transformed data into torch batch. Output type is LongTensor.
         This could be adapted to return other types as well.
@@ -344,9 +345,10 @@ class Dict(object):
         - return_lengths: bool, if True output will be a tuple of LongTensor
             and list with sequence lengths in the batch
         """
+        align_right = hasattr(self, 'align_right') and self.align_right
+
         if self.sequential:
-            return pad_batch(
-                batch_data, self.get_pad(), return_lengths, align_right)
+            return pad_batch(batch_data, self.get_pad(), return_lengths, align_right)
         else:
             if self.dtype is int:
                 return torch.LongTensor(batch_data)
@@ -504,7 +506,7 @@ class PairedDataset(Dataset):
     """
     def __init__(self, src, trg, d, batch_size=1,
                  fitted=False, gpu=False, evaluation=False,
-                 return_lengths=True, align_right=False):
+                 return_lengths=True):
         self.autoregressive, self.data, self.d = False, {}, d
 
         # prepare src data
@@ -530,7 +532,6 @@ class PairedDataset(Dataset):
         self.gpu = gpu
         self.evaluation = evaluation
         self.return_lengths = return_lengths
-        self.align_right = align_right
         self.num_batches = src_len // batch_size
 
     def _fit(self, data, dicts):
@@ -561,12 +562,10 @@ class PairedDataset(Dataset):
             batches = list(zip(*batch))  # unpack batches
             if isinstance(dicts, MultiDict):
                 dicts = dicts.dicts.values()
-            out = tuple(d.pack(b, return_lengths=self.return_lengths,
-                               align_right=self.align_right)
+            out = tuple(d.pack(b, return_lengths=self.return_lengths)
                         for (d, b) in zip(dicts, batches))
         else:
-            out = dicts.pack(batch, return_lengths=self.return_lengths,
-                             align_right=self.align_right)
+            out = dicts.pack(batch, return_lengths=self.return_lengths)
 
         return wrap_variables(out, volatile=self.evaluation, gpu=self.gpu)
 
@@ -703,8 +702,7 @@ class PairedDataset(Dataset):
 
             subset = type(self)(
                 src, trg, self.d, self.batch_size, fitted=True, gpu=self.gpu,
-                return_lengths=self.return_lengths, evaluation=evaluation,
-                align_right=self.align_right)
+                return_lengths=self.return_lengths, evaluation=evaluation)
 
             if sort:
                 subset.sort_(**kwargs)
