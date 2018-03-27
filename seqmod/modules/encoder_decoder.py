@@ -102,20 +102,24 @@ class EncoderDecoder(nn.Module):
 
         for shard in shards(shard_data, size=split, test=test):
             out, true = shard['out'], shard['trg'].view(-1)
+
             if isinstance(self.decoder.project, SampledSoftmax) and self.training:
                 out, new_true = self.decoder.project(
                     out, targets=true, normalize=False, reshape=False)
                 shard_loss = F.cross_entropy(out, new_true, size_average=False)
             else:
                 shard_loss = F.nll_loss(
-                    self.decoder.project(out), true, weight, size_average=False)
+                    self.decoder.project(out), true,
+                    weight=weight, size_average=False)
+
             shard_loss /= num_examples
-            loss += shard_loss
 
             if not test:
                 shard_loss.backward(retain_graph=True)
 
-        return loss.data[0]
+            loss += shard_loss.data
+
+        return loss[0]
 
     def loss(self, batch_data, test=False, split=25, use_schedule=False):
         """
@@ -153,6 +157,7 @@ class EncoderDecoder(nn.Module):
 
         dec_state = self.decoder.init_state(
             enc_outs, enc_hidden, src_lengths, conds=trg_conds)
+
         dec_loss = self.decoder_loss(
             dec_state, trg, num_examples,
             test=test, split=split, use_schedule=use_schedule)
@@ -305,8 +310,7 @@ def make_embeddings(src_dict, trg_dict, emb_dim, word_dropout):
     if trg_dict is not None:
         trg_embeddings = Embedding.from_dict(trg_dict, emb_dim, p=word_dropout)
     else:
-        trg_embeddings = Embedding.from_dict(src_dict, emb_dim, p=word_dropout)
-        trg_embeddings.weight = src_embeddings.weight
+        trg_embeddings = src_embeddings
 
     return src_embeddings, trg_embeddings
 
@@ -382,10 +386,10 @@ def make_rnn_encoder_decoder(
 
     encoder = RNNEncoder(src_embeddings, hid_dim, enc_layers, cell=cell,
                          bidi=bidi, dropout=dropout, summary=encoder_summary,
-                         train_init=False, add_init_jitter=False)
+                         train_init=train_init, add_init_jitter=add_init_jitter)
 
     if context_feed is None:
-        # only disable it if it explicitely desired (passing False)
+        # only disable it if is explicitely desired (passing False)
         context_feed = att_type is None or att_type.lower() == 'none'
 
     encoder_dims, encoder_size = encoder.encoding_size
