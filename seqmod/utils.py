@@ -1,5 +1,7 @@
 
 import copy
+import logging
+import math
 import os
 import yaml
 from datetime import datetime
@@ -144,6 +146,41 @@ def is_bias(param_name):
     return 'bias' in param_name
 
 
+def rnn_orthogonal(cell, gain=1, forget_bias=False):
+    """
+    Orthogonal initialization scheme for GRU/LSTM taking into account
+    the different gates. Optionally bias the forget gate setting init
+    bias value to 1 (only for LSTM cells).
+    """
+    for p_name, p in cell.named_parameters():
+        if is_bias(p_name):
+            if forget_bias:
+                from seqmod.modules.rnn import StackedLSTM
+                if isinstance(cell, (torch.nn.LSTM, torch.nn.LSTMCell, StackedLSTM)):
+                    positive_forget_bias(p)
+                else:
+                    logging.warn("Skipping forget bias for cell of type '{}'"
+                                 .format(type(cell).__name__))
+                    init.constant(p, 0.)
+            else:
+                init.constant(p, 0.)
+        elif '_hh': # recurrent layer
+            for i in range(0, p.size(0), cell.hidden_size):
+                init.orthogonal(p[i:i + cell.hidden_size], gain=gain)
+        else: # input to hidden
+            stdev = 1.0 / math.sqrt(cell.hidden_size)
+            init.uniform(p, -stdev, stdev)
+
+
+def positive_forget_bias(p):
+    """
+    Bias forget gate setting bias gate to 1.
+    """
+    init.constant(p, 0.)
+    hidden_size = len(p) // 4
+    init.constant(p[hidden_size:hidden_size * 2], 1.0) # forget gate is second
+
+
 def make_initializer(
         linear={'type': 'uniform', 'args': {'a': -0.05, 'b': 0.05}},
         linear_bias={'type': 'constant', 'args': {'val': 0.}},
@@ -153,6 +190,10 @@ def make_initializer(
         cnn_bias={'type': 'constant', 'args': {'val': 0.}},
         emb={'type': 'normal', 'args': {'mean': 0, 'std': 1}},
         default={'type': 'uniform', 'args': {'a': -0.05, 'b': 0.05}}):
+
+    """
+    Initialize a module with default initializers per layer type.
+    """
 
     from seqmod.modules.rnn import StackedGRU, StackedLSTM, StackedNormalizedGRU
     from seqmod.modules.rnn import NormalizedGRUCell, NormalizedGRU
@@ -167,6 +208,10 @@ def make_initializer(
     def initializer(m):
 
         if isinstance(m, (rnns)):  # RNNs
+            if rnn['type'] == 'rnn_orthogonal': # full initialization scheme
+                rnn_orthogonal(m, **rnn['args'])
+                return
+
             for p_name, p in m.named_parameters():
                 if hasattr(p, 'custom'):
                     continue
@@ -175,7 +220,7 @@ def make_initializer(
                 else:
                     getattr(init, rnn['type'])(p, **rnn['args'])
 
-        elif isinstance(m, torch.nn.Linear):  # linear
+        elif isinstance(m, torch.nn.Linear):  # Linear
             for p_name, p in m.named_parameters():
                 if hasattr(p, 'custom'):
                     continue
@@ -184,13 +229,15 @@ def make_initializer(
                 else:
                     getattr(init, linear['type'])(p, **linear['args'])
 
-        elif isinstance(m, torch.nn.Embedding):  # embedding
+        elif isinstance(m, torch.nn.Embedding):  # Embedding
             for p in m.parameters():
                 if hasattr(p, 'custom'):
                     continue
                 getattr(init, emb['type'])(p, **emb['args'])
+            if m.padding_idx is not None:
+               m.weight.data[m.padding_idx].fill_(0)
 
-        elif isinstance(m, convs):
+        elif isinstance(m, convs): # CNN
             for p_name, p in m.named_parameters():
                 if hasattr(p, 'custom'):
                     continue
