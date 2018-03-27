@@ -281,6 +281,27 @@ class Dict(object):
         self.s2i = {s: i for i, s in enumerate(self.vocab)}
         self.fitted = True
 
+    def expand_vocab(self, words):
+        """
+        Add words to the vocabulary. If a word is already in the vocabulary an
+        error will be thrown, thus, assuming that all new words are OOV.
+
+        - words: list of strings with new words
+
+        Returns the list of idxs corresponding to the new words.
+        """
+        new_idxs = []
+        for w in words:
+            if w in self.s2i:
+                raise ValueError("Word [{}] already in the vocabulary".format(w))
+
+            idx = len(self.vocab)
+            self.vocab.append(w)
+            self.s2i[w] = idx
+            new_idxs.append(idx)
+
+        return new_idxs
+
     def transform(self, examples):
         """
         Parameters

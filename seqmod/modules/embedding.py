@@ -1,8 +1,9 @@
 
-import numpy as np
 
 from itertools import accumulate
 
+import numpy as np
+from sklearn.linear_model import LinearRegression
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
@@ -94,8 +95,7 @@ class PositionalEncoding(nn.Module):
             pos_emb = self.pe[:emb.size(0), :1, :emb.size(2)]
         else:
             if pos is None:
-                raise ValueError(
-                    "2D input to positional encoding needs `pos` input")
+                raise ValueError("2D input to positional encoding needs `pos` input")
 
             pos_emb = self.pe[pos, :1, :emb.size(1)]
 
@@ -215,6 +215,52 @@ class Embedding(nn.Embedding):
         words = self.d.vocab
         weight, words = EmbeddingLoader(filepath, mode).load(words, **kwargs)
         self.init_embeddings(weight, words)
+
+    def expand_space(self, filepath, mode=None, maxwords=None, verbose=True):
+        """
+        Expand embedding space to include words learned by an external algorithm
+        (e.g. word2vec). The expansion is done by learning a regression model based
+        on shared vocabulary between the Embedding layer and the external embedding
+        space (see Kiros et al 2015 for details).
+
+        - filepath: str, path to embedding file
+        - mode: (optional) str, embedding type (glove, fasttext, w2v). If not given,
+            it will be guessed based on the filename.
+        - maxwords: (optional) int, maximum number of words to load (kind of assumes
+            that words embedding model is saved in sorted order)
+        """
+        # load embeddings
+        weight, words = EmbeddingLoader(filepath, mode).load(
+            maxwords=maxwords, verbose=verbose)
+        weight = np.array(weight)
+        # compute shared and new words
+        shared, new = {}, {}
+        for idx, w in enumerate(words):
+            if w in self.d.s2i:
+                shared[w] = idx
+            else:
+                new[w] = idx
+        # extract shared embeddings in same order
+        index = np.array([self.d.s2i[w] for w in shared], dtype=np.int)
+        self_vecs = self.weight.data.cpu().numpy()[index]
+        index = np.array(list(shared.values()), dtype=np.int)
+        other_vecs = weight[index]
+        # learn regressor
+        if verbose:
+            print("Learning regressor on [{}] vectors".format(len(shared)))
+        clf = LinearRegression().fit(other_vecs, self_vecs)
+        # expand dictionary with new words
+        if verbose:
+            print("Projecting [{}] new OOVs onto local embedding space".format(len(new)))
+        new_idxs = self.d.expand_vocab(new.keys())
+        # compute embeddings for OOV based on learned regressor
+        index = np.array(list(new.values()), dtype=np.int)
+        new_vecs = torch.from_numpy(clf.predict(weight[index]))
+        # populate embedding weight with new embeddings
+        new_weight = torch.Tensor(len(new_idxs), self.embedding_dim)
+        new_weight = torch.cat([self.weight.data, new_weight], dim=0)
+        new_weight[torch.LongTensor(new_idxs)] = new_vecs
+        self.weight.data = new_weight
 
 
 def flatten_batch(inp, lengths, breakpoint_idx):
