@@ -73,7 +73,7 @@ class EncoderDecoder(nn.Module):
         if self.is_cuda():
             weight = weight.cuda()
 
-        # [<bos> ... <eos> pad pad]
+        # [<bos> ... <eos> pad pad] or [<eos> ... <bos> <pad> <pad>]
         dec_trg, loss_trg = trg[:-1], trg[1:]
 
         # should we run fast_forward?
@@ -148,7 +148,8 @@ class EncoderDecoder(nn.Module):
         # - compute decoder loss
         # remove <eos> from decoder targets, remove <bos> from loss targets
         if hasattr(self, 'reverse') and self.reverse:
-            # assume right aligned data: [pad pad <bos> ... <eos>]
+            # assume right aligned data:
+            # [<pad> <pad> <bos> ... <eos>] => [<eos> ... <bos> <pad> <pad>]
             trg = flip(trg, 0)
 
         dec_state = self.decoder.init_state(
@@ -324,7 +325,7 @@ def make_rnn_encoder_decoder(
         sampled_softmax=False,
         dropout=0.0,
         variational=False,
-        input_feed=True,
+        input_feed=False,
         context_feed=None,
         word_dropout=0.0,
         deepout_layers=0,
@@ -382,7 +383,7 @@ def make_rnn_encoder_decoder(
 
     encoder = RNNEncoder(src_embeddings, hid_dim, enc_layers, cell=cell,
                          bidi=bidi, dropout=dropout, summary=encoder_summary,
-                         train_init=False, add_init_jitter=False)
+                         train_init=train_init, add_init_jitter=add_init_jitter)
 
     if context_feed is None:
         # only disable it if it explicitely desired (passing False)

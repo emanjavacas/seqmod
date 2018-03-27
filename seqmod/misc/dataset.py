@@ -78,8 +78,8 @@ def cumsum(seq):
     """
     Compute the cumulative sum of an input sequence
 
-    >>> cumsum([1, 2, 3, 4)
-    [1, 3, 5, 7]
+    >>> cumsum([1, 2, 3, 4])
+    [0, 1, 3, 6, 10]
     """
     seq = [0] + list(seq)
     subseqs = (seq[:i] for i in range(1, len(seq) + 1))
@@ -127,13 +127,8 @@ def block_batchify(vector, batch_size):
     """
     Transform input vector to (None, batch_size)
 
-    >>> block_batchify([0, 2, 4, 6, 1, 3, 5, 7], 2)
-
-     0 1
-     2 3
-     4 5
-     6 7
-    [torch.LongTensor of size 4x2]
+    >>> block_batchify([0, 2, 4, 6, 1, 3, 5, 7], 2).tolist()
+    [[0, 1], [2, 3], [4, 5], [6, 7]]
     """
     if isinstance(vector, tuple):
         return tuple(block_batchify(v, batch_size) for v in vector)

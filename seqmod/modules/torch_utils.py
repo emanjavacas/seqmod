@@ -171,6 +171,13 @@ def flip(x, dim):
     Flip (reverse) a tensor along a given dimension
 
     Taken from: https://github.com/pytorch/pytorch/issues/229
+
+    >>> import torch
+    >>> x = torch.LongTensor([[0, 2, 4], [1, 3, 5]])
+    >>> flip(x, 0).tolist()
+    [[1, 3, 5], [0, 2, 4]]
+    >>> flip(x, 1).tolist()
+    [[4, 2, 0], [5, 3, 1]]
     """
     xsize, dev = x.size(), ('cpu', 'cuda')[x.is_cuda]
     dim = x.dim() + dim if dim < 0 else dim

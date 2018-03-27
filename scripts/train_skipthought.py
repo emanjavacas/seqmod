@@ -79,12 +79,14 @@ def make_validation_hook(patience, checkpoint):
         loss = None
         if early_stopping is not None:
             loss = trainer.validate_model()
-            trainer.log("validation_end", {"epoch": epoch, "loss": loss.pack()})
-            early_stopping.add_checkpoint(loss.reduce(), copy.deepcopy(trainer.model))
+            early_stopping.add_checkpoint(
+                loss.reduce(), copy.deepcopy(trainer.model).cpu())
         if checkpoint is not None:
             if loss is None:
                 loss = trainer.validate_model()
             checkpoint.save(trainer.model, loss.reduce())
+        if loss is not None:
+            trainer.log("validation_end", {"epoch": epoch, "loss": loss.pack()})
 
     return hook
 
@@ -140,7 +142,7 @@ if __name__ == '__main__':
     parser.add_argument('--emb_dim', type=int, default=300)
     parser.add_argument('--hid_dim', type=int, default=200)
     parser.add_argument('--num_layers', type=int, default=1)
-    parser.add_argument('--cell', default='LSTM')
+    parser.add_argument('--cell', default='GRU')
     parser.add_argument('--encoder_summary', default='mean-max')
     parser.add_argument('--train_init', action='store_true')
     parser.add_argument('--sampled_softmax', action='store_true')

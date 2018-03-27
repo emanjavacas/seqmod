@@ -27,12 +27,12 @@ def make_sampler(space):
 
 def random_search_generator(space, n_iter=math.inf):
     """
+
     space = {'lr': ['loguniform', float, math.log(0.00001), math.log(1)],
              'hid_dim': ['loguniform', int, math.log(10), math.log(1000)],
-             'emb_dim': ['choice', int, list(range(20, 60)]}
+             'emb_dim': ['choice', int, list(range(20, 60))]}
     generator = random_search_generator(space)
-    next(generator)
-    >>> {'emb_dim': 46, 'hid_dim': 33, 'lr': 0.04909280719702653}
+    next(generator) >>> {'emb_dim': 46, 'hid_dim': 33, 'lr': 0.04909280}
     """
     sampler = make_sampler(space)
 
