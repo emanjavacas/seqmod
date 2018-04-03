@@ -7,7 +7,7 @@ import seqmod
 
 setup(
     name='seqmod',
-    version=seqmod.__version__,
+    version='0.3',
     package_dir={'seqmod.modules': 'modules',
                  'seqmod.misc': 'misc',
                  'seqmod': './'},
