@@ -1,4 +1,6 @@
 
+__version__ = "0.3"
+
 from .misc import *
 from .hyper import *
 from .modules import *

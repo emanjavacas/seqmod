@@ -3,9 +3,11 @@
 from setuptools import setup
 
 
+import seqmod
+
 setup(
     name='seqmod',
-    version='0.3',
+    version=seqmod.__version__,
     package_dir={'seqmod.modules': 'modules',
                  'seqmod.misc': 'misc',
                  'seqmod': './'},
