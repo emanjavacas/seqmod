@@ -56,6 +56,7 @@ class RNNWrapper(nn.Module):
     """
     def __init__(self, num_layers, in_dim, hid_dim, cell, dropout=0.0, ffw=False):
         self.ffw = ffw
+        self.in_dim = in_dim
         super(RNNWrapper, self).__init__()
 
         if ffw:
