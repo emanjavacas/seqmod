@@ -244,12 +244,3 @@ if __name__ == '__main__':
 
     (best_model, valid_loss), test_loss = trainer.train(
         args.epochs, args.checkpoint, use_schedule=args.use_schedule)
-
-    if args.save:
-        print("Saving model to {}".format(args.save_path))
-        u.save_checkpoint(
-            args.save_path, best_model, vars(args), d=d, ppl=test_loss)
-
-        if not u.prompt("Do you want to keep intermediate results? (yes/no)"):
-            checkpoint.remove()
-
