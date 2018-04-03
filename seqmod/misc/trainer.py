@@ -127,20 +127,26 @@ class Checkpoint(object):
     topdir: top directory to store models
     subdir: name for the subdirectory to store the current model.
         Will be appended with a timestamp to disambiguate runs.
-    buffer_size: max number of best models to keep in disk.
+    mode: (default 'nbest') one of 'nbest' or 'nlast'
+    keep: max number of best models to keep in disk.
     ext: model file extension.
     """
-    def __init__(self, subdir, topdir='./models', buffer_size=1, ext='torch'):
+    def __init__(self, subdir, topdir='./models', mode='nbest', keep=1, ext='torch'):
         self.topdir = topdir
         self.subdir = subdir
         self.subdir += '-{}'.format(datetime.now().strftime("%Y_%m_%d-%H_%M_%S"))
-        self.buffer_size = buffer_size
-        self.buf = []
+        self.mode = mode
+        self.keep = keep
+        self.buf_best = []
+        self.buf_last = []
         self.ext = ext
         self.is_setup = False
 
-    def get_modelname(self, loss):
-        return self.checkpoint_path('model-{:.4f}'.format(loss))
+        if self.mode not in ('nbest', 'nlast'):
+            raise ValueError("Not a mode: {}".format(self.mode))
+
+    def get_modelname(self, index):
+        return self.checkpoint_path('model-{}'.format(index))
 
     def checkpoint_path(self, *path):
         return os.path.join(self.topdir, self.subdir, *path)
@@ -177,24 +183,56 @@ class Checkpoint(object):
 
         return self
 
-    def save(self, model, loss):
+    def save(self, model, loss=None):
+        """
+        Dispatch method
+        """
+        if self.mode == 'nbest':
+            if loss is None:
+                raise ValueError("`nbest` requires loss")
+            return self.save_nbest(model, loss)
+        elif self.mode == 'nlast':
+            return self.save_nlast(model)
+
+    def save_nlast(self, model):
+        """
+        Only keep track of n last models regardless loss
+        """
+        if not self.is_setup:
+            raise ValueError("Checkpoint not setup yet")
+
+        if len(self.buf_last) == self.keep:
+            oldestm, _ = self.buf_last[-1]
+            os.remove(oldestm)
+            self.buf_last.pop()
+
+        timestamp = datetime.now().strftime("%Y_%m_%d-%H_%M_%S")
+        modelname = u.save_model(model, self.get_modelname(timestamp), mode=self.ext)
+        self.buf_last.append((modelname, timestamp))
+        self.buf_last.sort(key=itemgetter(1), reverse=True)
+
+        return self
+
+    def save_nbest(self, model, loss):
         """
         Save model according to current state and some validation loss
         """
         if not self.is_setup:
             raise ValueError("Checkpoint not setup yet")
 
-        if len(self.buf) == self.buffer_size:
-            losses, (worstm, worstl) = [l for _, l in self.buf], self.buf[-1]
+        if len(self.buf_best) == self.keep:
+            losses = [l for _, l in self.buf_best]
+            (worstm, worstl) = self.buf_best[-1]
             if loss < worstl and loss not in losses:  # avoid duplicates
                 os.remove(worstm)
-                self.buf.pop()
+                self.buf_best.pop()
             else:
                 return
 
-        modelname = u.save_model(model, self.get_modelname(loss), mode=self.ext)
-        self.buf.append((modelname, loss))
-        self.buf.sort(key=itemgetter(1))
+        rounded = '{:.4f}'.format(loss)
+        modelname = u.save_model(model, self.get_modelname(rounded), mode=self.ext)
+        self.buf_best.append((modelname, loss))
+        self.buf_best.sort(key=itemgetter(1))
 
         return self
 
