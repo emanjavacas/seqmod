@@ -216,23 +216,22 @@ class Embedding(nn.Embedding):
         weight, words = EmbeddingLoader(filepath, mode).load(words, **kwargs)
         self.init_embeddings(weight, words)
 
-    def expand_space(self, filepath, mode=None, maxwords=None, verbose=True):
+    def expand_space(self, fpath, mode=None, targets=None, verbose=True, **kwargs):
         """
         Expand embedding space to include words learned by an external algorithm
         (e.g. word2vec). The expansion is done by learning a regression model based
         on shared vocabulary between the Embedding layer and the external embedding
         space (see Kiros et al 2015 for details).
 
-        - filepath: str, path to embedding file
+        - fpath: str, path to embedding file
         - mode: (optional) str, embedding type (glove, fasttext, w2v). If not given,
-            it will be guessed based on the filename.
-        - maxwords: (optional) int, maximum number of words to load (kind of assumes
-            that words embedding model is saved in sorted order)
+            it will be guessed based on the filename
+        - targets: (optional) list (str), words
         """
         # load embeddings
-        weight, words = EmbeddingLoader(filepath, mode).load(
-            maxwords=maxwords, verbose=verbose)
+        weight, words = EmbeddingLoader(fpath, mode).load(verbose=verbose, **kwargs)
         weight = np.array(weight)
+
         # compute shared and new words
         shared, new = {}, {}
         for idx, w in enumerate(words):
@@ -240,24 +239,32 @@ class Embedding(nn.Embedding):
                 shared[w] = idx
             else:
                 new[w] = idx
+
         # extract shared embeddings in same order
         index = np.array([self.d.s2i[w] for w in shared], dtype=np.int)
         self_vecs = self.weight.data.cpu().numpy()[index]
-        index = np.array(list(shared.values()), dtype=np.int)
+        index = np.array([shared[w] for w in shared], dtype=np.int)
         other_vecs = weight[index]
+
         # learn regressor
         if verbose:
             print("Learning regressor on [{}] vectors".format(len(shared)))
         clf = LinearRegression().fit(other_vecs, self_vecs)
+
         # expand dictionary with new words
-        if verbose:
-            print("Projecting [{}] new OOVs onto local embedding space".format(len(new)))
-        new_idxs = self.d.expand_vocab(new.keys())
+        if targets is not None:
+            new = {w: idx for w, idx in new.items() if w in set(targets)}
+        new_idxs = self.d.expand_vocab(list(new.keys()))
+
         # compute embeddings for OOV based on learned regressor
+        if verbose:
+            print("Projected [{}/{}] new OOVs local space".format(
+                len(new), len(targets or [])))
         index = np.array(list(new.values()), dtype=np.int)
-        new_vecs = torch.from_numpy(clf.predict(weight[index]))
+        new_vecs = torch.FloatTensor(clf.predict(weight[index]))
+
         # populate embedding weight with new embeddings
-        new_weight = torch.Tensor(len(new_idxs), self.embedding_dim)
+        new_weight = torch.zeros(len(new_idxs), self.embedding_dim)
         new_weight = torch.cat([self.weight.data, new_weight], dim=0)
         new_weight[torch.LongTensor(new_idxs)] = new_vecs
         self.weight.data = new_weight
@@ -266,15 +273,14 @@ class Embedding(nn.Embedding):
 def flatten_batch(inp, lengths, breakpoint_idx):
     # flatten (char_len x batch x dim) into (max_word_len x num_words x dim)
     flattened, word_lenghts = [], []
-    # decrease since we are going to use them for indexing
-    lengths = lengths.data - 1
 
     for idx in range(inp.size(1)):
         seq = inp[:, idx]
         breakpoints = (seq.data == breakpoint_idx).nonzero()
         # remove trailing dim added by nonzero()
         breakpoints = breakpoints.squeeze(1).tolist()
-        breakpoints.append(lengths[idx])
+        # decrease since we are going to use them for indexing
+        breakpoints.append(lengths[idx] - 1)
         # accumulate sequence lengths in terms of words
         word_lenghts.append(len(breakpoints))
         flattened.extend(split(seq, breakpoints))
@@ -359,7 +365,7 @@ class RNNEmbedding(ComplexEmbedding):
 
     def _forward_with_context(self, inp, lengths):
         # (char_len x batch x dim)
-        out = self._run_rnn(self.embedding(inp), lengths.data)
+        out = self._run_rnn(self.embedding(inp), lengths)
         embs = []
 
         # iterate over batch
@@ -540,7 +546,7 @@ if __name__ == '__main__':
             to = min((b + 1) * batch_size, len(corpus) - 1)
             inp, length = pad_batch(corpus[prev: to], d.get_pad(), True, False)
             inps.append(Variable(torch.LongTensor(inp)))
-            lengths.append(Variable(torch.LongTensor(length)))
+            lengths.append(length)
             prev = to
 
         return inps, lengths

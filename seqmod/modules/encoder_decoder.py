@@ -35,9 +35,11 @@ class EncoderDecoder(nn.Module):
         self.exposure_rate = exposure_rate
         self.reverse = reverse
 
-        # NLLLoss weight (downweight loss on pad)
-        self.nll_weight = torch.ones(len(self.decoder.embeddings.d))
-        self.nll_weight[self.decoder.embeddings.d.get_pad()] = 0
+        pad = self.decoder.embeddings.d.get_pad()
+        nll_weight = torch.ones(len(self.decoder.embeddings.d))
+        if pad is not None:
+            nll_weight[pad] = 0
+        self.register_buffer('nll_weight', nll_weight)
 
     def is_cuda(self):
         "Whether the model is on a gpu. We assume no device sharing."
@@ -67,11 +69,6 @@ class EncoderDecoder(nn.Module):
 
     def decoder_loss(self, dec_state, trg, num_examples,
                      test=False, split=25, use_schedule=False):
-
-        # word-level loss weight (weight down padding)
-        weight = self.nll_weight
-        if self.is_cuda():
-            weight = weight.cuda()
 
         # [<bos> ... <eos> pad pad] or [<eos> ... <bos> <pad> <pad>]
         dec_trg, loss_trg = trg[:-1], trg[1:]
@@ -108,14 +105,16 @@ class EncoderDecoder(nn.Module):
                 shard_loss = F.cross_entropy(out, new_true, size_average=False)
             else:
                 shard_loss = F.nll_loss(
-                    self.decoder.project(out), true, weight, size_average=False)
+                    self.decoder.project(out), true, size_average=False,
+                    weight=self.nll_weight)
+
             shard_loss /= num_examples
-            loss += shard_loss
+            loss += shard_loss.data[0]
 
             if not test:
                 shard_loss.backward(retain_graph=True)
 
-        return loss.data[0]
+        return loss
 
     def loss(self, batch_data, test=False, split=25, use_schedule=False):
         """

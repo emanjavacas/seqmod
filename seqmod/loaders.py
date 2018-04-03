@@ -24,7 +24,7 @@ class EmbeddingLoader(object):
         if mode is None:
             if 'glove' in basename:
                 mode = 'glove'
-            elif 'fasttext' in basename:
+            elif 'fasttext' in basename or 'ft.' in basename:
                 mode = 'fasttext'
             elif 'word2vec' in basename or 'w2v' in basename:
                 mode = 'word2vec'
@@ -42,7 +42,7 @@ class EmbeddingLoader(object):
             self.has_header = True
 
         self.use_model = False
-        if fname.endswith('.bin'):
+        if fname.endswith('bin'):
             self.use_model = True  # for fasttext or w2v
 
     def reader(self):
@@ -97,7 +97,9 @@ class EmbeddingLoader(object):
                 except KeyError:
                     pass
         else:
-            outwords = list(model.vocab.keys())[:min(maxwords, len(model.vocab))-1]
+            outwords = list(model.vocab.keys())
+            if maxwords is not None:
+                outwords = outwords[:min(maxwords, len(model.vocab)-1)]
             vectors = [model[w] for w in outwords]
 
         return np.array(vectors), outwords
@@ -108,7 +110,8 @@ class EmbeddingLoader(object):
 
         - words: list of str (optional)
         - maxwords: bool (optional), maximum number of words to be loaded. Only used if
-            `words` isn't passed, otherwise all words in `words` will be (possibly) loaded.
+            `words` isn't passed, otherwise all words in `words` will be (possibly) 
+            loaded.
         """
         vectors, outwords, start = [], [], time.time()
 

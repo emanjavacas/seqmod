@@ -82,9 +82,9 @@ def make_validation_hook(patience, checkpoint):
             early_stopping.add_checkpoint(
                 loss.reduce(), copy.deepcopy(trainer.model).cpu())
         if checkpoint is not None:
-            if loss is None:
-                loss = trainer.validate_model()
-            checkpoint.save(trainer.model, loss.reduce())
+            checkpoint.save_nlast(trainer.model)
+            loss = loss or trainer.validate_model()
+            checkpoint.save_nbest(trainer.model, loss=loss.reduce())
         if loss is not None:
             trainer.log("validation_end", {"epoch": epoch, "loss": loss.pack()})
 
@@ -207,7 +207,7 @@ if __name__ == '__main__':
 
     checkpoint, logfile = None, None
     if not args.test:
-        checkpoint = Checkpoint('Skipthought', buffer_size=3).setup(args)
+        checkpoint = Checkpoint('Skipthought', keep=3).setup(args)
         logfile = checkpoint.checkpoint_path('training.log')
 
     trainer.add_loggers(StdLogger(outputfile=logfile))

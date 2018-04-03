@@ -105,7 +105,8 @@ if __name__ == '__main__':
     # validation hook
     checkpoint, logfile = None, None
     if not args.test:
-        checkpoint = Checkpoint('Skipthought', buffer_size=3).setup(args)
+        checkpoint = Checkpoint('Skipthought', keep=6, mode='nlast')
+        checkpoint.setup(args)
         logfile = checkpoint.checkpoint_path('training.log')
     # reporting
     logger = StdLogger(outputfile=logfile)

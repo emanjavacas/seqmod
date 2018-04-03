@@ -115,7 +115,7 @@ class RNNEncoder(BaseEncoder):
         -----------
 
         - inp: torch.LongTensor (seq_len x batch)
-        - lengths: torch.LongTensor (batch)
+        - lengths: list (batch)
 
         Returns: output, hidden
         --------
@@ -139,7 +139,7 @@ class RNNEncoder(BaseEncoder):
 
         rnn_inp = inp
         if lengths is not None:  # pack if lengths given
-            rnn_inp, unsort = pack_sort(rnn_inp, lengths.data)
+            rnn_inp, unsort = pack_sort(rnn_inp, lengths)
 
         outs, hidden = self.rnn(rnn_inp, hidden)
 

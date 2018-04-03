@@ -98,7 +98,7 @@ def get_splits(length, test, dev=None):
     return cumsum(int(length * i) for i in [train, dev, test] if i)
 
 
-def pad_batch(examples, pad, return_lengths, align_right):
+def pad_sequential_batch(examples, pad, return_lengths, align_right):
     """
     Transform a list of examples into a proper torch.LongTensor batch
     """
@@ -334,7 +334,7 @@ class Dict(object):
                 else:
                     yield example
 
-    def pack(self, batch_data, return_lengths=False):
+    def pack(self, batch_data, return_lengths=False, align_right=False):
         """
         Convert transformed data into torch batch. Output type is LongTensor.
         This could be adapted to return other types as well.
@@ -344,11 +344,13 @@ class Dict(object):
         - batch_data: a list of examples
         - return_lengths: bool, if True output will be a tuple of LongTensor
             and list with sequence lengths in the batch
+        - align_right: bool, override instance align_right default
         """
-        align_right = hasattr(self, 'align_right') and self.align_right
+        align_right = align_right or hasattr(self, 'align_right') and self.align_right
 
         if self.sequential:
-            return pad_batch(batch_data, self.get_pad(), return_lengths, align_right)
+            return pad_sequential_batch(
+                batch_data, self.get_pad(), return_lengths, align_right)
         else:
             if self.dtype is int:
                 return torch.LongTensor(batch_data)

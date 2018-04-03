@@ -222,8 +222,11 @@ def pack_sort(inp, lengths, batch_first=False):
     Parameters:
     -----------
     inp: Variable(seq_len x batch x dim)
-    lengths: list of length ``batch``
+    lengths: Variable or LongTensor of length ``batch``
     """
+    if isinstance(lengths, Variable):
+        lengths = lengths.data
+
     lengths, idxs = torch.sort(lengths, descending=True)
     unsort = inp.data.new(len(lengths)).long()
 
