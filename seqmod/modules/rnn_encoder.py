@@ -14,6 +14,8 @@ class RNNEncoder(BaseEncoder):
     """
     Encoder that computes a dense representation of a sentence with a RNN.
     """
+    SUMMARIES = ('mean', 'mean-concat', 'mean-max', 'full', 'inner-attention', 'last')
+
     def __init__(self, embeddings, hid_dim, num_layers, cell, bidi=True,
                  dropout=0.0, summary='full', train_init=False, add_init_jitter=False):
 
@@ -42,7 +44,7 @@ class RNNEncoder(BaseEncoder):
             init_size = self.num_layers * self.num_dirs, 1, self.hid_dim
             self.h_0 = nn.Parameter(torch.Tensor(*init_size).zero_())
 
-        if self.summary not in ('mean', 'mean-concat', 'mean-max', 'full', 'inner-attention'):
+        if self.summary not in RNNEncoder.SUMMARIES:
             raise ValueError("Unknown summary type [{}]".format(self.summary))
 
         if self.summary == 'inner-attention':
@@ -113,7 +115,7 @@ class RNNEncoder(BaseEncoder):
         -----------
 
         - inp: torch.LongTensor (seq_len x batch)
-        - lengths: torch.LongTensor (batch)
+        - lengths: list (batch)
 
         Returns: output, hidden
         --------
@@ -137,7 +139,7 @@ class RNNEncoder(BaseEncoder):
 
         rnn_inp = inp
         if lengths is not None:  # pack if lengths given
-            rnn_inp, unsort = pack_sort(rnn_inp, lengths.data)
+            rnn_inp, unsort = pack_sort(rnn_inp, lengths)
 
         outs, hidden = self.rnn(rnn_inp, hidden)
 
@@ -160,6 +162,9 @@ class RNNEncoder(BaseEncoder):
 
         if self.summary == 'full':
             outs = outs         # do nothing
+
+        elif self.summary == 'last':
+            outs = outs[-1]
 
         elif self.summary == 'mean':
             outs = outs.mean(0)
@@ -188,6 +193,9 @@ class RNNEncoder(BaseEncoder):
     def encoding_size(self):
         if self.summary == 'full':
             return 3, self.hid_dim * self.num_dirs
+
+        elif self.summary == 'last':
+            return 2, self.hid_dim * self.num_dirs
 
         elif self.summary == 'mean':
             return 2, self.hid_dim * self.num_dirs

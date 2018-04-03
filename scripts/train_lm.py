@@ -212,7 +212,7 @@ if __name__ == '__main__':
 
     checkpoint = None
     if args.save:
-        checkpoint = Checkpoint(m.__class__.__name__, buffer_size=3).setup(args)
+        checkpoint = Checkpoint(m.__class__.__name__, keep=3).setup(args)
 
     model_hook = u.make_lm_hook(
         d, temperature=args.temperature, max_seq_len=args.max_seq_len,

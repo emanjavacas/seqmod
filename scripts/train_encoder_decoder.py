@@ -1,4 +1,5 @@
 
+import copy
 import string
 
 import random; random.seed(1001)
@@ -131,9 +132,13 @@ if __name__ == '__main__':
         src, trg = list(map(list, src)), list(map(list, trg))
         src_dict = Dict(pad_token=u.PAD, eos_token=u.EOS, bos_token=u.BOS)
         src_dict.fit(src, trg)
+        trg_dict = src_dict
+        if args.reverse:
+            trg_dict = copy.deepcopy(src_dict)
+            trg_dict.align_right = True
         train, valid = PairedDataset(
-            src, trg, {'src': src_dict, 'trg': src_dict},
-            batch_size=args.batch_size, gpu=args.gpu, align_right=args.reverse
+            src, trg, {'src': src_dict, 'trg': trg_dict},
+            batch_size=args.batch_size, gpu=args.gpu
         ).splits(dev=args.dev, test=None, sort=True)
 
     print(' * vocabulary size. {}'.format(len(src_dict)))
@@ -171,7 +176,7 @@ if __name__ == '__main__':
     trainer = Trainer(
         model, {'train': train, 'valid': valid}, optimizer, losses=('ppl',),
         early_stopping=early_stopping, max_norm=args.max_norm,
-        checkpoint=Checkpoint(model.__class__.__name__).setup(args, src_dict))
+        checkpoint=Checkpoint('EncoderDecoder', mode='nlast', keep=3).setup(args))
     trainer.add_loggers(StdLogger())
     # trainer.add_loggers(VisdomLogger(env='encdec'))
     trainer.add_loggers(TensorboardLogger(comment='encdec'))

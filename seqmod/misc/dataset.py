@@ -78,8 +78,8 @@ def cumsum(seq):
     """
     Compute the cumulative sum of an input sequence
 
-    >>> cumsum([1, 2, 3, 4)
-    [1, 3, 5, 7]
+    >>> cumsum([1, 2, 3, 4])
+    [0, 1, 3, 6, 10]
     """
     seq = [0] + list(seq)
     subseqs = (seq[:i] for i in range(1, len(seq) + 1))
@@ -98,7 +98,7 @@ def get_splits(length, test, dev=None):
     return cumsum(int(length * i) for i in [train, dev, test] if i)
 
 
-def pad_batch(examples, pad, return_lengths, align_right):
+def pad_sequential_batch(examples, pad, return_lengths, align_right):
     """
     Transform a list of examples into a proper torch.LongTensor batch
     """
@@ -127,13 +127,8 @@ def block_batchify(vector, batch_size):
     """
     Transform input vector to (None, batch_size)
 
-    >>> block_batchify([0, 2, 4, 6, 1, 3, 5, 7], 2)
-
-     0 1
-     2 3
-     4 5
-     6 7
-    [torch.LongTensor of size 4x2]
+    >>> block_batchify([0, 2, 4, 6, 1, 3, 5, 7], 2).tolist()
+    [[0, 1], [2, 3], [4, 5], [6, 7]]
     """
     if isinstance(vector, tuple):
         return tuple(block_batchify(v, batch_size) for v in vector)
@@ -175,7 +170,7 @@ class Dict(object):
     def __init__(self, pad_token=None, eos_token=None, bos_token=None,
                  unk_token=UNK, force_unk=False, max_size=None, min_freq=1,
                  sequential=True, max_len=None, use_vocab=True, dtype=int,
-                 preprocessing=None):
+                 preprocessing=None, align_right=False):
 
         self.counter = Counter()
         self.vocab = []
@@ -189,6 +184,7 @@ class Dict(object):
         self.bos_token = bos_token
         self.unk_token = unk_token
         self.preprocessing = preprocessing
+        self.align_right = align_right
 
         # only index unk_token if needed or requested
         if self.use_vocab:
@@ -286,6 +282,27 @@ class Dict(object):
         self.s2i = {s: i for i, s in enumerate(self.vocab)}
         self.fitted = True
 
+    def expand_vocab(self, words):
+        """
+        Add words to the vocabulary. If a word is already in the vocabulary an
+        error will be thrown, thus, assuming that all new words are OOV.
+
+        - words: list of strings with new words
+
+        Returns the list of idxs corresponding to the new words.
+        """
+        new_idxs = []
+        for w in words:
+            if w in self.s2i:
+                raise ValueError("Word [{}] already in the vocabulary".format(w))
+
+            idx = len(self.vocab)
+            self.vocab.append(w)
+            self.s2i[w] = idx
+            new_idxs.append(idx)
+
+        return new_idxs
+
     def transform(self, examples):
         """
         Parameters
@@ -327,9 +344,12 @@ class Dict(object):
         - batch_data: a list of examples
         - return_lengths: bool, if True output will be a tuple of LongTensor
             and list with sequence lengths in the batch
+        - align_right: bool, override instance align_right default
         """
+        align_right = align_right or hasattr(self, 'align_right') and self.align_right
+
         if self.sequential:
-            return pad_batch(
+            return pad_sequential_batch(
                 batch_data, self.get_pad(), return_lengths, align_right)
         else:
             if self.dtype is int:
@@ -488,7 +508,7 @@ class PairedDataset(Dataset):
     """
     def __init__(self, src, trg, d, batch_size=1,
                  fitted=False, gpu=False, evaluation=False,
-                 return_lengths=True, align_right=False):
+                 return_lengths=True):
         self.autoregressive, self.data, self.d = False, {}, d
 
         # prepare src data
@@ -514,7 +534,6 @@ class PairedDataset(Dataset):
         self.gpu = gpu
         self.evaluation = evaluation
         self.return_lengths = return_lengths
-        self.align_right = align_right
         self.num_batches = src_len // batch_size
 
     def _fit(self, data, dicts):
@@ -545,12 +564,10 @@ class PairedDataset(Dataset):
             batches = list(zip(*batch))  # unpack batches
             if isinstance(dicts, MultiDict):
                 dicts = dicts.dicts.values()
-            out = tuple(d.pack(b, return_lengths=self.return_lengths,
-                               align_right=self.align_right)
+            out = tuple(d.pack(b, return_lengths=self.return_lengths)
                         for (d, b) in zip(dicts, batches))
         else:
-            out = dicts.pack(batch, return_lengths=self.return_lengths,
-                             align_right=self.align_right)
+            out = dicts.pack(batch, return_lengths=self.return_lengths)
 
         return wrap_variables(out, volatile=self.evaluation, gpu=self.gpu)
 
@@ -687,8 +704,7 @@ class PairedDataset(Dataset):
 
             subset = type(self)(
                 src, trg, self.d, self.batch_size, fitted=True, gpu=self.gpu,
-                return_lengths=self.return_lengths, evaluation=evaluation,
-                align_right=self.align_right)
+                return_lengths=self.return_lengths, evaluation=evaluation)
 
             if sort:
                 subset.sort_(**kwargs)

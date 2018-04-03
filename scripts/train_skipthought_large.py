@@ -1,5 +1,6 @@
 
 import os
+import copy
 import random
 import torch.optim as optim
 
@@ -17,7 +18,10 @@ def make_lr_hook(optimizer, factor, checkpoints):
     def hook(trainer, epoch, batch_num, checkpoint):
         loss = trainer.validate_model()
         trainer.log("validation_end", {"epoch": epoch, "loss": loss.pack()})
+        lr = next(iter(trainer.optimizer.param_groups))['lr']
         scheduler.step(loss.reduce())
+        newlr = next(iter(trainer.optimizer.param_groups))['lr']
+        trainer.log("info", "LR update {:g} => {:g}".format(lr, newlr))
 
     return hook
 
@@ -36,12 +40,13 @@ if __name__ == '__main__':
     parser.add_argument('--level', default='word')
     parser.add_argument('--dev_split', type=float, default=0.05)
     # model
-    parser.add_argument('--emb_dim', type=int, default=300)
-    parser.add_argument('--hid_dim', type=int, default=200)
+    parser.add_argument('--emb_dim', type=int, default=620)
+    parser.add_argument('--hid_dim', type=int, default=2400)
     parser.add_argument('--num_layers', type=int, default=1)
-    parser.add_argument('--cell', default='LSTM')
-    parser.add_argument('--encoder_summary', default='mean-max')
+    parser.add_argument('--cell', default='GRU')
+    parser.add_argument('--encoder_summary', default='last')
     parser.add_argument('--sampled_softmax', action='store_true')
+    parser.add_argument('--tie_weights', action='store_true')
     parser.add_argument('--train_init', action='store_true')
     parser.add_argument('--init_embeddings', action='store_true')
     parser.add_argument('--embeddings_path',
@@ -58,29 +63,36 @@ if __name__ == '__main__':
     parser.add_argument('--max_norm', type=float, default=5.)
     parser.add_argument('--patience', default=0, type=int)
     parser.add_argument('--epochs', type=int, default=5)
-    parser.add_argument('--batch_size', type=int, default=50)
+    parser.add_argument('--batch_size', type=int, default=128)
     parser.add_argument('--gpu', action='store_true')
     parser.add_argument('--checkpoint', type=int, default=1000)
     parser.add_argument('--num_checkpoints', type=int, default=20)
     parser.add_argument('--test', action='store_true')
     args = parser.parse_args()
 
-
     print("Loading data...")
     d = u.load_model(args.dict_path)
+    src_d, trg_d = d, d
+    if args.reverse:
+        trg_d = copy.deepcopy(d)
+        trg_d.align_right = True
+    dicts = {'src': src_d, 'trg': trg_d}
 
     print("Building model...")
     m = make_rnn_encoder_decoder(
-        args.num_layers, args.emb_dim, args.hid_dim, d, cell=args.cell,
+        args.num_layers, args.emb_dim, args.hid_dim, d, cell=args.cell, bidi=True,
         encoder_summary=args.encoder_summary, dropout=args.dropout,
-        sampled_softmax=args.sampled_softmax,
-        reuse_hidden=False, add_init_jitter=True, input_feed=False, att_type=None,
-        tie_weights=True, word_dropout=args.word_dropout, reverse=args.reverse)
+        sampled_softmax=args.sampled_softmax, reuse_hidden=False,
+        add_init_jitter=False, input_feed=False, att_type=None,
+        context_feed=True, reverse=args.reverse, train_init=args.train_init,
+        tie_weights=args.tie_weights, word_dropout=args.word_dropout)
 
     print(m)
     print('* number of params: ', sum(p.nelement() for p in m.parameters()))
 
-    u.initialize_model(m)
+    u.initialize_model(
+        m, rnn={'type': 'rnn_orthogonal', 'args': {'forget_bias': True}},
+        emb={'type': 'uniform', 'args': {'a': -0.1, 'b': 0.1}})
 
     if args.init_embeddings:
         m.encoder.embeddings.init_embeddings_from_file(
@@ -93,7 +105,8 @@ if __name__ == '__main__':
     # validation hook
     checkpoint, logfile = None, None
     if not args.test:
-        checkpoint = Checkpoint('Skipthought', buffer_size=3).setup(args)
+        checkpoint = Checkpoint('Skipthought', keep=6, mode='nlast')
+        checkpoint.setup(args)
         logfile = checkpoint.checkpoint_path('training.log')
     # reporting
     logger = StdLogger(outputfile=logfile)
@@ -112,7 +125,7 @@ if __name__ == '__main__':
     if args.dev_path and os.path.isfile(args.dev_path):
         valid = u.load_model(args.dev_path)
         valid = PairedDataset(
-            valid['p1'], valid['p2'], {'src': d, 'trg': d},
+            valid['p1'], valid['p2'], dicts,
             batch_size=args.batch_size, fitted=True, gpu=args.gpu
         ).sort_(sort_by='trg')
 
@@ -122,15 +135,18 @@ if __name__ == '__main__':
             print("Training on subset [{}/{}]: {}".format(idx+1, len(args.path), path))
             print("Loading data...")
             train = u.load_model(path)
+            print("Preparing dataset")
             train = PairedDataset(
-                train['p1'], train['p2'], {'src': d, 'trg': d},
+                train['p1'], train['p2'], dicts,
                 batch_size=args.batch_size, fitted=True, gpu=args.gpu)
             if valid is None:
+                print("Loading validation set")
                 train, valid = train.splits(dev=None, test=args.dev_split, shuffle=True)
                 valid.sort_(sort_by='trg')
             train.sort_(sort_by='trg')
 
             # setup trainer
+            print("Starting training")
             trainer = Trainer(m, {'train': train, 'valid': valid}, optimizer,
                               losses=('ppl',), max_norm=args.max_norm)
             trainer.add_loggers(logger)
@@ -143,6 +159,8 @@ if __name__ == '__main__':
             # ensure model is on gpu after training
             if args.gpu:
                 m.cuda()
+
+            del train, trainer
 
     if not args.test:
         if not u.prompt("Do you want to keep intermediate results? (yes/no)"):

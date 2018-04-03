@@ -24,7 +24,7 @@ class EmbeddingLoader(object):
         if mode is None:
             if 'glove' in basename:
                 mode = 'glove'
-            elif 'fasttext' in basename:
+            elif 'fasttext' in basename or 'ft.' in basename:
                 mode = 'fasttext'
             elif 'word2vec' in basename or 'w2v' in basename:
                 mode = 'word2vec'
@@ -42,7 +42,7 @@ class EmbeddingLoader(object):
             self.has_header = True
 
         self.use_model = False
-        if fname.endswith('.bin'):
+        if fname.endswith('bin'):
             self.use_model = True  # for fasttext or w2v
 
     def reader(self):
@@ -77,7 +77,7 @@ class EmbeddingLoader(object):
         vectors = np.array([model.get_word_vector(word) for word in words])
         return vectors, words
 
-    def load_from_model_w2v(self, words, verbose=False):
+    def load_from_model_w2v(self, words, maxwords=None, verbose=False):
         try:
             from gensim.models import KeyedVectors
         except ImportError:
@@ -88,36 +88,50 @@ class EmbeddingLoader(object):
         if verbose:
             print("Loaded model in {:.3f} secs".format(time.time()-start))
 
-        vectors, outwords = [], []
-        for word in words:
-            try:
-                vectors.append(model[word])
-                outwords.append(word)
-            except KeyError:
-                pass
+        if words is not None:
+            vectors, outwords = [], []
+            for word in words:
+                try:
+                    vectors.append(model[word])
+                    outwords.append(word)
+                except KeyError:
+                    pass
+        else:
+            outwords = list(model.vocab.keys())
+            if maxwords is not None:
+                outwords = outwords[:min(maxwords, len(model.vocab)-1)]
+            vectors = [model[w] for w in outwords]
 
         return np.array(vectors), outwords
 
-    def load(self, words=None, verbose=False):
+    def load(self, words=None, maxwords=None, verbose=False):
+        """
+        Load embeddings.
+
+        - words: list of str (optional)
+        - maxwords: bool (optional), maximum number of words to be loaded. Only used if
+            `words` isn't passed, otherwise all words in `words` will be (possibly) 
+            loaded.
+        """
         vectors, outwords, start = [], [], time.time()
 
         if words is not None:
             words = set(words)
-
             if verbose:
                 print("Loading {} embeddings".format(len(words)))
 
         if words is not None and self.mode == 'fasttext' and self.use_model:
             vectors, outwords = self.load_from_model_ft(words, verbose)
-
-        elif words is not None and self.mode == 'word2vec' and self.use_model:
-            vectors, outwords = self.load_from_model_w2v(words, verbose)
-
+        # always use gensim for word2vec (even if no restricted wordlist is provided)
+        elif self.mode == 'word2vec' and self.use_model:
+            vectors, outwords = self.load_from_model_w2v(
+                words, maxwords=maxwords, verbose=verbose)
         else:
             for idx, (word, vec) in enumerate(self.reader()):
                 if words is not None and word not in words:
                     continue
-
+                if words is None and maxwords is not None and len(vectors) >= maxwords:
+                    break
                 try:
                     vec = list(map(float, vec))
                     vectors.append(vec)
@@ -126,7 +140,7 @@ class EmbeddingLoader(object):
                     raise ValueError(str(e) + ' at {}:{}'.format(self.fname, idx))
 
         if verbose:
-            print("Loaded {} embeddings in {:.3f}".format(
+            print("Loaded {} embeddings in {:.3f} secs".format(
                 len(outwords), time.time()-start))
 
         return vectors, outwords
