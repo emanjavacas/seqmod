@@ -1,0 +1,12 @@
+numpy==1.13.3
+tqdm==4.17.1
+matplotlib==2.0.2
+lorem==0.1.1
+visdom==0.1.6.3
+hyperopt==0.1
+gensim==2.3.0
+torch==0.3.1
+Cython==0.28.1
+scikit_learn==0.19.1
+tensorboardX==1.1
+PyYAML==3.12
