@@ -112,7 +112,6 @@ if __name__ == '__main__':
     parser.add_argument('--visdom', action='store_true')
     parser.add_argument('--visdom_host', default='localhost')
     parser.add_argument('--save', action='store_true')
-    parser.add_argument('--save_path', default='models', type=str)
     args = parser.parse_args()
 
     if args.processed:
