@@ -3,8 +3,6 @@
 from setuptools import setup
 
 
-import seqmod
-
 setup(
     name='seqmod',
     version='0.3',
