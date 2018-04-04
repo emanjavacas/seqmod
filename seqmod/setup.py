@@ -1,5 +1,5 @@
-#!/usr/bin/env python
 
+#!/usr/bin/env python
 from setuptools import setup
 
 
@@ -15,6 +15,7 @@ setup(
     author_email='enrique.manjavacas@gmail.com',
     url='https://www.github.com/emanjavacas/seqmod/',
     download_url='https://api.github.com/repos/emanjavacas/seqmod/tarball',
+    license='GPL',
     install_requires=[
         'numpy==1.13.3',
         'tqdm==4.17.1',
@@ -23,6 +24,4 @@ setup(
         'fasttext==0.8.3',
         'scikit_learn==0.19.1',
         'torch==0.3.1',
-        'Cython==0.28.1',
-        'PyYAML==3.12'],
-    license='GPL')
+        'PyYAML==3.12'])
