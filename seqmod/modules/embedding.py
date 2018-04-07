@@ -370,8 +370,9 @@ class RNNEmbedding(ComplexEmbedding):
 
         # iterate over batch
         for i in range(inp.size(1)):
-            breakpoints = (inp[:, i] == self.breakpoint_idx).nonzero()
-            breakpoints = torch.cat([breakpoints.squeeze(1), lengths[i]-1])
+            breakpoints = (inp[:, i].data == self.breakpoint_idx).nonzero()
+            breakpoints = torch.cat([
+                breakpoints.squeeze(1), lengths.unsqueeze(1)[i]-1], dim=0)
             embs.append(out[:, i][breakpoints])
 
         embs, lengths = pad_sequence(embs)

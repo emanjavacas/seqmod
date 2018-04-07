@@ -8,7 +8,7 @@ import lorem
 from seqmod.modules import embedding
 from seqmod.loaders import EmbeddingLoader
 from seqmod import utils as u
-from seqmod.misc.dataset import Dict, pad_batch
+from seqmod.misc.dataset import Dict, pad_sequential_batch
 
 
 class EmbeddingTest(unittest.TestCase):
@@ -43,9 +43,9 @@ class TestEmbeddingFromDict(EmbeddingTest):
 class TestComplexEmbedding(EmbeddingTest):
     def setUp(self):
         super(TestComplexEmbedding, self).setUp()
-        inp, lengths = pad_batch(self.corpus, self.d.get_pad(), True, False)
+        inp, lengths = pad_sequential_batch(self.corpus, self.d.get_pad(), True, False)
         self.inp = Variable(torch.LongTensor(inp))
-        self.lengths = Variable(torch.LongTensor(lengths))
+        self.lengths = torch.LongTensor(lengths)
 
     def _test_embedding_dimensions(self, emb):
         output, lengths = emb(self.inp, self.lengths)
