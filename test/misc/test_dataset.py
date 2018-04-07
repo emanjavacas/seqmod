@@ -231,16 +231,23 @@ class TestPairedDataset(unittest.TestCase):
 
 class TestStratify(unittest.TestCase):
     def setUp(self):
-        self.sents = [lorem.sentence().split() for _ in range(1000)]
-        self.labels = np.random.randint(0, 10, size=(1000,))
+        self.sents = []
+        for _ in range(5000):
+            sent = lorem.sentence().split()
+            if sent not in self.sents:
+                # avoid duplicates since `test_pairing` relies on sorting
+                self.sents.append(sent)
+        props = [0.1, 0.4, 0.3, 0.2]
+        self.labels = np.random.multinomial(1, props, (len(self.sents))).argmax(1)
         d = Dict(pad_token='<PAD>').fit(self.sents)
         ld = Dict(sequential=False).fit(self.labels)
         self.dataset = PairedDataset(
-            self.sents, self.labels, {'src': d, 'trg': ld}, batch_size=50)
+            self.sents, self.labels, {'src': d, 'trg': ld}, batch_size=10)
 
     @staticmethod
     def reconstruct_set(dataset):
-        sents = [[dataset.d['src'].vocab[w] for w in sent] for sent in dataset.data['src']]
+        sents = [[dataset.d['src'].vocab[w] for w in sent]
+                 for sent in dataset.data['src']]
         labels = [dataset.d['trg'].vocab[l] for l in dataset.data['trg']]
         return sents, labels
 
@@ -252,8 +259,10 @@ class TestStratify(unittest.TestCase):
     def test_pairing(self):
         self.dataset.sort_().shuffle_().stratify_()
         rec_sents, rec_labels = TestStratify.reconstruct_set(self.dataset)
-        sort_rec_sents, sort_rec_labels = TestStratify.argsort_dataset(rec_sents, rec_labels)
-        sort_sents, sort_labels = TestStratify.argsort_dataset(self.sents, self.labels)
+        sort_rec_sents, sort_rec_labels = TestStratify.argsort_dataset(
+            rec_sents, rec_labels)
+        sort_sents, sort_labels = TestStratify.argsort_dataset(
+            self.sents, self.labels)
         self.assertEqual(sort_rec_sents, sort_sents)
         self.assertEqual(sort_rec_labels, sort_labels)
 
@@ -276,4 +285,5 @@ class TestStratify(unittest.TestCase):
         mean_stddev = TestStratify.dataset_mean_stddev(self.dataset)
         props = TestStratify.dataset_props(self.dataset.data['trg'], len(self.dataset))
         for key in mean_stddev:
-            self.assertAlmostEqual(mean_stddev[key][0], props[key], delta=0.01)  # ignore stddev
+            # ignore stddev
+            self.assertAlmostEqual(mean_stddev[key][0], props[key], delta=0.05)
