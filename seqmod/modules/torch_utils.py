@@ -75,8 +75,9 @@ def variational_dropout(inp, p=0.0, training=False):
         # compute mask
         inp.data.new(1, batch, dim).bernoulli_(1 - p).div_(1 - p),
         requires_grad=False
-    # exapand and apply mask
+        # expand and apply mask
     ).expand(seq_len, batch, dim) * inp
+
 
 def split(inp, breakpoints, include_last=False):
     """
@@ -238,6 +239,26 @@ def pack_sort(inp, lengths, batch_first=False):
     unsort[idxs] = torch.arange(len(idxs), out=torch.zeros_like(unsort))
 
     return inp, unsort
+
+
+def get_last_token(t, lenghts):
+    """
+    Grab last hidden activation of each batch element according to `lenghts`
+
+    >>> t = Variable(torch.arange(0, 3))
+    >>> t = t.unsqueeze(1).unsqueeze(2).expand(3, 2, 3).contiguous()
+    >>> lenghts = torch.LongTensor([3, 1])
+    >>> get_last_token(t, lenghts).data.tolist()
+    [[2.0, 2.0, 2.0], [0.0, 0.0, 0.0]]
+    """
+    seq_len, batch, _ = t.size()
+    index = torch.arange(0, batch, out=torch.zeros_like(lenghts).long()) * seq_len
+    index = Variable(index + (lenghts - 1))
+    t = t.transpose(0, 1).contiguous()  # make it batch first
+    t = t.view(seq_len * batch, -1)
+    t = t.index_select(0, index)
+    t = t.view(batch, -1)
+    return t
 
 
 def detach_vars(data):

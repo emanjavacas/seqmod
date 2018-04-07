@@ -7,7 +7,8 @@ import torch.nn.functional as F
 from torch.nn.utils.rnn import pad_packed_sequence as unpack
 
 from seqmod.modules.encoder import BaseEncoder
-from seqmod.modules.torch_utils import init_hidden_for, pack_sort, repackage_bidi
+from seqmod.modules.torch_utils import init_hidden_for, repackage_bidi
+from seqmod.modules.torch_utils import pack_sort, get_last_token
 
 
 class RNNEncoder(BaseEncoder):
@@ -140,6 +141,8 @@ class RNNEncoder(BaseEncoder):
         rnn_inp = inp
         if lengths is not None:  # pack if lengths given
             rnn_inp, unsort = pack_sort(rnn_inp, lengths)
+        else:
+            logging.warn("RNN can run faster if `lengths` is provided")
 
         outs, hidden = self.rnn(rnn_inp, hidden)
 
@@ -147,16 +150,15 @@ class RNNEncoder(BaseEncoder):
             outs, _ = unpack(outs)
             outs = outs[:, unsort]
             if self.cell.startswith('LSTM'):
-                hidden = (hidden[0][:, unsort, :], hidden[1][:, unsort, :])
+                hidden = hidden[0][:, unsort, :], hidden[1][:, unsort, :]
             else:
                 hidden = hidden[:, unsort, :]
 
         if self.bidi:
-            # BiRNN encoder outputs:   (num_layers * 2 x batch x hid_dim)
-            # but RNN decoder expects: (num_layers x batch x hid_dim * 2)
+            # BiRNN encoder outputs: (num_layers * 2 x batch x hid_dim)
+            # RNN decoder expects:   (num_layers x batch x hid_dim * 2)
             if self.cell.startswith('LSTM'):
-                hidden = (repackage_bidi(hidden[0]),
-                          repackage_bidi(hidden[1]))
+                hidden = repackage_bidi(hidden[0]), repackage_bidi(hidden[1])
             else:
                 hidden = repackage_bidi(hidden)
 
@@ -164,13 +166,13 @@ class RNNEncoder(BaseEncoder):
             outs = outs         # do nothing
 
         elif self.summary == 'last':
-            outs = outs[-1]
+            outs = get_last_token(outs, lengths)
 
         elif self.summary == 'mean':
             outs = outs.mean(0)
 
         elif self.summary == 'mean-concat':
-            outs = torch.cat([outs[:-1].mean(0), outs[-1]], 1)
+            outs = torch.cat([outs.mean(0), get_last_token(outs, lengths)], 1)
 
         elif self.summary == 'inner-attention':
             seq_len, batch_size, _ = inp.size()
