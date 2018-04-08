@@ -7,6 +7,7 @@ import math
 import collections
 import yaml
 import argparse
+import logging
 from operator import itemgetter
 from datetime import datetime
 
@@ -203,7 +204,10 @@ class Checkpoint(object):
 
         if len(self.buf_last) == self.keep:
             oldestm, _ = self.buf_last[-1]
-            os.remove(oldestm)
+            try:
+                os.remove(oldestm)
+            except FileNotFoundError:
+                logging.warn("Couldn't find model [{}]".format(oldestm))
             self.buf_last.pop()
 
         timestamp = datetime.now().strftime("%Y_%m_%d-%H_%M_%S")
@@ -220,17 +224,23 @@ class Checkpoint(object):
         if not self.is_setup:
             raise ValueError("Checkpoint not setup yet")
 
+        def format_loss(loss): return '{:.4f}'.format(loss)
+
         if len(self.buf_best) == self.keep:
-            losses = [l for _, l in self.buf_best]
+            losses = [format_loss(l) for _, l in self.buf_best]
             (worstm, worstl) = self.buf_best[-1]
-            if loss < worstl and loss not in losses:  # avoid duplicates
-                os.remove(worstm)
+            if loss < worstl and format_loss(loss) not in losses:  # avoid duplicates
+                try:
+                    os.remove(worstm)
+                except FileNotFoundError:
+                    logging.warn("Couldn't find model [{}]".format(worstm))
+                    print(self.buf_best, worstm, loss, worstl)
                 self.buf_best.pop()
             else:
                 return
 
-        rounded = '{:.4f}'.format(loss)
-        modelname = u.save_model(model, self.get_modelname(rounded), mode=self.ext)
+        modelname = u.save_model(
+            model, self.get_modelname(format_loss(loss)), mode=self.ext)
         self.buf_best.append((modelname, loss))
         self.buf_best.sort(key=itemgetter(1))
 

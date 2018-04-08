@@ -560,7 +560,7 @@ class LM(BaseLM):
 
         # Conditions
         if hasattr(self, 'conds') and self.conds is not None:
-            if conds is not None:
+            if conds is None:
                 raise ValueError("Conditional model expects `conds` as input")
             conds = [c_emb(inp_c) for c_emb, inp_c in zip(self.conds, conds)]
             emb = torch.cat([emb, *conds], 2)
@@ -571,6 +571,7 @@ class LM(BaseLM):
         # RNN
         hidden = hidden if hidden is not None else self.init_hidden_for(emb)
         outs, hidden = self.rnn(emb, hidden)
+
         # (dropout after RNN)
         outs = F.dropout(outs, p=self.dropout, training=self.training)
 
