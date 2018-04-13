@@ -193,6 +193,14 @@ class RNNEncoder(BaseEncoder):
 
     @property
     def encoding_size(self):
+        """
+        Returns (dims, feats)
+        -------
+        - dims: int, number of dimensions of the encoding (first output argument
+            of `forward`)
+        - feats: int, number of features in the encoding (first output argument
+            of `forward`)
+        """
         if self.summary == 'full':
             return 3, self.hid_dim * self.num_dirs
 

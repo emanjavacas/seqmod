@@ -251,6 +251,9 @@ def get_last_token(t, lenghts):
     >>> get_last_token(t, lenghts).data.tolist()
     [[2.0, 2.0, 2.0], [0.0, 0.0, 0.0]]
     """
+    if isinstance(lenghts, Variable):
+        lenghts = lenghts.data
+
     seq_len, batch, _ = t.size()
     index = torch.arange(0, batch, out=torch.zeros_like(lenghts).long()) * seq_len
     index = Variable(index + (lenghts - 1))
