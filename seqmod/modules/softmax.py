@@ -9,7 +9,7 @@ from torch.autograd import Variable
 from seqmod.modules.torch_utils import variational_dropout
 from seqmod.modules.ff import Highway
 
-from log_uniform import LogUniformSampler
+from .log_uniform import LogUniformSampler
 
 
 class BaseSoftmax(nn.Module):
