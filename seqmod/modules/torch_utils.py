@@ -224,19 +224,27 @@ def pack_sort(inp, lengths, batch_first=False):
     -----------
     inp: Variable(seq_len x batch x dim)
     lengths: Variable or LongTensor of length ``batch``
+
+    >>> from torch.nn.utils.rnn import pad_packed_sequence as unpack
+    >>> inp = Variable(torch.FloatTensor([[1, 3], [2, 4], [0, 5]]))
+    >>> lengths = torch.LongTensor([2, 3]) # unsorted order
+    >>> sorted_inp, unsort = pack_sort(inp, lengths)
+    >>> sorted_inp, _ = unpack(sorted_inp)
+    >>> sorted_inp[:, unsort].data.tolist()  # original order
+    [[1.0, 3.0], [2.0, 4.0], [0.0, 5.0]]
+    >>> sorted_inp.data.tolist()  # sorted by length
+    [[3.0, 1.0], [4.0, 2.0], [5.0, 0.0]]
     """
     if isinstance(lengths, Variable):
         lengths = lengths.data
 
-    lengths, idxs = torch.sort(lengths, descending=True)
-    unsort = inp.data.new(len(lengths)).long()
+    lengths, sort = torch.sort(lengths, descending=True)
+    _, unsort = sort.sort()
 
     if batch_first:
-        inp = pack_padded_sequence(inp[idxs], lengths.tolist())
+        inp = pack_padded_sequence(inp[sort], lengths.tolist())
     else:
-        inp = pack_padded_sequence(inp[:, idxs], lengths.tolist())
-
-    unsort[idxs] = torch.arange(len(idxs), out=torch.zeros_like(unsort))
+        inp = pack_padded_sequence(inp[:, sort], lengths.tolist())
 
     return inp, unsort
 
