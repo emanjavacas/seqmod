@@ -11,6 +11,7 @@ import numpy as np
 
 import torch
 import torch.nn.init as init
+import torch.optim as optim
 from torch.autograd import Variable
 
 BOS = '<bos>'
@@ -164,10 +165,10 @@ def rnn_orthogonal(cell, gain=1, forget_bias=False):
                     init.constant(p, 0.)
             else:
                 init.constant(p, 0.)
-        elif '_hh': # recurrent layer
+        elif '_hh' in p_name:         # recurrent layer
             for i in range(0, p.size(0), cell.hidden_size):
                 init.orthogonal(p[i:i + cell.hidden_size], gain=gain)
-        else: # input to hidden
+        else:                         # input to hidden
             stdev = 1.0 / math.sqrt(cell.hidden_size)
             init.uniform(p, -stdev, stdev)
 
@@ -178,7 +179,7 @@ def positive_forget_bias(p):
     """
     init.constant(p, 0.)
     hidden_size = len(p) // 4
-    init.constant(p[hidden_size:hidden_size * 2], 1.0) # forget gate is second
+    init.constant(p[hidden_size:hidden_size * 2], 1.0)  # forget gate is second
 
 
 def make_initializer(
@@ -208,7 +209,7 @@ def make_initializer(
     def initializer(m):
 
         if isinstance(m, (rnns)):  # RNNs
-            if rnn['type'] == 'rnn_orthogonal': # full initialization scheme
+            if rnn['type'] == 'rnn_orthogonal':  # full initialization scheme
                 rnn_orthogonal(m, **rnn['args'])
                 return
 
@@ -235,9 +236,9 @@ def make_initializer(
                     continue
                 getattr(init, emb['type'])(p, **emb['args'])
             if m.padding_idx is not None:
-               m.weight.data[m.padding_idx].fill_(0)
+                m.weight.data[m.padding_idx].fill_(0)
 
-        elif isinstance(m, convs): # CNN
+        elif isinstance(m, convs):  # CNN
             for p_name, p in m.named_parameters():
                 if hasattr(p, 'custom'):
                     continue
