@@ -253,11 +253,11 @@ def get_last_token(t, lenghts):
     """
     Grab last hidden activation of each batch element according to `lenghts`
 
-    >>> t = Variable(torch.arange(0, 3))
-    >>> t = t.unsqueeze(1).unsqueeze(2).expand(3, 2, 3).contiguous()
-    >>> lenghts = torch.LongTensor([3, 1])
+    #                                             ^ (1)      ^ (2)      ^ (3)
+    >>> t = Variable(torch.FloatTensor([[[1],[2],[3]], [[2],[3],[4]], [[3],[4],[5]]]))
+    >>> lenghts = torch.LongTensor([3, 2, 1])
     >>> get_last_token(t, lenghts).data.tolist()
-    [[2.0, 2.0, 2.0], [0.0, 0.0, 0.0]]
+    [[3.0], [3.0], [3.0]]
     """
     if isinstance(lenghts, Variable):
         lenghts = lenghts.data
