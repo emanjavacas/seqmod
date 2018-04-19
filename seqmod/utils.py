@@ -161,7 +161,7 @@ def rnn_orthogonal(cell, gain=1, forget_bias=False):
                     positive_forget_bias(p)
                 else:
                     logging.warning("Skipping forget bias for cell of type '{}'"
-                                 .format(type(cell).__name__))
+                                    .format(type(cell).__name__))
                     init.constant(p, 0.)
             else:
                 init.constant(p, 0.)
