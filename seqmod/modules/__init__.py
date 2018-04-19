@@ -1,4 +1,5 @@
 
+from .log_uniform import *
 from .attention import *
 from .ff import *
 from .rnn import *

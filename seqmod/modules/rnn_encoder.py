@@ -136,15 +136,13 @@ class RNNEncoder(BaseEncoder):
         else:
             inp = self.embeddings(inp)
 
-        hidden = self.init_hidden_for(inp)
-
         rnn_inp = inp
         if lengths is not None:  # pack if lengths given
             rnn_inp, unsort = pack_sort(rnn_inp, lengths)
         else:
             logging.warn("RNN can run faster if `lengths` is provided")
 
-        outs, hidden = self.rnn(rnn_inp, hidden)
+        outs, hidden = self.rnn(rnn_inp, self.init_hidden_for(inp))
 
         if lengths is not None:  # unpack & unsort
             outs, _ = unpack(outs)
