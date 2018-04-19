@@ -160,7 +160,7 @@ def rnn_orthogonal(cell, gain=1, forget_bias=False):
                 if isinstance(cell, (torch.nn.LSTM, torch.nn.LSTMCell, StackedLSTM)):
                     positive_forget_bias(p)
                 else:
-                    logging.warn("Skipping forget bias for cell of type '{}'"
+                    logging.warning("Skipping forget bias for cell of type '{}'"
                                  .format(type(cell).__name__))
                     init.constant(p, 0.)
             else:
@@ -210,41 +210,48 @@ def make_initializer(
 
         if isinstance(m, (rnns)):  # RNNs
             if rnn['type'] == 'rnn_orthogonal':  # full initialization scheme
+                logging.warning("Initializing {} with orthogonal scheme".format(
+                    type(m).__name__))
                 rnn_orthogonal(m, **rnn['args'])
-                return
-
-            for p_name, p in m.named_parameters():
-                if hasattr(p, 'custom'):
-                    continue
-                if is_bias(p_name):
-                    getattr(init, rnn_bias['type'])(p, **rnn_bias['args'])
-                else:
-                    getattr(init, rnn['type'])(p, **rnn['args'])
+            else:
+                for p_name, p in m.named_parameters():
+                    if is_bias(p_name):
+                        logging.warning("Initializing {} with {} scheme".format(
+                            '{}.{}'.format(type(m).__name__, p_name), rnn_bias['type']))
+                        getattr(init, rnn_bias['type'])(p, **rnn_bias['args'])
+                    else:
+                        logging.warning("Initializing {} with {} scheme".format(
+                            '{}.{}'.format(type(m).__name__, p_name), rnn['type']))
+                        getattr(init, rnn['type'])(p, **rnn['args'])
 
         elif isinstance(m, torch.nn.Linear):  # Linear
             for p_name, p in m.named_parameters():
-                if hasattr(p, 'custom'):
-                    continue
                 if is_bias(p_name):
+                    logging.warning("Initializing {} with {} scheme".format(
+                        '{}.{}'.format(type(m).__name__, p_name), linear_bias['type']))
                     getattr(init, linear_bias['type'])(p, **linear_bias['args'])
                 else:
+                    logging.warning("Initializing {} with {} scheme".format(
+                        '{}.{}'.format(type(m).__name__, p_name), linear['type']))
                     getattr(init, linear['type'])(p, **linear['args'])
 
         elif isinstance(m, torch.nn.Embedding):  # Embedding
-            for p in m.parameters():
-                if hasattr(p, 'custom'):
-                    continue
+            for p_name, p in m.named_parameters():
                 getattr(init, emb['type'])(p, **emb['args'])
+                logging.warning("Initializing {} with {} scheme".format(
+                    '{}.{}'.format(type(m).__name__, p_name), emb['type']))
             if m.padding_idx is not None:
                 m.weight.data[m.padding_idx].fill_(0)
 
         elif isinstance(m, convs):  # CNN
             for p_name, p in m.named_parameters():
-                if hasattr(p, 'custom'):
-                    continue
                 if is_bias(p_name):
+                    logging.warning("Initializing {} with {} scheme".format(
+                        '{}.{}'.format(type(m).__name__, p_name), cnn_bias['type']))
                     getattr(init, cnn_bias['type'])(p, **cnn_bias['args'])
                 else:
+                    logging.warning("Initializing {} with {} scheme".format(
+                        '{}.{}'.format(type(m).__name__, p_name), cnn['type']))
                     getattr(init, cnn['type'])(p, **cnn['args'])
                     # Karpathy: http://cs231n.github.io/neural-networks-2/#init
                     # -> scale weight vector by square root of its fan-in...
@@ -275,6 +282,8 @@ def initialize_model(model, overwrite_custom=True, **init_ops):
     if overwrite_custom:
         for m in model.modules():  # overwrite custom
             if hasattr(m, 'custom_init'):
+                logging.warning("Initializing {} with custom scheme".format(
+                    type(m).__name__))
                 m.custom_init()
 
 
