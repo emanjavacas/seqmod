@@ -9,6 +9,7 @@ from torch.nn.utils.rnn import pad_packed_sequence as unpack
 from seqmod.modules.encoder import BaseEncoder
 from seqmod.modules.torch_utils import init_hidden_for, repackage_bidi
 from seqmod.modules.torch_utils import pack_sort, get_last_token
+from seqmod.modules.ff import grad_reverse, MLP
 
 
 class RNNEncoder(BaseEncoder):
@@ -216,3 +217,36 @@ class RNNEncoder(BaseEncoder):
 
         elif self.summary == 'mean-max':
             return 2, self.hid_dim * self.num_dirs * 2
+
+
+class GRLRNNEncoder(RNNEncoder):
+    def __init__(self, cond_dims, cond_vocabs, *args, **kwargs):
+        super(GRLRNNEncoder, self).__init__(*args, **kwargs)
+        if len(cond_dims) != len(cond_vocabs):
+            raise ValueError("cond_dims & cond_vocabs must be same length")
+
+        encoding_dim, _ = self.encoding_size
+        if encoding_dim > 2:
+            raise ValueError("GRLRNNEncoder can't regularize 3D summaries")
+
+        # MLPs regularizing on input conditions
+        grls = []
+        _, hid_dim = self.encoding_size  # size of the encoder output
+        for cond_vocab, cond_dim in zip(cond_vocabs, cond_dims):
+            grls.append(MLP(hid_dim, hid_dim, cond_vocab))
+        self.grls = nn.ModuleList(grls)
+
+    def loss(self, out, conds, test=False):
+        grl_loss = []
+        for cond, grl in zip(conds, self.grls):
+            cond_out = F.log_softmax(grl(grad_reverse(out)), 1)
+            grl_loss.append(F.nll_loss(cond_out, cond, size_average=True))
+
+        if not test:
+            (sum(grl_loss) / len(self.grls)).backward(retain_graph=True)
+
+        return [l.data[0] for l in grl_loss], cond.size(0)
+
+    @property
+    def conditional(self):
+        return True
