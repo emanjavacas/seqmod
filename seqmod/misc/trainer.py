@@ -173,6 +173,8 @@ class Checkpoint(object):
             commit, branch = git_info.get_commit(), git_info.get_branch()
             args['git-commit'] = commit
             args['git-branch'] = branch
+            from seqmod import __commit__
+            args['seqmod-git-commit'] = __commit__
             # dump
             with open(self.checkpoint_path('params.yml'), 'w') as f:
                 yaml.dump(args, f, default_flow_style=False)
@@ -287,7 +289,6 @@ class Trainer(object):
         # containers
         self.loggers = []
         self.hooks = []
-        self.batch_state = {}  # instance var to share state across batches
         self.last_batch_order = None
         self.batch_run = 0
 
