@@ -224,19 +224,27 @@ def pack_sort(inp, lengths, batch_first=False):
     -----------
     inp: Variable(seq_len x batch x dim)
     lengths: Variable or LongTensor of length ``batch``
+
+    >>> from torch.nn.utils.rnn import pad_packed_sequence as unpack
+    >>> inp = Variable(torch.FloatTensor([[1, 3], [2, 4], [0, 5]]))
+    >>> lengths = torch.LongTensor([2, 3]) # unsorted order
+    >>> sorted_inp, unsort = pack_sort(inp, lengths)
+    >>> sorted_inp, _ = unpack(sorted_inp)
+    >>> sorted_inp[:, unsort].data.tolist()  # original order
+    [[1.0, 3.0], [2.0, 4.0], [0.0, 5.0]]
+    >>> sorted_inp.data.tolist()  # sorted by length
+    [[3.0, 1.0], [4.0, 2.0], [5.0, 0.0]]
     """
     if isinstance(lengths, Variable):
         lengths = lengths.data
 
-    lengths, idxs = torch.sort(lengths, descending=True)
-    unsort = inp.data.new(len(lengths)).long()
+    lengths, sort = torch.sort(lengths, descending=True)
+    _, unsort = sort.sort()
 
     if batch_first:
-        inp = pack_padded_sequence(inp[idxs], lengths.tolist())
+        inp = pack_padded_sequence(inp[sort], lengths.tolist())
     else:
-        inp = pack_padded_sequence(inp[:, idxs], lengths.tolist())
-
-    unsort[idxs] = torch.arange(len(idxs), out=torch.zeros_like(unsort))
+        inp = pack_padded_sequence(inp[:, sort], lengths.tolist())
 
     return inp, unsort
 
@@ -245,12 +253,15 @@ def get_last_token(t, lenghts):
     """
     Grab last hidden activation of each batch element according to `lenghts`
 
-    >>> t = Variable(torch.arange(0, 3))
-    >>> t = t.unsqueeze(1).unsqueeze(2).expand(3, 2, 3).contiguous()
-    >>> lenghts = torch.LongTensor([3, 1])
+    #                                             ^ (1)      ^ (2)      ^ (3)
+    >>> t = Variable(torch.FloatTensor([[[1],[2],[3]], [[2],[3],[4]], [[3],[4],[5]]]))
+    >>> lenghts = torch.LongTensor([3, 2, 1])
     >>> get_last_token(t, lenghts).data.tolist()
-    [[2.0, 2.0, 2.0], [0.0, 0.0, 0.0]]
+    [[3.0], [3.0], [3.0]]
     """
+    if isinstance(lenghts, Variable):
+        lenghts = lenghts.data
+
     seq_len, batch, _ = t.size()
     index = torch.arange(0, batch, out=torch.zeros_like(lenghts).long()) * seq_len
     index = Variable(index + (lenghts - 1))

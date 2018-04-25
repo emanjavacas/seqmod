@@ -4,7 +4,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from seqmod.modules.ff import grad_reverse, MLP, MaxOut
-from seqmod.modules.embedding import Embedding
 
 
 class BaseEncoder(nn.Module):
@@ -65,10 +64,6 @@ def GRLWrapper(EncoderBaseClass):
                 {'__init__': __init__,
                  'loss': loss,
                  'conditional': property(lambda self: True)})
-
-
-# legacy imports
-from seqmod.modules.rnn_encoder import RNNEncoder
 
 
 class MaxoutWindowEncoder(BaseEncoder):

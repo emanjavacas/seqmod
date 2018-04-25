@@ -226,7 +226,9 @@ class Embedding(nn.Embedding):
         - fpath: str, path to embedding file
         - mode: (optional) str, embedding type (glove, fasttext, w2v). If not given,
             it will be guessed based on the filename
-        - targets: (optional) list (str), words
+        - targets: (optional) list (str), words to extend the space with (note that
+            not all words will be added eventually if those aren't found in the ref
+            space).
         """
         # load embeddings
         weight, words = EmbeddingLoader(fpath, mode).load(verbose=verbose, **kwargs)

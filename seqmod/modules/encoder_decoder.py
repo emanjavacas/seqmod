@@ -5,8 +5,7 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 
 from seqmod.misc.beam_search import Beam
-from seqmod.modules.encoder import GRLWrapper
-from seqmod.modules.rnn_encoder import RNNEncoder
+from seqmod.modules.rnn_encoder import RNNEncoder, GRLRNNEncoder
 from seqmod.modules.softmax import SampledSoftmax
 from seqmod.modules.decoder import RNNDecoder
 from seqmod.modules.embedding import Embedding
@@ -74,11 +73,9 @@ class EncoderDecoder(nn.Module):
         dec_trg, loss_trg = trg[:-1], trg[1:]
 
         # should we run fast_forward?
-        fast_run = hasattr(self.decoder, 'is_fast_forward')
-        fast_run = fast_run and self.decoder.is_fast_forward
-        fast_run = fast_run and not use_schedule
-
-        if fast_run:
+        if hasattr(self.decoder, 'is_fast_forward') and \
+           self.decoder.is_fast_forward and \
+           not use_schedule:
             dec_outs, _ = self.decoder.fast_forward(dec_trg, dec_state)
 
         else:
@@ -410,9 +407,6 @@ def make_rnn_encoder_decoder(
                              "value")
 
     return EncoderDecoder(encoder, decoder, reverse=reverse)
-
-
-GRLRNNEncoder = GRLWrapper(RNNEncoder)
 
 
 def make_grl_rnn_encoder_decoder(
