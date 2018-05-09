@@ -6,6 +6,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
+from torch.nn.utils.rnn import pad_packed_sequence as unpack
 
 from seqmod.modules.torch_utils import init_hidden_for, repackage_hidden
 from seqmod.modules.torch_utils import swap, select_cols
@@ -16,6 +17,7 @@ from seqmod.modules.softmax import FullSoftmax, MixtureSoftmax, SampledSoftmax
 from seqmod.modules.attention import Attention
 from seqmod.misc.beam_search import Beam
 from seqmod.modules.exposure import scheduled_sampling
+from seqmod.modules.torch_utils import pack_sort, get_last_token
 
 
 def strip_post_eos(sents, eos):
@@ -314,7 +316,7 @@ class BaseLM(nn.Module):
     def loss(self, batch, test=False):
         raise NotImplementedError
 
-    def generate(self, d, conds=None, seed_texts=None, max_seq_len=25,
+    def generate(self, d, seed_texts=None, max_seq_len=25,
                  gpu=False, method='sample', temperature=1., width=5,
                  bos=False, eos=False, ignore_eos=False, batch_size=10,
                  **kwargs):
@@ -324,9 +326,6 @@ class BaseLM(nn.Module):
         Parameters:
         -----------
         d: Dict used during training to fit the vocabulary
-        conds: list, list of integers specifying the input conditions for
-            sampling from a conditional language model. Implies that all output
-            elements in the batch will have same conditions
         seed_texts: None or list of sentences to use as seed for the generator
         max_seq_len: int, maximum number of symbols to be generated. The output
             might actually be less than this number if the Dict was fitted with
@@ -354,18 +353,9 @@ class BaseLM(nn.Module):
         if self.training:
             logging.warn("Generating in training modus!")
 
-        if hasattr(self, 'conds') and self.conds is not None:
-            # expand conds to batch
-            if conds is None:
-                raise ValueError("conds is required for generating with a CLM")
-            conds = [torch.LongTensor([c]).repeat(1, batch_size) for c in conds]
-            conds = [Variable(c, volatile=True) for c in conds]
-            if gpu:
-                conds = [c.cuda() for c in conds]
-
         generator = getattr(Generator(self, d, gpu=gpu), method)
         scores, hyps = generator(
-            seed_texts=seed_texts, max_seq_len=max_seq_len, conds=conds,
+            seed_texts=seed_texts, max_seq_len=max_seq_len,
             batch_size=batch_size, ignore_eos=ignore_eos, bos=bos, eos=eos,
             # sample-only
             temperature=temperature,
@@ -431,14 +421,6 @@ class LM(BaseLM):
     - cell: str, one of GRU, LSTM, RNN.
     - bias: bool, whether to include bias in the RNN.
     - dropout: float, amount of dropout to apply in between layers.
-    - conds: list of condition-maps for a conditional language model
-        in the following form:
-            [{'name': str, 'varnum': int, 'emb_dim': int}, ...]
-        where 'name' is a screen-name for the conditions, 'varnum' is the
-        cardinality of the conditional variable and 'emb_dim' is the
-        embedding size for that condition.
-        Note that the conditions should be specified in the same order as
-        they are passed into the model at run-time.
     - word_dropout: float.
     - att_dim: int, whether to add an attention module of dimension `att_dim`
         over the prefix. No attention will be added if att_dim is None or 0.
@@ -455,8 +437,8 @@ class LM(BaseLM):
         to compose the non-linearity function).
     """
     def __init__(self, emb_dim, hid_dim, d, num_layers=1,
-                 cell='GRU', bias=True, dropout=0.0, conds=None,
-                 word_dropout=0.0, att_dim=0, tie_weights=False, mixtures=0,
+                 cell='GRU', bias=True, dropout=0.0, word_dropout=0.0,
+                 att_dim=0, tie_weights=False, mixtures=0,
                  train_init=False, add_init_jitter=False, sampled_softmax=False,
                  deepout_layers=0, deepout_act='MaxOut', maxouts=2,
                  exposure_rate=1.0):
@@ -470,20 +452,12 @@ class LM(BaseLM):
         self.train_init = train_init
         self.add_init_jitter = add_init_jitter
         self.dropout = dropout
-        self.conds = conds
         super(LM, self).__init__()
 
         self.exposure_rate = exposure_rate
 
         # Embeddings
         self.embeddings = Embedding.from_dict(d, emb_dim, p=word_dropout)
-        rnn_input_size = self.emb_dim
-        if self.conds is not None:
-            conds = []
-            for c in self.conds:
-                conds.append(nn.Embedding(c['varnum'], c['emb_dim']))
-                rnn_input_size += c['emb_dim']
-            self.conds = nn.ModuleList(conds)
 
         # RNN
         if cell.startswith('RHN'):
@@ -501,13 +475,11 @@ class LM(BaseLM):
             cell = getattr(rnn, cell)
 
         self.rnn = cell(
-            rnn_input_size, self.hid_dim,
+            self.emb_dim, self.hid_dim,
             num_layers=num_layers, bias=bias, dropout=dropout)
 
         # (optional) attention
         if att_dim > 0:
-            if self.conds is not None:
-                raise ValueError("Attention is not supported with conditions")
             if self.cell not in ('RNN', 'GRU'):
                 raise ValueError("Currently only RNN, GRU supports attention")
             self.attn = AttentionalProjection(att_dim, hid_dim, emb_dim)
@@ -538,15 +510,12 @@ class LM(BaseLM):
             h_0=self.h_0, add_init_jitter=self.add_init_jitter,
             training=self.training)
 
-    def forward(self, inp, hidden=None, conds=None, **kwargs):
+    def forward(self, inp, hidden=None, **kwargs):
         """
         Parameters:
         -----------
         inp: torch.Tensor (seq_len x batch_size)
         hidden: None or torch.Tensor (num_layers x batch_size x hid_dim)
-        conds: None or tuple of torch.Tensor (seq_len x batch_size) of length
-            equal to the number of model conditions. `conditions` are required
-            in case of a CLM.
 
         Returns:
         --------
@@ -557,13 +526,6 @@ class LM(BaseLM):
         """
         # Embeddings
         emb = self.embeddings(inp)
-
-        # Conditions
-        if hasattr(self, 'conds') and self.conds is not None:
-            if conds is None:
-                raise ValueError("Conditional model expects `conds` as input")
-            conds = [c_emb(inp_c) for c_emb, inp_c in zip(self.conds, conds)]
-            emb = torch.cat([emb, *conds], 2)
 
         if not self.cell.startswith('RHN'):
             emb = F.dropout(emb, p=self.dropout, training=self.training)
@@ -582,11 +544,9 @@ class LM(BaseLM):
 
         return outs, hidden, weights
 
-    def loss(self, batch_data, test=False, use_schedule=False, cache=None):
+    def loss(self, batch_data, test=False, use_schedule=False):
         # unpack data
-        (source, targets), conds = batch_data, None
-        if self.conds is not None:
-            (source, *conds), (targets, *_) = source, targets
+        (src, trg) = batch_data
 
         # eventually get data from previous batch
         hidden = self.hidden_state.get('hidden')
@@ -594,17 +554,140 @@ class LM(BaseLM):
         # run RNN
         if use_schedule and self.exposure_rate < 1.0:
             outs = []
-            for step, t in enumerate(source):
+            for step, t in enumerate(src):
                 if use_schedule and step > 0:
                     t = scheduled_sampling(
                         t, outs[-1], self.project, self.exposure_rate)
                     t = Variable(t, volatile=not self.training)
-                out, hidden, _ = self(t.unsqueeze(0), hidden=hidden, conds=conds)
+                out, hidden, _ = self(t.unsqueeze(0), hidden=hidden)
                 outs.append(out.squeeze(0))
             outs = torch.stack(outs, 0)
 
         else:
-            outs, hidden, _ = self(source, hidden=hidden, conds=conds)
+            outs, hidden, _ = self(src, hidden=hidden)
+
+        # store hidden for next batch
+        self.hidden_state['hidden'] = repackage_hidden(hidden)
+
+        # compute loss and backward
+        if isinstance(self.project, SampledSoftmax) and self.training:
+            logits, new_trg = self.project(
+                outs, targets=trg.view(-1), normalize=False, reshape=False)
+            loss = F.cross_entropy(logits, new_trg, size_average=True)
+        else:
+            loss = F.nll_loss(self.project(outs), trg.view(-1), size_average=True)
+
+        if not test:
+            loss.backward()
+
+        return (loss.data[0], ), src.nelement()
+
+
+class ConditionalLM(LM):
+    """
+    Variant of LM that is abl to deal with padding. Currently, this would slowdown
+    training proportionally to the amount of padding in the training set due to
+    the redundant softmax (RNNs, however, are able to avoid doing computationg over
+    padding tokens thanks to PackedSequence).
+    The advantage is that conditioning becomes much easier since we can fill batches
+    with full sentences.
+
+    - conds: list of dicts for the conditions
+        Note that the conditions should be specified in the same order as
+        they are passed into the model at run-time.
+    """
+    def __init__(self, *args, cond_dicts=None, cond_dims=None, **kwargs):
+        super(ConditionalLM, self).__init__(*args, **kwargs)
+        self.conditional = cond_dicts is not None
+
+        if cond_dicts is not None:
+            rnn_inp_size = self.rnn.input_size
+            if isinstance(cond_dims, int):
+                cond_dims = (cond_dims,) * len(cond_dicts)
+
+            cond_embs = []
+            for cond_dict, cond_dim in zip(cond_dicts, cond_dims):
+                cond_embs.append(Embedding.from_dict(cond_dict, cond_dim))
+                rnn_inp_size += cond_dim
+            self.cond_embs = nn.ModuleList(cond_embs)
+
+            # reset rnn to new input size
+            self.rnn = type(self.rnn)(rnn_inp_size, self.hid_dim,
+                                      num_layers=self.num_layers, bias=self.bias,
+                                      dropout=self.dropout)
+
+    def forward(self, inp, lengths=None, hidden=None, conds=None, **kwargs):
+        """
+        Parameters:
+        -----------
+        inp: torch.Tensor (seq_len x batch_size)
+        hidden: None or torch.Tensor (num_layers x batch_size x hid_dim)
+        lengths: torch.LongTensor (batch_size)
+        conds: None or tuple of torch.Tensor (seq_len x batch_size) of length
+            equal to the number of model conditions. `conditions` are required
+            in case of a CLM.
+
+        Returns:
+        --------
+        outs: torch.Tensor (seq_len * batch_size x vocab)
+        hidden: see output of RNN, GRU, LSTM in torch.nn
+        weights: None or list of weights (batch_size x seq_len),
+            It will only be not None if attention is provided.
+        """
+        # Embeddings
+        emb = self.embeddings(inp)
+
+        # Conditions
+        if hasattr(self, 'conds') and self.conds is not None:
+            if conds is None:
+                raise ValueError("Conditional model expects `conds` as input")
+            conds_out = []
+            for cond_emb, cond in zip(self.conds, conds):
+                conds_out.append(cond_emb(cond).unsqueeze(0).repeat(len(inp), 1))
+            emb = torch.cat([emb, *conds_out], dim=2)
+
+        if not self.cell.startswith('RHN'):
+            emb = F.dropout(emb, p=self.dropout, training=self.training)
+
+        # RNN
+        hidden = hidden if hidden is not None else self.init_hidden_for(emb)
+        emb, unsort = pack_sort(emb, lengths)
+        outs, hidden = self.rnn(emb, hidden)
+        outs, _ = unpack(outs)
+        outs = outs[:, unsort]
+        if self.cell.startswith('LSTM'):
+            hidden = hidden[0][:, unsort, :], hidden[1][:, unsort, :]
+        else:
+            hidden = hidden[:, unsort, :]
+
+        # (dropout after RNN)
+        outs = F.dropout(outs, p=self.dropout, training=self.training)
+
+        # (optional attention)
+        weights = None
+        if self.has_attention:
+            outs, weights = self.attn(outs, emb)
+
+        return outs, hidden, weights
+
+    def loss(self, batch_data, test=False, use_schedule=False):
+        # unpack data
+        (src, trg), conds = batch_data, None
+        if self.conds is not None:
+            (src, *conds), (trg, *_) = src, trg
+        (src, src_len), (trg, _) = src, trg
+
+        # eventually get data from previous batch
+        hidden = self.hidden_state.get('hidden')
+
+        # run RNN
+        if use_schedule:
+            # needs running RNN step-by-step avoiding hidden updates over padding
+            raise NotImplementedError
+
+        else:
+            outs, hidden, _ = self(
+                src, lengths=src_len, hidden=hidden, conds=conds)
 
         # store hidden for next batch
         self.hidden_state['hidden'] = repackage_hidden(hidden)
@@ -612,12 +695,12 @@ class LM(BaseLM):
         # compute loss and backward
         if isinstance(self.project, SampledSoftmax) and self.training:
             logits, new_targets = self.project(
-                outs, targets=targets.view(-1), normalize=False, reshape=False)
+                outs, targets=trg.view(-1), normalize=False, reshape=False)
             loss = F.cross_entropy(logits, new_targets, size_average=True)
         else:
-            loss = F.nll_loss(self.project(outs), targets.view(-1), size_average=True)
+            loss = F.nll_loss(self.project(outs), trg.view(-1), size_average=True)
 
         if not test:
             loss.backward()
 
-        return (loss.data[0], ), source.nelement()
+        return (loss.data[0], ), src.nelement()

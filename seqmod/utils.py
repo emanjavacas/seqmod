@@ -110,7 +110,6 @@ def prompt(message):
         return prompt("Please answer yes or no:")
 
 
-
 def _wrap_variable(t, volatile, gpu):
     if len(t) == 0:             # don't wrap empty vectors
         return t
@@ -359,39 +358,16 @@ def format_hyp(score, hyp, hyp_num, d, level='word',
         output=sep.join([d.vocab[c] for c in hyp]))
 
 
-def make_lm_hook(d, seed_texts=None, max_seq_len=25, gpu=False,
-                 temperature=1, level='token', checkpoint=None,
-                 early_stopping=None, validate=True):
-    """
-    Make a generator hook for a normal language model
-    """
+def make_lr_hook(optimizer, factor, patience, threshold=0.05, verbose=True):
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, factor=factor, patience=patience, threshold=threshold,
+        verbose=verbose)
 
-    def hook(trainer, epoch, batch_num, check):
-        trainer.log("info", "Checking training...")
-        if validate:
-            loss = trainer.validate_model()
-            trainer.log("validation_end", {'epoch': epoch, 'loss': loss.pack()})
-
-            if early_stopping is not None:
-                trainer.log("info", "Registering early stopping loss...")
-                early_stopping.add_checkpoint(
-                    loss.reduce(), copy.deepcopy(trainer.model).cpu())
-
-            if checkpoint is not None:
-                checkpoint.save(trainer.model, loss.reduce())
-
-        trainer.log("info", "Generating text...")
-        scores, hyps = trainer.model.generate(
-            d, seed_texts=seed_texts, max_seq_len=max_seq_len, gpu=gpu,
-            method='sample', temperature=temperature)
-        hyps = [format_hyp(score, hyp, hyp_num + 1, d, level=level)
-                for hyp_num, (score, hyp) in enumerate(zip(scores, hyps))]
-        trainer.log("info", '\n***' + ''.join(hyps) + "\n***")
-
-        trainer.log("info", "Computing held-out perplexity...")
-        batch, _ = trainer.datasets['valid'][0]
-        prob = trainer.model.predict_proba(batch).mean()
-        trainer.log("info", "Average probability [{:.3f}]".format(prob))
+    def hook(trainer, epoch, batch_num, checkpoint):
+        loss = trainer.validate_model()
+        if verbose:
+            trainer.log("validation_end", {"epoch": epoch, "loss": loss.pack()})
+        scheduler.step(loss.reduce())
 
     return hook
 
@@ -421,51 +397,6 @@ def make_mlm_hook(d, seed_texts=None, max_seq_len=25, gpu=False,
             hyps = [format_hyp(score, hyp, hyp_num + 1, d, level=level)
                     for hyp_num, (score, hyp) in enumerate(zip(scores, hyps))]
             trainer.log("info", '\n***' + ''.join(hyps) + "\n***")
-
-    return hook
-
-
-def make_clm_hook(d, sampled_conds=None, max_seq_len=200, gpu=False,
-                  temperature=1, batch_size=10, level='token'):
-    """
-    Make a generator hook for a CLM.
-
-    Parameters
-    ----------
-
-    d: list of Dicts, the first one being the Dict for language, the tail
-        being Dicts for conditions in the same order as passed to the model
-    sampled_conds: list of lists of str, or int, or None,
-        if a list, it is supposed to contain lists specifying the conditions
-        for each sample [[cond1, cond2], [cond1, cond2], ...]
-        if an int, a total of `sampled_conds` samples will be produced with
-        random values for the conditions.
-        if None, 5 samples will be taken (resulting in 5 combinations of conds)
-    """
-    lang_d, *conds_d = d
-
-    # sample conditions if needed
-    if isinstance(sampled_conds, int) or sampled_conds is None:
-        samples, sampled_conds = sampled_conds or 5, []
-        for _ in range(samples):
-            sample = [d.index(random.sample(d.vocab, 1)[0]) for d in conds_d]
-            sampled_conds.append(sample)
-
-    def hook(trainer, epoch, batch_num, checkpoint):
-        trainer.log('info', 'Generating text...')
-        for conds in sampled_conds:
-            conds_str = ''
-            for idx, (cond_d, sampled_c) in enumerate(zip(conds_d, conds)):
-                conds_str += (str(cond_d.vocab[sampled_c]) + '; ')
-            trainer.log("info", "\n***\nConditions: " + conds_str)
-            scores, hyps = trainer.model.generate(
-                lang_d, max_seq_len=max_seq_len, gpu=gpu,
-                method='sample', temperature=temperature,
-                batch_size=batch_size, conds=conds)
-            hyps = [format_hyp(score, hyp, hyp_num + 1, lang_d, level=level)
-                    for hyp_num, (score, hyp) in enumerate(zip(scores, hyps))]
-            trainer.log("info", ''.join(hyps) + "\n")
-        trainer.log("info", '***\n')
 
     return hook
 

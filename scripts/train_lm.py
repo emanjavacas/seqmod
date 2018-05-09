@@ -1,4 +1,5 @@
 
+import copy
 import os
 import warnings
 
@@ -42,16 +43,39 @@ def load_dataset(path, d, processor, args):
     return BlockDataset(data, d, args.batch_size, args.bptt, gpu=args.gpu)
 
 
-def make_lr_hook(optimizer, factor, patience, threshold=0.05, verbose=True):
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, factor=factor, patience=patience, threshold=threshold,
-        verbose=verbose)
+def make_lm_hook(max_seq_len=25, gpu=False,
+                 temperature=1, level='token', checkpoint=None,
+                 early_stopping=None):
+    """
+    Make a generator hook for a normal language model
+    """
 
-    def hook(trainer, epoch, batch_num, checkpoint):
+    def hook(trainer, epoch, batch_num, check):
+        trainer.log("info", "Checking training...")
+
         loss = trainer.validate_model()
-        if verbose:
-            trainer.log("validation_end", {"epoch": epoch, "loss": loss.pack()})
-        scheduler.step(loss.reduce())
+        trainer.log("validation_end", {'epoch': epoch, 'loss': loss.pack()})
+
+        if early_stopping is not None:
+            trainer.log("info", "Registering early stopping loss...")
+            early_stopping.add_checkpoint(
+                loss.reduce(), copy.deepcopy(trainer.model).cpu())
+
+        if checkpoint is not None:
+            checkpoint.save(trainer.model, loss.reduce())
+
+        trainer.log("info", "Generating text...")
+        scores, hyps = trainer.model.generate(
+            trainer.model.embeddings.d, max_seq_len=max_seq_len, gpu=gpu,
+            method='sample', temperature=temperature)
+        hyps = [u.format_hyp(score, hyp, hyp_num + 1, d, level=level)
+                for hyp_num, (score, hyp) in enumerate(zip(scores, hyps))]
+        trainer.log("info", '\n***' + ''.join(hyps) + "\n***")
+
+        trainer.log("info", "Computing held-out perplexity...")
+        batch, _ = trainer.datasets['valid'][0]
+        prob = trainer.model.predict_proba(batch).mean()
+        trainer.log("info", "Average probability [{:.3f}]".format(prob))
 
     return hook
 
@@ -104,7 +128,6 @@ if __name__ == '__main__':
     parser.add_argument('--lr_schedule_factor', type=float, default=1)
     parser.add_argument('--lr_checkpoints_per_epoch', type=int, default=1)
     # - check
-    parser.add_argument('--seed', default=None)
     parser.add_argument('--max_seq_len', default=25, type=int)
     parser.add_argument('--temperature', default=1, type=float)
     parser.add_argument('--checkpoint', default=100, type=int)
@@ -214,7 +237,7 @@ if __name__ == '__main__':
         checkpoint = Checkpoint(m.__class__.__name__, keep=3).setup(args)
 
     model_hook = u.make_lm_hook(
-        d, temperature=args.temperature, max_seq_len=args.max_seq_len,
+        temperature=args.temperature, max_seq_len=args.max_seq_len,
         gpu=args.gpu, level=args.level, early_stopping=early_stopping,
         checkpoint=checkpoint)
     trainer.add_hook(model_hook, hooks_per_epoch=args.hooks_per_epoch)
@@ -229,7 +252,7 @@ if __name__ == '__main__':
 
     # - lr schedule hook
     if args.lr_schedule_factor < 1.0:
-        hook = make_lr_hook(
+        hook = u.make_lr_hook(
             optimizer, args.lr_schedule_factor, args.lr_schedule_checkpoints)
         # run a hook args.checkpoint * 4 batches
         trainer.add_hook(hook, hooks_per_epoch=args.lr_checkpoints_per_epoch)
