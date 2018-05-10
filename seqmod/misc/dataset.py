@@ -170,7 +170,7 @@ class Dict(object):
     """
     def __init__(self, pad_token=None, eos_token=None, bos_token=None,
                  unk_token=utils.UNK, force_unk=False, max_size=None, min_freq=1,
-                 sequential=True, max_len=None, use_vocab=True, dtype=torch.int64,
+                 sequential=True, max_len=None, use_vocab=True, dtype='int64',
                  preprocessing=None, align_right=False):
 
         self.counter = Counter()
@@ -353,7 +353,7 @@ class Dict(object):
             return pad_sequential_batch(
                 batch_data, self.get_pad(), return_lengths, align_right)
         else:
-            return torch.tensor(batch_data, dtype=self.dtype)
+            return torch.tensor(batch_data, dtype=getattr(torch, self.dtype))
 
 
 class MultiDict(object):
