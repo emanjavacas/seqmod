@@ -112,6 +112,8 @@ def prepare_tensors(t, device):
     if isinstance(t, tuple):
         return tuple(prepare_tensors(t_, device) for t_ in t)
 
+    if isinstance(t, torch.Tensor):
+        return t.to(device=device)
     return torch.tensor(t, device=device)
 
 
