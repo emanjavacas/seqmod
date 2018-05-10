@@ -13,7 +13,6 @@ from datetime import datetime
 
 import torch
 from torch.optim import lr_scheduler
-from torch.nn.utils import clip_grad_norm_
 
 from seqmod import utils as u
 from seqmod.misc.early_stopping import EarlyStoppingException
@@ -401,7 +400,7 @@ class Trainer(object):
     def optimizer_step(self):
         "Runs an optimizing step"
         if self.max_norm is not None:
-            clip_grad_norm_(self.model.parameters(), self.max_norm)
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.max_norm)
         self.optimizer.step()
 
     def scheduler_step(self, epoch, valid_loss):
@@ -507,19 +506,15 @@ class Trainer(object):
         start, total_batches = time(), len(batch_order)
 
         for b, batch in enumerate(batch_order):
-
+            # optimize
             self.optimizer.zero_grad()
             batch_data = self.datasets['train'][batch]
             batch_loss, batch_examples = self.model.loss(batch_data, **kwargs)
-
             if batch_loss is None:  # to skip a batch loss might return None
                 continue
-
             self.optimizer_step()
-
             run_loss.add(batch_loss, batch_examples)
             check_loss.add(batch_loss, batch_examples)
-
             self.on_batch_end(epoch, b, run_loss)
 
             # checkpoint
@@ -539,26 +534,22 @@ class Trainer(object):
         start, total_batches = time(), '~'
 
         for b, batch in enumerate(generator):
-
+            # optimize
             self.optimizer.zero_grad()
             batch_loss, batch_examples = self.model.loss(batch, **kwargs)
-
             if batch_loss is None:
                 continue
-
             self.optimizer_step()
-
             run_loss.add(batch_loss, batch_examples)
             check_loss.add(batch_loss, batch_examples)
-
             self.on_batch_end(epoch, b, run_loss)
 
             # checkpoint
             self.run_checkpoint(
                 epoch, b, checkpoint, time()-start, total_batches, check_loss)
 
-            start = time()
             check_loss.reset()
+            start = time()
 
         return run_loss
 
