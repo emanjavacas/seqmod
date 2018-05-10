@@ -1,7 +1,5 @@
 
 import torch
-import torch.nn.functional as F
-from torch.autograd import Variable
 
 
 class Cache(object):
@@ -23,26 +21,19 @@ class Cache(object):
             increase the importance of the probability distribution of the cache.
             Range usually in (0, 4).
     """
-    def __init__(self, dim, size, vocab,
-                 theta=1.0, alpha=0.5, mode='linear', gpu=False):
+    def __init__(self, dim, size, vocab, theta=1.0, alpha=0.5, device='cpu'):
 
         self.dim = dim
         self.size = size
         self.vocab = vocab
         self.theta = theta
         self.alpha = alpha
-        self.mode = mode.lower()
-        self.gpu = gpu
-
-        if self.mode not in ('linear', 'global'):
-            raise ValueError("Unknown mode \"{}\"".format(mode))
+        self.device = device
 
         self.stored = 0         # number of items stored in the cache
         self.current = 0        # index along size that should get written
-        self.memkeys = torch.FloatTensor(self.size, 1, self.dim).zero_()
-        self.memvals = torch.LongTensor(self.size, 1).zero_()
-        self.memkeys = self.memkeys.cuda() if gpu else self.memkeys
-        self.memvals = self.memvals.cuda() if gpu else self.memvals
+        self.memkeys = torch.zeros(self.size, 1, self.dim).to(device)
+        self.memvals = torch.zeros(self.size, 1, dtype=torch.int64).to(device)
 
     def reset(self):
         self.stored = 0
@@ -78,24 +69,21 @@ class Cache(object):
             keys, vals = keys[-self.size:], vals[-self.size:]
 
         limit = min(self.size, self.current + keys.size(0))
-        index = torch.arange(self.current, limit).long()
-        index = index.cuda() if self.gpu else index
+        index = torch.arange(self.current, limit, dtype=torch.int64, device=self.device)
         self.memkeys.index_copy_(0, index, keys[:len(index)])
         self.memvals.index_copy_(0, index, vals[:len(index)])
         self.current = limit % self.size
 
         if len(index) < len(keys):
             indexed = len(index)
-            index = torch.arange(self.current, len(keys) - indexed).long()
-            index = index.cuda() if self.gpu else index
+            index = torch.arange(self.current, len(keys) - indexed,
+                                 dtype=torch.int64, device=self.device)
             self.memkeys.index_copy_(0, index, keys[indexed:])
             self.memvals.index_copy_(0, index, vals[indexed:])
             self.current = len(keys) - indexed
 
         self.stored = min(self.size, self.stored + len(keys))
 
-    # TODO: allow for processing multiple queries at once
-    # expanding the memcache and memvals along the batch dim
     def query(self, query):
         """
         Return scores for words in the cache given an input query.

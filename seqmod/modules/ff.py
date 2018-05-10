@@ -125,7 +125,7 @@ class Highway(torch.nn.Module):
             # that means `g` will be biased to be high, to we will carry the
             # input forward.  The bias on `B(x)` is the second half of the bias
             # vector in each Linear layer.
-            linear.bias[input_dim:].data.fill_(1)
+            torch.nn.init.constant_(linear.bias[input_dim:], 1)
             linear.bias.custom = True
 
             layers.append(linear)

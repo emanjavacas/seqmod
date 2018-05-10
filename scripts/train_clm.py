@@ -31,7 +31,7 @@ def linearize_data(lines, conds, lang_d, conds_d, table=None):
 
 def examples_from_lines(lines, conds, lang_d, conds_d, table=None):
     t = linearize_data(lines, conds, lang_d, conds_d, table=table)
-    t = torch.LongTensor(list(t))
+    t = torch.tensor(list(t))
     if table is not None:       # text + encoded conditions
         return t.view(-1, 2).t().contiguous()
     else:                       # text + conditions

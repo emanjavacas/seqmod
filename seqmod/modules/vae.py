@@ -1,7 +1,6 @@
 
 import torch
 import torch.nn as nn
-from torch.autograd import Variable
 
 from seqmod.modules.torch_utils import swap, make_dropout_mask
 from seqmod.modules.ff import Highway
@@ -34,8 +33,8 @@ def reparametrize(mu, logvar):
     The second term obtains interpreting logvar as the log-var of z
     and observing that sqrt(exp(s^2)) == exp(s^2/2)
     """
-    eps = Variable(logvar.data.new(*logvar.size()).normal_())
-    std = logvar.mul(0.5).exp_()
+    std = torch.exp(0.5 * logvar)
+    eps = torch.randn_like(std)
     return eps.mul(std).add_(mu)
 
 
@@ -67,7 +66,7 @@ class VAERNNEncoder(RNNEncoder):
         if not test:
             kl_loss.backward(retain_graph=True)
 
-        return [kl_loss.data[0]], num_examples  # encoder loss is a list
+        return (kl_loss.item(),), num_examples  # encoder loss is a list
 
 
 class VAERNNDecoder(RNNDecoder):
@@ -99,8 +98,7 @@ class VAERNNDecoder(RNNDecoder):
         if self.train_init:
             h_0 = self.h_0.repeat(1, batch_size, 1)
         else:
-            h_0 = z.data.new(*size).zero_()
-            h_0 = Variable(h_0, volatile=not self.training)
+            h_0 = torch.zeros(*size, device=z.device)
 
         if self.add_init_jitter:
             h_0 = h_0 + torch.normal(torch.zeros_like(h_0), 0.3)
@@ -180,6 +178,25 @@ class VAEDecoderState(State):
         else:
             hidden = swap(self.hidden, 1, beam_ids)
         self.hidden = hidden
+
+    def split_batches(self):
+        batch_size = self.z.size(0)
+
+        z = self.z.chunk(batch_size, 0)
+
+        if isinstance(self.hidden, tuple):
+            hidden = list(zip(self.hidden[0].chunk(batch_size, 1),
+                              self.hidden[1].chunk(batch_size, 1)))
+        else:
+            hidden = self.hidden.chunk(batch_size, 1)
+
+        conds = None
+        if self.conds is not None:
+            conds = self.conds.chunk(batch_size, 0)
+
+        for b in range(batch_size):
+            yield VAEDecoderState(
+                z[b], hidden[b], conds=conds[b] if conds is not None else None)
 
 
 def make_vae_encoder_decoder(

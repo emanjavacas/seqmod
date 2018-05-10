@@ -2,18 +2,17 @@
 from collections import OrderedDict
 
 import torch
-from torch.autograd import Variable
 from torch.nn import functional as F
 from torch.nn.utils.rnn import pack_padded_sequence
 
 
 def init_hidden_for(inp, num_dirs, num_layers, hid_dim, cell,
-                    h_0=None, add_init_jitter=False, training=False):
+                    h_0=None, add_init_jitter=False):
     """
     General function for initializing RNN hidden states
 
     Parameters:
-    - inp: Variable(seq_len, batch_size, dim)
+    - inp: torch.Tensor(seq_len, batch_size, dim)
     """
     size = (num_dirs * num_layers, inp.size(1), hid_dim)
 
@@ -21,8 +20,7 @@ def init_hidden_for(inp, num_dirs, num_layers, hid_dim, cell,
     if h_0 is not None:
         h_0 = h_0.repeat(1, inp.size(1), 1)
     else:
-        h_0 = Variable(inp.data.new(*size).zero_(),
-                       volatile=not training)
+        h_0 = torch.zeros(*size, device=inp.device)
 
     # eventualy add jitter
     if add_init_jitter:
@@ -30,7 +28,7 @@ def init_hidden_for(inp, num_dirs, num_layers, hid_dim, cell,
 
     if cell.startswith('LSTM'):
         # compute memory cell
-        return h_0, h_0.zeros_like(h_0)
+        return h_0, torch.zeros_like(h_0)
     else:
         return h_0
 
@@ -39,7 +37,7 @@ def make_length_mask(lengths):
     """
     Compute binary length mask.
 
-    lengths: Variable torch.LongTensor(batch) should be on the desired
+    lengths: torch.Tensor(batch, dtype=int) should be on the desired
         output device.
 
     Returns:
@@ -47,19 +45,17 @@ def make_length_mask(lengths):
 
     mask: torch.ByteTensor(batch x seq_len)
     """
-    maxlen, batch = lengths.data.max(), len(lengths)
-    mask = torch.arange(0, maxlen, out=lengths.data.new()) \
+    maxlen, batch = lengths.detach().max(), len(lengths)
+    return torch.arange(0, maxlen, dtype=torch.int64, device=lengths.device) \
                 .repeat(batch, 1) \
-                .lt(lengths.data.unsqueeze(1))
-    return Variable(mask, volatile=lengths.volatile)
+                .lt(lengths.unsqueeze(1))
 
 
 def make_dropout_mask(inp, p, size):
     """
     Make dropout mask variable
     """
-    return Variable(inp.data.new(*size).bernoulli_(1 - p).div_(1 - p),
-                    requires_grad=False)
+    return torch.zeros(*size, device=inp.device).bernoulli_(1 - p).div_(1 - p)
 
 
 def variational_dropout(inp, p=0.0, training=False):
@@ -71,12 +67,10 @@ def variational_dropout(inp, p=0.0, training=False):
 
     seq_len, batch, dim = inp.size()
 
-    return Variable(
-        # compute mask
-        inp.data.new(1, batch, dim).bernoulli_(1 - p).div_(1 - p),
-        requires_grad=False
-        # expand and apply mask
-    ).expand(seq_len, batch, dim) * inp
+    return torch.zeros(1, batch, dim, device=inp.device) \
+                .bernoulli_(1 - p) \
+                .div_(1 - p) \
+                .expand(seq_len, batch, dim) * inp
 
 
 def split(inp, breakpoints, include_last=False):
@@ -141,11 +135,9 @@ def repackage_bidi(h_or_c):
 
 
 def repackage_hidden(h):
-    """
-    Detach hidden from previous graph
-    """
-    if type(h) == Variable:
-        return Variable(h.data)
+    """Wraps hidden states in new Tensors, to detach them from their history."""
+    if isinstance(h, torch.Tensor):
+        return h.detach()
     else:
         return tuple(repackage_hidden(v) for v in h)
 
@@ -162,9 +154,8 @@ def swap(x, dim, perm):
         selected dimension of swap(x) contains the x[i] entry of the original
         tensor.
     """
-    if isinstance(perm, list):
-        perm = torch.LongTensor(perm)
-    return x.index_select(dim, torch.autograd.Variable(perm))
+    perm = torch.tensor(perm) if isinstance(perm, list) else perm
+    return x.index_select(dim, perm)
 
 
 def flip(x, dim):
@@ -174,16 +165,16 @@ def flip(x, dim):
     Taken from: https://github.com/pytorch/pytorch/issues/229
 
     >>> import torch
-    >>> x = torch.LongTensor([[0, 2, 4], [1, 3, 5]])
+    >>> x = torch.tensor([[0, 2, 4], [1, 3, 5]])
     >>> flip(x, 0).tolist()
     [[1, 3, 5], [0, 2, 4]]
     >>> flip(x, 1).tolist()
     [[4, 2, 0], [5, 3, 1]]
     """
-    xsize, dev = x.size(), ('cpu', 'cuda')[x.is_cuda]
+    xsize = x.size()
     dim = x.dim() + dim if dim < 0 else dim
     x = x.view(-1, *xsize[dim:])
-    index = getattr(torch.arange(x.size(1)-1, -1, -1), dev)().long()
+    index = torch.arange(x.size(1)-1, -1, -1, dtype=torch.int64, device=x.device)
     x = x.view(x.size(0), x.size(1), -1)[:, index, :]
     return x.view(xsize)
 
@@ -206,11 +197,12 @@ def select_cols(t, vec):
     - vec: list or torch.LongTensor of size equal to number of rows in t
 
     >>> x = torch.arange(0, 10).repeat(10, 1).t()  # [[0, ...], [1, ...], ...]
-    >>> list(select_cols(x, list(range(10))))
+    >>> select_cols(x, list(range(10))).tolist()
     [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0]
     """
-    if isinstance(vec, list):
-        vec = torch.LongTensor(vec)
+    if not isinstance(vec, torch.Tensor):
+        vec = torch.tensor(vec, device=t.device)
+
     return t.gather(1, vec.unsqueeze(1)).squeeze(1)
 
 
@@ -222,21 +214,21 @@ def pack_sort(inp, lengths, batch_first=False):
 
     Parameters:
     -----------
-    inp: Variable(seq_len x batch x dim)
-    lengths: Variable or LongTensor of length ``batch``
+    inp: torch.Tensor(seq_len x batch x dim)
+    lengths: LongTensor of length ``batch``
 
     >>> from torch.nn.utils.rnn import pad_packed_sequence as unpack
-    >>> inp = Variable(torch.FloatTensor([[1, 3], [2, 4], [0, 5]]))
-    >>> lengths = torch.LongTensor([2, 3]) # unsorted order
+    >>> inp = torch.tensor([[1, 3], [2, 4], [0, 5]], dtype=torch.float)
+    >>> lengths = torch.tensor([2, 3]) # unsorted order
     >>> sorted_inp, unsort = pack_sort(inp, lengths)
     >>> sorted_inp, _ = unpack(sorted_inp)
-    >>> sorted_inp[:, unsort].data.tolist()  # original order
+    >>> sorted_inp[:, unsort].tolist()  # original order
     [[1.0, 3.0], [2.0, 4.0], [0.0, 5.0]]
-    >>> sorted_inp.data.tolist()  # sorted by length
+    >>> sorted_inp.tolist()  # sorted by length
     [[3.0, 1.0], [4.0, 2.0], [5.0, 0.0]]
     """
-    if isinstance(lengths, Variable):
-        lengths = lengths.data
+    if not isinstance(lengths, torch.Tensor):
+        lengths = torch.tensor(lengths)  # no need to use gpu
 
     lengths, sort = torch.sort(lengths, descending=True)
     _, unsort = sort.sort()
@@ -249,22 +241,19 @@ def pack_sort(inp, lengths, batch_first=False):
     return inp, unsort
 
 
-def get_last_token(t, lenghts):
+def get_last_token(t, lengths):
     """
-    Grab last hidden activation of each batch element according to `lenghts`
+    Grab last hidden activation of each batch element according to `lengths`
 
-    #                                             ^ (1)      ^ (2)      ^ (3)
-    >>> t = Variable(torch.FloatTensor([[[1],[2],[3]], [[2],[3],[4]], [[3],[4],[5]]]))
-    >>> lenghts = torch.LongTensor([3, 2, 1])
-    >>> get_last_token(t, lenghts).data.tolist()
-    [[3.0], [3.0], [3.0]]
+    #                               ^ (1)      ^ (2)      ^ (3)
+    >>> t = torch.tensor([[[1],[2],[3]], [[2],[3],[4]], [[3],[4],[5]]])
+    >>> lengths = torch.tensor([3, 2, 1])
+    >>> get_last_token(t, lengths).tolist()
+    [[3], [3], [3]]
     """
-    if isinstance(lenghts, Variable):
-        lenghts = lenghts.data
-
     seq_len, batch, _ = t.size()
-    index = torch.arange(0, batch, out=torch.zeros_like(lenghts).long()) * seq_len
-    index = Variable(index + (lenghts - 1))
+    index = torch.arange(0, batch, dtype=torch.int64, device=lengths.device) * seq_len
+    index = index + (lengths - 1)
     t = t.transpose(0, 1).contiguous()  # make it batch first
     t = t.view(seq_len * batch, -1)
     t = t.index_select(0, index)
@@ -277,7 +266,8 @@ def detach_vars(data):
     of softmax losses over a whole sequence."""
     for k, v in data.items():
         if v.requires_grad:
-            v = Variable(v.data, requires_grad=True, volatile=False)
+            v = v.detach()
+            v.requires_grad = True
         yield k, v
 
 
@@ -305,7 +295,7 @@ def shards(data, size=25, test=False):
     inputs, grads = [], []
     for key, var in detached.items():
         if var.grad is not None:
-            inputs.append(data[key]), grads.append(var.grad.data)
+            inputs.append(data[key]), grads.append(var.grad)
 
     torch.autograd.backward(inputs, grads, retain_graph=True)
 

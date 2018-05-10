@@ -1,7 +1,7 @@
 
 import os
 import random
-import time
+from time import time
 import copy
 import math
 import collections
@@ -11,8 +11,9 @@ import logging
 from operator import itemgetter
 from datetime import datetime
 
+import torch
 from torch.optim import lr_scheduler
-from torch.nn.utils import clip_grad_norm
+from torch.nn.utils import clip_grad_norm_
 
 from seqmod import utils as u
 from seqmod.misc.early_stopping import EarlyStoppingException
@@ -290,7 +291,6 @@ class Trainer(object):
         self.loggers = []
         self.hooks = []
         self.last_batch_order = None
-        self.batch_run = 0
 
     # logging
     def add_loggers(self, *loggers):
@@ -334,8 +334,17 @@ class Trainer(object):
         if hooks_per_epoch is None and num_checkpoints is None:
             raise ValueError("Either `num_checkpoints` or `hooks_per_epoch` "
                              "must be passed to ``add_hook``")
+
         hook = {'hook': hook}
+
         if hooks_per_epoch is not None:
+            # check if train is given and has length
+            try:
+                len(self.datasets.get('train', None))
+            except TypeError:
+                raise ValueError("Cannot configure hook on `hooks_per_epoch` since "
+                                 "`train` dataset doesn't have length. Use "
+                                 "`num_checkpoints` instead")
             hook['hooks_per_epoch'] = hooks_per_epoch
         else:
             hook['num_checkpoints'] = num_checkpoints
@@ -392,7 +401,7 @@ class Trainer(object):
     def optimizer_step(self):
         "Runs an optimizing step"
         if self.max_norm is not None:
-            clip_grad_norm(self.model.parameters(), self.max_norm)
+            clip_grad_norm_(self.model.parameters(), self.max_norm)
         self.optimizer.step()
 
     def scheduler_step(self, epoch, valid_loss):
@@ -439,11 +448,9 @@ class Trainer(object):
         dataset = self.datasets['test' if test else 'valid']
         model, loss = model or self.model, self.loss.init()
 
-        for batch_num in range(len(dataset)):
-            batch = dataset[batch_num]
+        for batch in dataset:
             batch_loss, batch_examples = model.loss(batch, test=True, **kwargs)
-            loss.add(u.unwrap_variables(batch_loss), batch_examples)
-            del batch_loss
+            loss.add(batch_loss, batch_examples)
 
         return loss
 
@@ -477,13 +484,29 @@ class Trainer(object):
         else:
             return self._get_batch_mode_batch_order(shuffle, num_batches)
 
-    def run_inner_loop(self, epoch, checkpoint, batch_order, **kwargs):
-        "General train loop for a single run"
-        # compute batch order
-        run_loss, check_loss = self.loss.init(), self.loss.init()
-        start = time.time()
+    def run_checkpoint(self, epoch, b, checkpoint, duration, total_batches, loss):
+        "Run checkpoint when needed"
+        if checkpoint and b > 0 and b % checkpoint == 0:
+            self.model.eval()
+            self.log('checkpoint', {
+                'epoch': epoch,
+                'batch': b,
+                'total_batches': total_batches,
+                'examples': loss.examples,
+                'duration': duration,
+                'loss': loss.pack()})
+            with torch.no_grad():
+                self.run_hooks(epoch, b, checkpoint)
+            self.model.train()
 
-        for batch_num, batch in enumerate(batch_order):
+    def run_inner_loop(self, epoch, checkpoint, batch_order, **kwargs):
+        """
+        General train loop for a single run
+        """
+        run_loss, check_loss = self.loss.init(), self.loss.init()
+        start, total_batches = time(), len(batch_order)
+
+        for b, batch in enumerate(batch_order):
 
             self.optimizer.zero_grad()
             batch_data = self.datasets['train'][batch]
@@ -494,64 +517,82 @@ class Trainer(object):
 
             self.optimizer_step()
 
-            batch_loss = u.unwrap_variables(batch_loss)
             run_loss.add(batch_loss, batch_examples)
             check_loss.add(batch_loss, batch_examples)
 
-            self.on_batch_end(epoch, batch_num, run_loss)
+            self.on_batch_end(epoch, b, run_loss)
 
             # checkpoint
-            if checkpoint and batch_num > 0 and batch_num % checkpoint == 0:
-                self.model.eval()
-                self.log('checkpoint', {
-                    'epoch': epoch,
-                    'batch': batch_num,
-                    'total_batches': len(batch_order),
-                    'examples': check_loss.examples,
-                    'duration': time.time() - start,
-                    'loss': check_loss.pack()})
-                self.run_hooks(epoch, batch_num, checkpoint)
-                self.model.train()
-                check_loss.reset()
-                start = time.time()
+            self.run_checkpoint(
+                epoch, b, checkpoint, time()-start, total_batches, check_loss)
+
+            check_loss.reset()
+            start = time()
 
         return run_loss
 
-    def run_outer_loop(self, checkpoint, epochs=None, num_batches=None,
+    def run_inner_generator_loop(self, epoch, checkpoint, generator, **kwargs):
+        """
+        Custom inner loop for generator datasets
+        """
+        run_loss, check_loss = self.loss.init(), self.loss.init()
+        start, total_batches = time(), '~'
+
+        for b, batch in enumerate(generator):
+
+            self.optimizer.zero_grad()
+            batch_loss, batch_examples = self.model.loss(batch, **kwargs)
+
+            if batch_loss is None:
+                continue
+
+            self.optimizer_step()
+
+            run_loss.add(batch_loss, batch_examples)
+            check_loss.add(batch_loss, batch_examples)
+
+            self.on_batch_end(epoch, b, run_loss)
+
+            # checkpoint
+            self.run_checkpoint(
+                epoch, b, checkpoint, time()-start, total_batches, check_loss)
+
+            start = time()
+            check_loss.reset()
+
+        return run_loss
+
+    def run_outer_loop(self, checkpoint, epochs=None, num_batches=None, generator=None,
                        shuffle=True, run_test=True, **kwargs):
-        "General train loop for many runs"
-
+        """
+        General train loop for multiple runs/epochs
+        """
         best_model, valid_loss, test_loss = None, None, None
-        start = time.time()
-
-        # check run mode (training for epochs or number of batches)
-        _batch_mode = epochs is None
-        if _batch_mode:
-            epochs = 1
+        start = time()
 
         try:
             for e in range(epochs):
-                epoch_start = time.time()
+
+                # run epoch
+                self.on_epoch_begin(e)
+                epoch_start = time()
                 self.model.train()
 
-                if _batch_mode:
-                    e = self.batch_run   # report number of runs as epoch
-                    self.batch_run += 1  # increase number of runs
+                if generator is not None:
+                    run_loss = self.run_inner_generator_loop(
+                        e, checkpoint, generator, **kwargs)
                 else:
-                    self.on_epoch_begin(e)
+                    batch_order = self.get_batch_order(shuffle, num_batches=num_batches)
+                    run_loss = self.run_inner_loop(e, checkpoint, batch_order, **kwargs)
 
-                batch_order = self.get_batch_order(shuffle, num_batches=num_batches)
-                run_loss = self.run_inner_loop(
-                    e, checkpoint, batch_order, **kwargs)
-
-                run_time = time.time() - epoch_start
-                self.on_epoch_end(e, run_loss, run_loss.examples, run_time)
+                self.on_epoch_end(e, run_loss, run_loss.examples, time() - epoch_start)
 
                 # valid
                 if 'valid' in self.datasets:
                     self.model.eval()
                     self.on_validation_begin(e)
-                    valid_loss = self.validate_model(**kwargs)
+                    with torch.no_grad():
+                        valid_loss = self.validate_model(**kwargs)
                     self.on_validation_end(e, valid_loss)
                     self.model.train()
 
@@ -569,19 +610,18 @@ class Trainer(object):
         except KeyboardInterrupt:
             self.log("info", "Training interrupted")
 
-        self.log("info", "Trained for [{:.3f} secs]".format(time.time()-start))
+        self.log("info", "Trained for [{:.3f} secs]".format(time() - start))
 
         # prepare best model
         self.model.cpu()        # free gpu
-        if best_model is None:
-            best_model = self.model
-        best_model.eval()
+        best_model = best_model or self.model
 
         if run_test and 'test' in self.datasets:
-            self.on_test_begin(self.batch_run)
-            if self.datasets['test'].gpu:  # might be on cpu if coming from ES
-                best_model.cuda()
-            test_loss = self.validate_model(test=True, model=best_model, **kwargs)
+            best_model.eval()
+            self.on_test_begin(e)
+            best_model = best_model.to(device=self.datasets['test'].device)
+            with torch.no_grad():
+                test_loss = self.validate_model(test=True, model=best_model, **kwargs)
             self.on_test_end(test_loss)
             test_loss = test_loss.reduce()
 
@@ -608,10 +648,6 @@ class Trainer(object):
         By default, no testing is done at the end, this can be changed through
         the flag run_test.
 
-        `on_epoch_begin` and `on_epoch_end` are reused in this case, but epoch
-        will refer to the current partial run (which will only coincide with
-        an actual epoch if `num_batches` equals dataset length).
-
         Parameters:
         -----------
 
@@ -632,10 +668,10 @@ class Trainer(object):
         - test_loss: float or None
         """
         return self.run_outer_loop(
-            checkpoint, num_batches=num_batches, shuffle=shuffle,
+            checkpoint, epochs=1, num_batches=num_batches, shuffle=shuffle,
             run_test=run_test, **kwargs)
 
-    def train(self, epochs, checkpoint, shuffle=False, **kwargs):
+    def train(self, epochs, checkpoint, shuffle=False, run_test=True, **kwargs):
         """
         Parameters:
         -----------
@@ -656,4 +692,18 @@ class Trainer(object):
         """
         return self.run_outer_loop(
             checkpoint, epochs=epochs, shuffle=shuffle,
-            run_test=True, **kwargs)
+            run_test=run_test, **kwargs)
+
+    def train_generator(self, epochs, generator, checkpoint, run_test=True, **kwargs):
+        """
+        Train over a generator for memory efficient
+
+        Parameters:
+        -----------
+
+        - epochs: int
+        - generator: func that returns a generator over training examples
+        """
+        return self.run_outer_loop(
+            checkpoint, epochs=epochs, generator=generator,
+            run_test=run_test, **kwargs)

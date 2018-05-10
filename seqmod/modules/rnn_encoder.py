@@ -108,8 +108,7 @@ class RNNEncoder(BaseEncoder):
     def init_hidden_for(self, inp):
         return init_hidden_for(
             inp, self.num_dirs, self.num_layers, self.hid_dim, self.cell,
-            h_0=self.h_0, add_init_jitter=self.add_init_jitter,
-            training=self.training)
+            h_0=self.h_0, add_init_jitter=self.add_init_jitter)
 
     def forward(self, inp, lengths=None):
         """
@@ -245,7 +244,7 @@ class GRLRNNEncoder(RNNEncoder):
         if not test:
             (sum(grl_loss) / len(self.grls)).backward(retain_graph=True)
 
-        return [l.data[0] for l in grl_loss], cond.size(0)
+        return [l.item() for l in grl_loss], cond.size(0)
 
     @property
     def conditional(self):

@@ -1,7 +1,6 @@
 
 import os
 import copy
-import random
 import torch.optim as optim
 
 from seqmod.modules.encoder_decoder import make_rnn_encoder_decoder
@@ -64,7 +63,7 @@ if __name__ == '__main__':
     parser.add_argument('--patience', default=0, type=int)
     parser.add_argument('--epochs', type=int, default=5)
     parser.add_argument('--batch_size', type=int, default=128)
-    parser.add_argument('--gpu', action='store_true')
+    parser.add_argument('--device', default='cpu')
     parser.add_argument('--checkpoint', type=int, default=1000)
     parser.add_argument('--num_checkpoints', type=int, default=20)
     parser.add_argument('--test', action='store_true')
@@ -98,8 +97,7 @@ if __name__ == '__main__':
         m.encoder.embeddings.init_embeddings_from_file(
             args.embeddings_path, verbose=True)
 
-    if args.gpu:
-        m.cuda()
+    m.to(device=args.device)
 
     optimizer = getattr(optim, args.optimizer)(m.parameters(), lr=args.lr)
     # validation hook
@@ -126,7 +124,7 @@ if __name__ == '__main__':
         valid = u.load_model(args.dev_path)
         valid = PairedDataset(
             valid['p1'], valid['p2'], dicts,
-            batch_size=args.batch_size, fitted=True, gpu=args.gpu
+            batch_size=args.batch_size, fitted=True, device=args.device
         ).sort_(sort_by='trg')
 
     for epoch in range(args.epochs):
@@ -138,7 +136,7 @@ if __name__ == '__main__':
             print("Preparing dataset")
             train = PairedDataset(
                 train['p1'], train['p2'], dicts,
-                batch_size=args.batch_size, fitted=True, gpu=args.gpu)
+                batch_size=args.batch_size, fitted=True, device=args.device)
             if valid is None:
                 print("Loading validation set")
                 train, valid = train.splits(dev=None, test=args.dev_split, shuffle=True)
@@ -157,8 +155,7 @@ if __name__ == '__main__':
             # train
             trainer.train(1, args.checkpoint, shuffle=True)
             # ensure model is on gpu after training
-            if args.gpu:
-                m.cuda()
+            m.to(device=args.device)
 
             del train, trainer
 

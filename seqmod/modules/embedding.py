@@ -7,7 +7,6 @@ from sklearn.linear_model import LinearRegression
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-from torch.autograd import Variable
 from torch.nn.utils.rnn import pad_packed_sequence as unpack
 
 from seqmod.loaders import EmbeddingLoader
@@ -15,7 +14,7 @@ from seqmod.modules.torch_utils import init_hidden_for, pack_sort, split, pad_se
 from seqmod.modules.conv_utils import get_padding
 
 
-def word_dropout_mask(X, dropout_rate, reserved_codes=()):
+def word_dropout_mask(X, dropout_rate, reserved_codes):
     """
     Computes a binary mask across batch examples based on a
     bernoulli distribution with mean equal to dropout.
@@ -30,7 +29,7 @@ def word_dropout_mask(X, dropout_rate, reserved_codes=()):
 
 def word_dropout(inp, target, p=0.0, training=True, reserved_codes=()):
     """
-    Applies word dropout to an input Variable. Dropout isn't constant
+    Applies word dropout to an input Tensor. Dropout isn't constant
     across batch examples. This is only to be used to drop input symbols
     (i.e. before the embedding layer)
 
@@ -46,9 +45,7 @@ def word_dropout(inp, target, p=0.0, training=True, reserved_codes=()):
     if not training or p == 0:
         return inp
 
-    mask = word_dropout_mask(inp.data, p, reserved_codes=reserved_codes)
-
-    return inp.masked_fill(Variable(mask), target)
+    return inp.masked_fill(word_dropout_mask(inp, p, reserved_codes), target)
 
 
 class PositionalEncoding(nn.Module):
@@ -73,8 +70,7 @@ class PositionalEncoding(nn.Module):
         # even and odd entries along the 3th dimensions correspond
         # to sin and cos waves over i (index along the 1st dim)
         # divided by 10000^(2*i/emb_dim)
-        pe = torch.arange(0, max_len) \
-                  .unsqueeze(1).expand(max_len, emb_dim)
+        pe = torch.arange(0, max_len).unsqueeze(1).expand(max_len, emb_dim)
         power = torch.arange(0, emb_dim * 2, 2) / emb_dim
         pe = pe * (1 / torch.pow(10000, power)).expand_as(pe)
         pe[:, 0::2] = torch.sin(pe[:, 0::2])
@@ -93,13 +89,13 @@ class PositionalEncoding(nn.Module):
         """
         if emb.dim() == 3:
             pos_emb = self.pe[:emb.size(0), :1, :emb.size(2)]
+
         else:
             if pos is None:
-                raise ValueError("2D input to positional encoding needs `pos` input")
-
+                raise ValueError("2D positional encoding needs `pos`")
             pos_emb = self.pe[pos, :1, :emb.size(1)]
 
-        return emb + Variable(pos_emb.expand_as(emb), requires_grad=False)
+        return emb + pos_emb.expand_as(emb)
 
 
 class Embedding(nn.Embedding):
@@ -182,15 +178,13 @@ class Embedding(nn.Embedding):
         - words: list of word indices corresponding to each row in `weight`
         """
         # wrap in tensor
-        if isinstance(weight, list):
-            weight = torch.Tensor(weight).float()
-        if isinstance(weight, np.ndarray):
-            weight = torch.from_numpy(weight).float()
+        if isinstance(weight, (list, np.ndarray)):
+            weight = torch.tensor(weight)
+
         # check embedding size
         if weight.size(1) != self.embedding_dim:
-            raise ValueError("Mismatched embedding dim {} for model "
-                             "with dim {}".format(weight.size(1),
-                                                  self.embedding_dim))
+            raise ValueError("Mismatched embedding {} for model with dim {}"
+                             .format(weight.size(1), self.embedding_dim))
 
         self_idxs, other_idxs = [], []
         for other_idx, word in enumerate(words):
@@ -200,9 +194,7 @@ class Embedding(nn.Embedding):
             except KeyError:
                 pass
 
-        other_idxs = torch.LongTensor(other_idxs)
-        self_idxs = torch.LongTensor(self_idxs)
-        self.weight.data[self_idxs] = weight[other_idxs]
+        self.weight.data[torch.tensor(self_idxs)] = weight[torch.tensor(other_idxs)]
 
     def init_embeddings_from_file(self, filepath, mode=None, **kwargs):
         """
@@ -244,7 +236,7 @@ class Embedding(nn.Embedding):
 
         # extract shared embeddings in same order
         index = np.array([self.d.s2i[w] for w in shared], dtype=np.int)
-        self_vecs = self.weight.data.cpu().numpy()[index]
+        self_vecs = self.weight.cpu().numpy()[index]
         index = np.array([shared[w] for w in shared], dtype=np.int)
         other_vecs = weight[index]
 
@@ -263,12 +255,12 @@ class Embedding(nn.Embedding):
             print("Projected [{}/{}] new OOVs local space".format(
                 len(new), len(targets or [])))
         index = np.array(list(new.values()), dtype=np.int)
-        new_vecs = torch.FloatTensor(clf.predict(weight[index]))
+        new_vecs = torch.tensor(clf.predict(weight[index]))
 
         # populate embedding weight with new embeddings
         new_weight = torch.zeros(len(new_idxs), self.embedding_dim)
         new_weight = torch.cat([self.weight.data, new_weight], dim=0)
-        new_weight[torch.LongTensor(new_idxs)] = new_vecs
+        new_weight[torch.tensor(new_idxs)] = new_vecs
         self.weight.data = new_weight
 
 
@@ -278,7 +270,7 @@ def flatten_batch(inp, lengths, breakpoint_idx):
 
     for idx in range(inp.size(1)):
         seq = inp[:, idx]
-        breakpoints = (seq.data == breakpoint_idx).nonzero()
+        breakpoints = (seq == breakpoint_idx).nonzero()
         # remove trailing dim added by nonzero()
         breakpoints = breakpoints.squeeze(1).tolist()
         # decrease since we are going to use them for indexing
@@ -351,8 +343,7 @@ class RNNEmbedding(ComplexEmbedding):
     def _run_rnn(self, inp, lengths):
         hidden = init_hidden_for(
             inp, self.num_dirs, self.num_layers,
-            self.embedding_dim // self.num_dirs, self.cell,
-            training=self.training)
+            self.embedding_dim // self.num_dirs, self.cell)
 
         rnn_inp = inp
         rnn_inp, unsort = pack_sort(rnn_inp, lengths)
@@ -372,9 +363,11 @@ class RNNEmbedding(ComplexEmbedding):
 
         # iterate over batch
         for i in range(inp.size(1)):
-            breakpoints = (inp[:, i].data == self.breakpoint_idx).nonzero()
-            breakpoints = torch.cat([
-                breakpoints.squeeze(1), lengths.unsqueeze(1)[i]-1], dim=0)
+            breakpoints = (inp[:, i] == self.breakpoint_idx).nonzero()
+            breakpoints = torch.cat(
+                [breakpoints.squeeze(1),
+                 torch.tensor(lengths).unsqueeze(1)[i]-1],
+                dim=0)
             embs.append(out[:, i][breakpoints])
 
         embs, lengths = pad_sequence(embs)
@@ -391,7 +384,7 @@ class RNNEmbedding(ComplexEmbedding):
         flattened = self.embedding(flattened)
 
         # take last rnn activation as embedding: (num_words x emb_dim)
-        char_lenghts = torch.LongTensor(char_lenghts)
+        char_lenghts = torch.tensor(char_lenghts)
         if flattened.is_cuda:
             char_lenghts = char_lenghts.cuda()
         *_, out = self._run_rnn(flattened, char_lenghts)
@@ -406,7 +399,7 @@ class RNNEmbedding(ComplexEmbedding):
         Parameters:
         -----------
 
-        - inp: torch.Variable(seq_len x batch_size) where seq_len is given
+        - inp: torch.tensor(seq_len x batch_size) where seq_len is given
             in terms of character length.
         - lengths: list of number of real characters (besides pad symbols)
             in the input batch.
@@ -525,7 +518,7 @@ class CNNEmbedding(ComplexEmbedding):
 
 
 if __name__ == '__main__':
-    from seqmod.misc.dataset import Dict, pad_batch
+    from seqmod.misc.dataset import Dict, pad_sequential_batch
     from seqmod.utils import PAD
     from string import ascii_letters
     import random
@@ -547,8 +540,9 @@ if __name__ == '__main__':
         prev = 0
         for b in range(num_batches):
             to = min((b + 1) * batch_size, len(corpus) - 1)
-            inp, length = pad_batch(corpus[prev: to], d.get_pad(), True, False)
-            inps.append(Variable(torch.LongTensor(inp)))
+            inp, length = pad_sequential_batch(
+                corpus[prev: to], d.get_pad(), True, False)
+            inps.append(torch.tensor(inp))
             lengths.append(length)
             prev = to
 
@@ -561,8 +555,8 @@ if __name__ == '__main__':
 
     char_inps, char_lengths = create_batches(10, char_text, char_d)
     word_inps, word_lengths = create_batches(10, word_text, word_d)
-    n_char_inps = sum(sum(l.data.tolist()) for l in char_lengths)
-    n_word_inps = sum(sum(l.data.tolist()) for l in word_lengths)
+    n_char_inps = sum(sum(l) for l in char_lengths)
+    n_word_inps = sum(sum(l) for l in word_lengths)
 
     def make_word_embedding_runner(embedding):
         def runner():

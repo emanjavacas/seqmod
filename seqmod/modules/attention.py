@@ -62,7 +62,7 @@ class BahdanauScorer(nn.Module):
         self.W_s = nn.Linear(hid_dim1, att_dim, bias=False)
         self.W_t = nn.Linear(hid_dim2, att_dim, bias=True)
         self.v_a = nn.Parameter(torch.Tensor(att_dim, 1))
-        self.v_a.data.uniform_(-0.05, 0.05)
+        torch.nn.init.uniform_(self.v_a, -0.05, 0.05)
         self.v_a.custom = True  # don't overwrite initialization
 
     def project_enc_outs(self, enc_outs):

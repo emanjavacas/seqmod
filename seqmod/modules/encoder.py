@@ -57,7 +57,7 @@ def GRLWrapper(EncoderBaseClass):
         if not test:
             (sum(grl_loss) / len(self.grls)).backward(retain_graph=True)
 
-        return [l.data[0] for l in grl_loss], cond.size(0)
+        return [l.item() for l in grl_loss], cond.size(0)
 
     return type('GRL{}'.format(EncoderBaseClass.__name__),
                 (EncoderBaseClass,),

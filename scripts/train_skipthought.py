@@ -162,7 +162,7 @@ if __name__ == '__main__':
     parser.add_argument('--patience', default=0, type=int)
     parser.add_argument('--epochs', type=int, default=5)
     parser.add_argument('--batch_size', type=int, default=20)
-    parser.add_argument('--gpu', action='store_true')
+    parser.add_argument('--device', action='store_true')
     parser.add_argument('--checkpoint', type=int, default=100)
     parser.add_argument('--hooks_per_epoch', type=int, default=2)
     parser.add_argument('--test', action='store_true')
@@ -171,13 +171,14 @@ if __name__ == '__main__':
     print("Loading data...")
     processor = text_processor(
         lower=args.lower, num=args.num, level=args.level)
-    d = Dict(eos_token=u.EOS, bos_token=u.BOS, unk_token=u.UNK,
-             pad_token=u.PAD, max_size=args.max_size, force_unk=True
+    d = Dict(
+        eos_token=u.EOS, bos_token=u.BOS, unk_token=u.UNK,
+        pad_token=u.PAD, max_size=args.max_size, force_unk=True
     ).fit(pairs2sents(*args.path, max_len=args.max_len, processor=processor))
     pairs = load_pairs(*args.path, max_len=args.max_len, processor=processor)
     p1, p2 = zip(*list(pairs))
     train, valid = PairedDataset(
-        p1, p2, {'src': d, 'trg': d}, batch_size=args.batch_size, gpu=args.gpu
+        p1, p2, {'src': d, 'trg': d}, batch_size=args.batch_size, device=args.device
     ).splits(dev=None, test=args.dev_split)
 
     print("Building model...")
@@ -197,8 +198,7 @@ if __name__ == '__main__':
         m.encoder.embeddings.init_embeddings_from_file(
             args.embeddings_path, verbose=True)
 
-    if args.gpu:
-        m.cuda()
+    m.to(device=args.device)
 
     optimizer = getattr(optim, args.optimizer)(m.parameters(), lr=args.lr)
     trainer = Trainer(

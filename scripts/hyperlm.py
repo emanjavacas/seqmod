@@ -28,7 +28,7 @@ def load_from_file(path):
     if path.endswith('npy'):
         import numpy as np
         array = np.load(path).astype(np.int64)
-        data = torch.LongTensor(array)
+        data = torch.tensor(array)
     elif path.endswith('.pt'):
         data = torch.load(path)
     else:
@@ -41,7 +41,7 @@ def load_dataset(path, d, processor, args):
     if not d.fitted:
         d.fit(data)
 
-    return BlockDataset(data, d, args.batch_size, args.bptt, gpu=args.gpu)
+    return BlockDataset(data, d, args.batch_size, args.bptt, device=args.device)
 
 
 if __name__ == '__main__':
@@ -61,7 +61,7 @@ if __name__ == '__main__':
     # training
     parser.add_argument('--batch_size', default=20, type=int)
     parser.add_argument('--bptt', default=50, type=int)
-    parser.add_argument('--gpu', action='store_true')
+    parser.add_argument('--device', default='cpu')
     # - optimizer
     parser.add_argument('--optim', default='Adam', type=str)
     parser.add_argument('--lr', default=0.01, type=float)
@@ -90,7 +90,7 @@ if __name__ == '__main__':
         assert args.dict_path, "Processed data requires DICT_PATH"
         data, d = load_from_file(args.path), u.load_model(args.dict_path)
         train, test, valid = BlockDataset(
-            data, d, args.batch_size, args.bptt, gpu=args.gpu, fitted=True
+            data, d, args.batch_size, args.bptt, device=args.device, fitted=True
         ).splits(test=args.test_split, dev=args.dev_split)
 
     else:
@@ -117,10 +117,10 @@ if __name__ == '__main__':
 
         # split, assume input is single file or dir with txt files
         else:
-            data = load_lines(args.path, processor=proc)
+            data = load_lines(args.path, processor=processor)
             d.fit(data)
             train, valid, test = BlockDataset(
-                data, d, args.batch_size, args.bptt, gpu=args.gpu
+                data, d, args.batch_size, args.bptt, device=args.device
             ).splits(test=args.test_split, dev=args.dev_split)
 
     print(' * vocabulary size. {}'.format(len(d)))
@@ -172,8 +172,7 @@ if __name__ == '__main__':
             batches = len(self.trainer.datasets['train'])
             batches = int((batches / args.max_iter) * args.max_epochs)
 
-            if args.gpu:
-                self.trainer.model.cuda()
+            self.trainer.model.to(args.device)
             (_, loss), _ = self.trainer.train_batches(batches * n_iters, 10)
             self.trainer.model.cpu()
 

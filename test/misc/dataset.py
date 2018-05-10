@@ -190,14 +190,14 @@ class TestCompressionTable(unittest.TestCase):
 
     def test_expand(self):
         # hashed conditions as tensor
-        as_tensor = torch.LongTensor([h for h in self.hashed])
+        as_tensor = torch.tensor([h for h in self.hashed])
         # expand requires batched tensor
         num_batches, pad = divmod(len(as_tensor), self.batch_size)
         if pad != 0:            # pad tensor in case uneven length
             num_batches += 1
         # create 0-pad tensor and copy from source tensor
         t = torch.zeros([num_batches, self.batch_size]).long().view(-1)
-        index = torch.LongTensor(list(range(len(as_tensor))))
+        index = torch.tensor(list(range(len(as_tensor))))
         t.index_copy_(0, index, as_tensor)
         # expand
         conds = self.table.expand(t.view(-1, self.batch_size))

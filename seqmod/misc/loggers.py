@@ -85,17 +85,17 @@ class StdLogger(Logger):
                           for (k, v) in loss.items()])
 
     def epoch_begin(self, payload):
-        self.logger.info("Starting epoch [%d]" % payload['epoch'])
+        self.logger.info("Starting epoch [{}]".format(payload['epoch']))
 
     def epoch_end(self, payload):
         speed = payload["examples"] / payload["duration"]
         loss = StdLogger.loss_str(payload['loss'], 'train')
-        self.logger.info("Epoch[%d]; %s; speed: %d tokens/sec" %
-                         (payload['epoch'], loss, speed))
+        self.logger.info("Epoch[{}]; {}; speed: {:g} tokens/sec"
+                         .format(payload['epoch'], loss, speed))
 
     def validation_end(self, payload):
         loss = StdLogger.loss_str(payload['loss'], 'valid')
-        self.logger.info("Epoch[%d]; %s" % (payload['epoch'], loss))
+        self.logger.info("Epoch[{}]; {}".format(payload['epoch'], loss))
 
     def test_begin(self, payload):
         self.logger.info("Testing...")
@@ -107,8 +107,8 @@ class StdLogger(Logger):
         e, b, bs = payload['epoch'], payload['batch'], payload['total_batches']
         speed = payload["examples"] / payload["duration"]
         loss = StdLogger.loss_str(payload['loss'], 'train')
-        self.logger.info("Epoch[%d]; batch [%d/%d]; %s; speed %d tokens/sec" %
-                         (e, b, bs, loss, speed))
+        self.logger.info("Epoch[{}]; batch [{}/{}]; {}; speed {:g} tokens/sec"
+                         .format(e, b, bs, loss, speed))
 
     def info(self, payload):
         if isinstance(payload, dict):
@@ -164,7 +164,7 @@ class VisdomLogger(Logger):
         self.last[phase][loss_label] = {'X': epoch, 'Y': loss}
 
     def _plot_line(self, X, Y, phase, loss_label):
-        name = "%s.%s" % (phase, loss_label)
+        name = "{}.{}".format(phase, loss_label)
         X = np.array([self.last[phase][loss_label]['X'], X])
         Y = np.array([self.last[phase][loss_label]['Y'], Y])
         if self.max_y:

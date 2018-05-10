@@ -26,7 +26,7 @@ def load_from_file(path):
     if path.endswith('npy') or path.endswith('npz'):
         import numpy as np
         array = np.load(path).astype(np.int64)
-        data = torch.LongTensor(array)
+        data = torch.tensor(array)
     elif path.endswith('.pt'):
         data = torch.load(path)
     else:
@@ -39,7 +39,7 @@ def load_dataset(path, d, processor, args):
     if not d.fitted:
         d.fit(data)
 
-    return BlockDataset(data, d, args.batch_size, args.bptt, gpu=args.gpu)
+    return BlockDataset(data, d, args.batch_size, args.bptt, device=args.device)
 
 
 def make_lr_hook(optimizer, factor, patience, threshold=0.05, verbose=True):
@@ -82,14 +82,14 @@ if __name__ == '__main__':
     parser.add_argument('--min_freq', default=1, type=int)
     parser.add_argument('--lower', action='store_true')
     parser.add_argument('--num', action='store_true')
-    parser.add_argument('--level', default='word')
+    parser.add_argument('--level', default='token')
     parser.add_argument('--dev_split', default=0.1, type=float)
     parser.add_argument('--test_split', default=0.1, type=float)
     # training
     parser.add_argument('--epochs', default=40, type=int)
     parser.add_argument('--batch_size', default=20, type=int)
     parser.add_argument('--bptt', default=35, type=int)
-    parser.add_argument('--gpu', action='store_true')
+    parser.add_argument('--device', default='cpu')
     parser.add_argument('--use_schedule', action='store_true')
     parser.add_argument('--schedule_init', type=float, default=1.0)
     parser.add_argument('--schedule_inflection', type=int, default=2)
@@ -123,7 +123,7 @@ if __name__ == '__main__':
             # single files full dataset
             train, test, valid = BlockDataset(
                 load_from_file(args.path), d, args.batch_size, args.bptt,
-                gpu=args.gpu, fitted=True
+                device=args.device, fitted=True
             ).splits(test=args.test_split, dev=args.dev_split)
             train = BlockDataset(load_from_file(args.path), )
         else:
@@ -132,14 +132,15 @@ if __name__ == '__main__':
             if os.path.isfile(args.path + '.test.npz'):
                 train, valid = BlockDataset(
                     train, d, args.batch_size, args.bptt,
-                    gpu=args.gpu, fitted=True).splits(test=args.dev_split, dev=None)
+                    device=args.device, fitted=True
+                ).splits(test=args.dev_split, dev=None)
                 test = BlockDataset(
                     load_from_file(args.path + '.test.npz'), d,
-                    args.batch_size, args.bptt, gpu=args.gpu, fitted=True)
+                    args.batch_size, args.bptt, device=args.device, fitted=True)
             else:
                 train, valid, test = BlockDataset(
                     train, d, args.batch_size, args.bptt,
-                    gpu=args.gpu, fitted=True
+                    device=args.device, fitted=True
                 ).splits(test=args.test_split, dev=args.dev_split)
 
     else:
@@ -169,7 +170,7 @@ if __name__ == '__main__':
             data = list(load_lines(args.path, processor=processor))
             d.fit(data)
             train, valid, test = BlockDataset(
-                data, d, args.batch_size, args.bptt, gpu=args.gpu
+                data, d, args.batch_size, args.bptt, device=args.device,
             ).splits(test=args.test_split, dev=args.dev_split)
 
     print(' * vocabulary size. {}'.format(len(d)))
@@ -183,11 +184,10 @@ if __name__ == '__main__':
            deepout_act=args.deepout_act, maxouts=args.maxouts,
            sampled_softmax=args.sampled_softmax, word_dropout=args.word_dropout)
 
-    u.initialize_model(m, rnn={'type': 'orthogonal', 'args': {'gain': 1.0}})
+    u.initialize_model(m, rnn={'type': 'orthogonal_', 'args': {'gain': 1.0}})
     m.embeddings.weight.data.uniform_(-0.1, 0.1)
 
-    if args.gpu:
-        m.cuda()
+    m.to(device=args.device)
 
     print(m)
     print('* number of parameters: {}'.format(m.n_params()))
@@ -199,9 +199,10 @@ if __name__ == '__main__':
         optimizer = getattr(optim, args.optim)(m.parameters(), lr=args.lr)
 
     # create trainer
+    loss_type = 'bpc' if args.level == 'char' else 'ppl'
     trainer = Trainer(
         m, {"train": train, "test": test, "valid": valid}, optimizer,
-        max_norm=args.max_norm, losses=('bpc' if args.level == 'char' else 'ppl',))
+        max_norm=args.max_norm, losses=(loss_type,))
 
     # hooks
     # - general hook
@@ -215,7 +216,7 @@ if __name__ == '__main__':
 
     model_hook = u.make_lm_hook(
         d, temperature=args.temperature, max_seq_len=args.max_seq_len,
-        gpu=args.gpu, level=args.level, early_stopping=early_stopping,
+        device=args.device, level=args.level, early_stopping=early_stopping,
         checkpoint=checkpoint)
     trainer.add_hook(model_hook, hooks_per_epoch=args.hooks_per_epoch)
 

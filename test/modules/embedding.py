@@ -2,7 +2,6 @@
 import unittest
 
 import torch
-from torch.autograd import Variable
 import lorem
 
 from seqmod.modules import embedding
@@ -44,8 +43,8 @@ class TestComplexEmbedding(EmbeddingTest):
     def setUp(self):
         super(TestComplexEmbedding, self).setUp()
         inp, lengths = pad_sequential_batch(self.corpus, self.d.get_pad(), True, False)
-        self.inp = Variable(torch.LongTensor(inp))
-        self.lengths = torch.LongTensor(lengths)
+        self.inp = torch.tensor(inp)
+        self.lengths = torch.tensor(lengths)
 
     def _test_embedding_dimensions(self, emb):
         output, lengths = emb(self.inp, self.lengths)

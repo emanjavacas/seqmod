@@ -4,7 +4,6 @@ import logging
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.autograd import Variable
 
 from seqmod.modules.torch_utils import variational_dropout
 from seqmod.modules.ff import Highway
@@ -223,12 +222,11 @@ class SampledSoftmax(FullSoftmax):
         logits: ((seq_len *) batch_size x nsampled + 1)  # adding the true class
         new_targets: ((seq_len *) batch_size)
         """
-        # sample and wrap as variables
         sample_ids, true_freq, sample_freq = _SAMPLER.sample(
-            self.nsampled, targets.data.cpu().numpy())
-        sample_ids = Variable(output.data.new(sample_ids).long())
-        true_freq = Variable(output.data.new(true_freq))
-        sample_freq = Variable(output.data.new(sample_freq))
+            self.nsampled, targets.cpu().numpy())
+        sample_ids = output.new(sample_ids).long()
+        true_freq = output.new(true_freq)
+        sample_freq = output.new(sample_freq)
 
         # gather true labels and weights
         true_weights = self.output_emb.weight[targets, :]
@@ -249,7 +247,7 @@ class SampledSoftmax(FullSoftmax):
         # remove true targets from sample set
         if remove_accidental_match:
             acc_hits = _SAMPLER.accidental_match(
-                targets.data.cpu().numpy(), sample_ids.data.cpu().numpy())
+                targets.cpu().numpy(), sample_ids.cpu().numpy())
             if len(acc_hits) > 0:
                 sample_logits[list(zip(*acc_hits))] = -1e37
 
@@ -260,6 +258,6 @@ class SampledSoftmax(FullSoftmax):
         # return logits and new_targets
         logits = torch.cat([true_logits.unsqueeze(1), sample_logits], dim=1)
         # zero tensor of size (batch_size), since true label is always first
-        new_targets = Variable(output.data.new(output.size(0)).zero_().long())
+        new_targets = output.new(output.size(0)).zero_().long()
 
         return logits, new_targets

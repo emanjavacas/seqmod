@@ -1,4 +1,5 @@
 
+import re
 import os
 import time
 import warnings
@@ -17,31 +18,33 @@ def segmenter(sent, level='char'):
 
 
 def text_processor(language='en', num=False, lower=False, level='token', normalize=True):
-    try:
-        from normalizr import Normalizr
-    except ImportError:
-        try:
-            from cucco import Cucco as Normalizr
-        except ImportError:
-            warnings.warn("Try installing normalizr or cucco")
-            return lambda sent: sent
-
+    # normalization
+    normalizer = None
     normalizations = [
         ('replace_emails', {'replacement': '<email>'}),
         ('replace_emojis', {'replacement': '<emoji>'}),
         ('replace_urls', {'replacement': '<url>'})]
-    normalizr = Normalizr()
 
-    import re
+    try:
+        from normalizr import Normalizr
+        normalizer = Normalizr().normalize
+    except ImportError:
+        try:
+            from cucco import Cucco
+            normalizer = Cucco().normalize
+        except ImportError:
+            warnings.warn("Try installing normalizr or cucco for better normalization")
+
     NUM = re.compile('[0-9]+')
 
     def processor(sent):
-        if normalize:
-            sent = normalizr.normalize(sent, normalizations)
+        if normalize and normalizer is not None:
+            sent = normalizer(sent, normalizations)
         if num:
             sent = NUM.sub('<num>', sent)  # number substitution
         if lower:
             sent = sent.lower()  # downcase
+
         return segmenter(sent, level=level)
 
     return processor

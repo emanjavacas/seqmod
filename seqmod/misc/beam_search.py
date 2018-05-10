@@ -15,14 +15,12 @@ class Beam(object):
     eos: int or None, integer corresponding to the <eos> symbol in the
         vocabulary. It will be used as terminating criterion for the decoding
     """
-    def __init__(self, width, prev, eos=None, gpu=False):
+    def __init__(self, width, prev, eos=None, device='cpu'):
         self.width = width
         self.eos = eos
         self.active = True
-        self.scores = torch.FloatTensor(width).zero_()
-        init_state = torch.LongTensor(width).fill_(prev)
-        if gpu:
-            init_state = init_state.cuda()
+        self.scores = torch.zeros(width)
+        init_state = torch.zeros(width, dtype=torch.int64, device=device).fill_(prev)
         # output values at each beam
         self.beam_values = [init_state]
         # backpointer to previous beam

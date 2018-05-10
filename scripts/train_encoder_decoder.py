@@ -11,7 +11,7 @@ try:
 except:
     print('no NVIDIA driver found')
 
-from torch import nn, optim
+from torch import optim
 
 from seqmod.modules.encoder_decoder import make_rnn_encoder_decoder
 import seqmod.utils as u
@@ -23,7 +23,7 @@ from seqmod.misc import PairedDataset, Dict, inflection_sigmoid
 import dummy as d
 
 
-def translate(model, src, src_lengths, gpu, beam=True):
+def translate(model, src, src_lengths, beam=True):
     if beam:
         scores, hyps, _ = model.translate_beam(
             src, src_lengths, beam_width=5, max_decode_len=4)
@@ -33,7 +33,7 @@ def translate(model, src, src_lengths, gpu, beam=True):
     return scores, hyps
 
 
-def make_encdec_hook(target, gpu, beam=True, max_items=10):
+def make_encdec_hook(target, beam=True, max_items=10):
 
     def hook(trainer, epoch, batch_num, checkpoint):
         trainer.log("info", "Translating {}".format(target))
@@ -45,9 +45,9 @@ def make_encdec_hook(target, gpu, beam=True, max_items=10):
         (src, src_lengths), (trg, _) = batch
         src, src_lengths, trg = src[:, :items], src_lengths[:items], trg[:, :items]
         # translate
-        scores, hyps = translate(trainer.model, src, src_lengths, gpu, beam=beam)
+        scores, hyps = translate(trainer.model, src, src_lengths, beam=beam)
         # report
-        trues, report = trg.data.transpose(0, 1).tolist(), ''
+        trues, report = trg.transpose(0, 1).tolist(), ''
         for num, (score, hyp, trg) in enumerate(zip(scores, hyps, trues)):
             report += u.format_hyp(score, hyp, num+1, d, level='char', trg=trg)
 
@@ -56,12 +56,12 @@ def make_encdec_hook(target, gpu, beam=True, max_items=10):
     return hook
 
 
-def make_att_hook(target, gpu, beam=False):
+def make_att_hook(target, beam=False):
     assert not beam, "beam doesn't output attention yet"
 
     def hook(trainer, epoch, batch_num, checkpoint):
         d = train.decoder.embedding.d
-        scores, hyps, atts = translate(trainer.model, target, gpu, beam=beam)
+        scores, hyps, atts = translate(trainer.model, target, beam=beam)
         trainer.log("attention",
                     {"att": atts[0],
                      "score": sum(scores[0]) / len(hyps[0]),
@@ -104,7 +104,7 @@ if __name__ == '__main__':
     parser.add_argument('--word_dropout', default=0.0, type=float)
     parser.add_argument('--use_schedule', action='store_true')
     parser.add_argument('--patience', default=5, type=int)
-    parser.add_argument('--gpu', action='store_true')
+    parser.add_argument('--device', default='cpu')
     parser.add_argument('--reverse', action='store_true')
     parser.add_argument('--checkpoint', default=50, type=int)
     parser.add_argument('--hooks_per_epoch', default=2, type=int)
@@ -122,7 +122,7 @@ if __name__ == '__main__':
         with open(args.path, 'rb+') as f:
             dataset = PairedDataset.from_disk(f)
         dataset.set_batch_size(args.batch_size)
-        dataset.set_gpu(args.gpu)
+        dataset.set_device(args.device)
         train, valid = dataset.splits(sort_by='src', dev=args.dev, test=None)
         src_dict = dataset.dicts['src']
     else:
@@ -138,7 +138,7 @@ if __name__ == '__main__':
             trg_dict.align_right = True
         train, valid = PairedDataset(
             src, trg, {'src': src_dict, 'trg': trg_dict},
-            batch_size=args.batch_size, gpu=args.gpu
+            batch_size=args.batch_size, device=args.device,
         ).splits(dev=args.dev, test=None, sort=True)
 
     print(' * vocabulary size. {}'.format(len(src_dict)))
@@ -169,8 +169,7 @@ if __name__ == '__main__':
     print()
     print('* number of parameters: {}'.format(model.n_params()))
 
-    if args.gpu:
-        model.cuda()
+    model.to(device=args.device)
 
     early_stopping = EarlyStopping(args.patience)
     trainer = Trainer(
@@ -181,7 +180,7 @@ if __name__ == '__main__':
     # trainer.add_loggers(VisdomLogger(env='encdec'))
     trainer.add_loggers(TensorboardLogger(comment='encdec'))
 
-    hook = make_encdec_hook(args.target, args.gpu, beam=args.beam)
+    hook = make_encdec_hook(args.target, beam=args.beam)
     trainer.add_hook(hook, hooks_per_epoch=args.hooks_per_epoch)
     hook = u.make_schedule_hook(
         inflection_sigmoid(len(train) * 2, 1.75, inverse=True))

@@ -166,7 +166,7 @@ def load_lines(path, max_len=None, processor=text_processor()):
                 yield line
 
 
-def load_split_data(path, batch_size, max_size, min_freq, max_len, gpu, processor):
+def load_split_data(path, batch_size, max_size, min_freq, max_len, device, processor):
     """
     Load corpus that is already splitted in 'train.txt', 'valid.txt', 'test.txt'
     """
@@ -181,9 +181,9 @@ def load_split_data(path, batch_size, max_size, min_freq, max_len, gpu, processo
     train = load_lines(os.path.join(path, 'train.txt'), max_len, processor)
     valid = load_lines(os.path.join(path, 'valid.txt'), max_len, processor)
     test = load_lines(os.path.join(path, 'test.txt'), max_len, processor)
-    train = PairedDataset(train, None, {'src': d}, batch_size, gpu=gpu)
-    valid = PairedDataset(valid, None, {'src': d}, batch_size, gpu=gpu, evaluation=True)
-    test = PairedDataset(test, None, {'src': d}, batch_size, gpu=gpu, evaluation=True)
+    train = PairedDataset(train, None, {'src': d}, batch_size, device=device)
+    valid = PairedDataset(valid, None, {'src': d}, batch_size, device=device)
+    test = PairedDataset(test, None, {'src': d}, batch_size, device=device)
 
     return train.sort_(), valid.sort_(), test.sort_()
 

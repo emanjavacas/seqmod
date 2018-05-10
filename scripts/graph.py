@@ -5,7 +5,6 @@ except ImportError:
     print("Couldn't import graphviz. Plotting disabled")
     Digraph = None
 import torch
-from torch.autograd import Variable
 
 from seqmod.misc.dataset import Dict
 
@@ -22,7 +21,7 @@ def _make_dot(var):
 
     def add_nodes(var):
         if var not in seen:
-            if isinstance(var, Variable):
+            if isinstance(var, torch.Tensor):
                 value = '(' + (', ').join(['%d' % v for v in var.size()]) + ')'
                 dot.node(str(id(var)), str(value), fillcolor='lightblue')
             else:
@@ -44,29 +43,29 @@ def make_dot(var):
 
 
 def viz_encoder_decoder(**kwargs):
-    from modules.encoder_decoder import EncoderDecoder
+    from seqmod.modules.encoder_decoder import EncoderDecoder
     num_layers, emb_dim, hid_dim, att_dim = 1, 12, 16, 16
     d = Dict(pad_token='<pad>').fit(['a'])
     m = EncoderDecoder(num_layers, emb_dim, hid_dim, att_dim, d, **kwargs)
-    src, trg = torch.LongTensor([[0, 1]]), torch.LongTensor([[0, 1]])
-    out = m(Variable(src), Variable(trg))
+    src, trg = torch.tensor([[0, 1]]), torch.tensor([[0, 1]])
+    out = m(src, trg)
     return make_dot(out)
 
 
 def viz_lm(**kwargs):
-    from modules.lm import LM
+    from seqmod.modules.lm import LM
     vocab, emb_dim, hid_dim = 10, 12, 16
     m = LM(vocab, emb_dim, hid_dim, **kwargs)
-    out, _, _ = m(Variable(torch.LongTensor([[0, 1]])))
+    out, _, _ = m(torch.tensor([[0, 1]]))
     return make_dot(out)
 
 
 def viz_vae(**kwargs):
-    from vae import SequenceVAE
+    from seqmod.modules.vae import SequenceVAE
     d = Dict(pad_token='<pad>').fit(['a'])
     num_layers, emb_dim, hid_dim, z_dim = 1, 12, 16, 16
     m = SequenceVAE(num_layers, emb_dim, hid_dim, z_dim, d)
-    src = Variable(torch.LongTensor([[0, 1]]))
+    src = torch.tensor([[0, 1]])
     logs, mu, logvar = m(src, src)
     z = m.encoder.reparametrize(mu, logvar)
     return make_dot(logs), make_dot(mu), make_dot(logvar), make_dot(z)
