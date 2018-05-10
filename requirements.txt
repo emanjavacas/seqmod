@@ -5,7 +5,6 @@ lorem==0.1.1
 visdom==0.1.6.3
 hyperopt==0.1
 gensim==2.3.0
-torch==0.3.1
 scikit_learn==0.19.1
 tensorboardX==1.1
 PyYAML==3.12

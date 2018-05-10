@@ -1081,17 +1081,3 @@ class SDAEIter(DataIter):
     def pack_batch(self, batch):
         src, trg = zip(*batch)
         return self.to_tensor(src), self.to_tensor(trg)
-
-
-# def lines(*paths):
-#     for p in paths:
-#         with open(p, 'r') as f:
-#             for line in f:
-#                 yield segmenter(line, level='word')
-
-# import seqmod
-# path ='/home/manjavacas/corpora/penn/train.txt'
-# d = seqmod.misc.Dict(pad_token='<PAD>', eos_token='<EOS>').fit(lines(path))
-# it = SDAEIter(d, path, scramble=0.6)
-# gen=it.batch_generator(10)()
-# (src, _), (trg, _) = next(gen)
