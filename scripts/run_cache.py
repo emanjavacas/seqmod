@@ -45,7 +45,10 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     print("Loading model...", file=sys.stderr)
-    model = u.load_model(os.path.join(args.model_path, 'model.pt'))
+    if os.path.isdir(args.model_path):
+        model = u.load_model(os.path.join(args.model_path, 'model.pt'))
+    else:
+        model = u.load_model(args.model_path)
     d = model.embeddings.d
     model.to(device=args.device)
     model.eval()
@@ -63,9 +66,9 @@ if __name__ == '__main__':
     else:
         test = BlockDataset(
             torch.from_numpy(np.load(args.path).astype(np.int64)), d,
-            args.batch_size, args.bptt, gpu=args.gpu, fitted=True)
+            args.batch_size, args.bptt, device=args.device, fitted=True)
 
-    cache = Cache(model.hid_dim, args.cache_size, len(d), gpu=args.gpu)
+    cache = Cache(model.hid_dim, args.cache_size, len(d), device=args.device)
     loss, hidden = LossStatistics('ppl'), None
 
     def batch_index_add_(t, index, src):
@@ -117,7 +120,8 @@ if __name__ == '__main__':
 
             if args.run_grid:
                 fname = 'cache.{}.grid.csv'.format(args.cache_size)
-                with open(os.path.join(args.model_path, fname), 'a') as f:
+                fname = os.path.join(os.path.dirname(args.model_path), fname)
+                with open(fname, 'a') as f:
                     f.write('{} {} {}\n'.format(theta, alpha, loss.reduce()))
             else:
                 print(loss.reduce())

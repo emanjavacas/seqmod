@@ -1,4 +1,5 @@
 
+import time
 import math
 import logging
 import random
@@ -898,12 +899,16 @@ class DataIter(object):
     """
     Iterator over lines from files in autoregressive fashion
     """
-    def __init__(self, d, *paths, processor=None, device='cpu', shuffle=True):
+    def __init__(self, d, *paths, processor=None, shuffle=True, sort=True,
+                 device='cpu', verbose=False, max_items=None):
         self.d = d
         self.paths = list(paths)
         self.processor = processor or self.default_segmenter
         self.device = device
         self.shuffle = shuffle
+        self.sort = sort
+        self.max_items = max_items
+        self.verbose = verbose
 
     def default_segmenter(self, line):
         return segmenter(line, level='token')
@@ -913,6 +918,7 @@ class DataIter(object):
             with open(path, 'r') as f:
                 for line in f:
                     yield self.processor(line)  # might yield None
+            yield None                          # break dependencies
 
     def to_tensor(self, data, reverse=False):
         "Put text data (list of lists of strings) into tensors"
@@ -931,7 +937,8 @@ class DataIter(object):
 
     def batchify(self, buf, batch_size):
         "Transform a buffer into batches"
-        buf = self.sort_buffer(buf)
+        if self.sort:
+            buf = self.sort_buffer(buf)
         batches = list(utils.chunks(buf, batch_size))
 
         if self.shuffle:
@@ -950,13 +957,36 @@ class DataIter(object):
         buffer_size : int, maximum number of lines in memory at any given point
         """
         def generator():
-            random.shuffle(self.paths)
+            if self.shuffle:
+                random.shuffle(self.paths)
 
-            for chunk in utils.chunks(self.get_lines(), buffer_size):
-                buf = self.fill_buffer(chunk)
+            total = 0
 
-            for batch in self.batchify(buf, batch_size):
-                yield self.pack_batch(batch)
+            chunks = utils.chunks(self.get_lines(), buffer_size)
+            while True:
+                try:
+                    if self.verbose:
+                        print("Filling buffer...")
+                        start = time.time()
+
+                    buf = self.fill_buffer(next(chunks))
+                    if self.max_items and total + len(buf) >= self.max_items:
+                        buf = buf[:self.max_items - total]
+                    total += len(buf)
+
+                    if self.verbose:
+                        print("Done in {:g}".format(time.time() - start))
+
+                    for batch in self.batchify(buf, batch_size):
+                        yield self.pack_batch(batch)
+
+                    if self.max_items and total >= self.max_items:
+                        raise StopIteration
+    
+                except StopIteration:
+                    if self.verbose:
+                        print("Done processing dataset")
+                    break
 
         return generator
 
@@ -990,9 +1020,14 @@ class SkipthoughtIter(DataIter):
     def __init__(self, *args, always_reverse=False, includes=(True, False, True),
                  **kwargs):
         super().__init__(*args, **kwargs)
+
         self.prev, self.same, self.post = includes
+
+        if sum(includes) < 1:
+            raise ValueError("Needs to include at least one target sentence")
         if self.same and (not self.prev and not self.post):
             raise ValueError("Autoregressive format. Use DataIter instead")
+
         self.always_reverse = always_reverse
 
     def fill_buffer(self, buf):
@@ -1001,8 +1036,9 @@ class SkipthoughtIter(DataIter):
             if same is None:
                 continue
 
-            if self.prev and self.post and prev is not None and post is not None:
-                output.append((same, (prev, post)))
+            if self.prev and self.post:
+                if prev is not None and post is not None:
+                    output.append((same, (prev, post)))
 
             elif self.prev and prev is not None:
                 output.append((same, prev))

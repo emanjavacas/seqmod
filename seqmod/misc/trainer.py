@@ -20,15 +20,29 @@ from .git import GitInfo
 
 
 def ppl(loss):
-    return math.exp(min(100, loss))
+    try:
+        return math.exp(min(100, loss))
+    except ValueError:
+        return math.nan
 
 
 def bpc(loss):
-    return math.log2(math.e) * loss
-
+    try:
+        return math.log2(math.e) * loss
+    except ValueError:
+        return math.nan
 
 def identity(loss):
     return loss
+
+
+def get_formatter(loss):
+    if loss.lower() == 'ppl':
+        return ppl
+    elif loss.lower() == 'bpc':
+        return bpc
+    else:
+        return identity
 
 
 class LossStatistics(object):
@@ -53,13 +67,14 @@ class LossStatistics(object):
 
         for loss in losses:
             if isinstance(loss, str):
-                if loss == 'ppl':
-                    self.losses.append({'loss': loss, 'format': ppl})
-                elif loss == 'bpc':
-                    self.losses.append({'loss': loss, 'format': bpc})
-                else:           # default to ppl
-                    self.losses.append({'loss': loss, 'format': identity})
+                self.losses.append({'loss': loss, 'format': get_formatter(loss)})
             else:
+                if 'loss' not in loss:
+                    raise ValueError("Wrong input loss. Needs `loss`")
+                if 'format' not in loss:
+                    loss['format'] = loss['loss']
+                if type(loss['format']) is str:
+                    loss['format'] = get_formatter(loss['format'])
                 self.losses.append(loss)
 
         loss_labels = [loss['loss'] for loss in self.losses]
@@ -93,8 +108,8 @@ class LossStatistics(object):
             loss = [loss]
 
         if len(loss) != len(self.losses):
-            raise ValueError(
-                "Got {} losses but needs {}".format(len(loss), len(self.losses)))
+            raise ValueError("Got {} losses but needs {}"
+                             .format(len(loss), len(self.losses)))
 
         self.history.append(tuple(loss))
         self.examples += num_examples
@@ -486,7 +501,7 @@ class Trainer(object):
     def run_checkpoint(self, epoch, b, checkpoint, duration, total_batches, loss):
         "Run checkpoint when needed"
         if checkpoint and b > 0 and b % checkpoint == 0:
-            self.model.eval()
+            # log
             self.log('checkpoint', {
                 'epoch': epoch,
                 'batch': b,
@@ -494,6 +509,8 @@ class Trainer(object):
                 'examples': loss.examples,
                 'duration': duration,
                 'loss': loss.pack()})
+            # run hooks
+            self.model.eval()
             with torch.no_grad():
                 self.run_hooks(epoch, b, checkpoint)
             self.model.train()
@@ -571,7 +588,7 @@ class Trainer(object):
 
                 if generator is not None:
                     run_loss = self.run_inner_generator_loop(
-                        e, checkpoint, generator, **kwargs)
+                        e, checkpoint, generator(), **kwargs)
                 else:
                     batch_order = self.get_batch_order(shuffle, num_batches=num_batches)
                     run_loss = self.run_inner_loop(e, checkpoint, batch_order, **kwargs)

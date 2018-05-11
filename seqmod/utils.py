@@ -213,6 +213,7 @@ def make_initializer(
 
     def initializer(m):
 
+        logging.warning(" *** Initializing module: {}".format(type(m).__name__))
         if isinstance(m, (rnns)):  # RNNs
             if rnn['type'] == 'rnn_orthogonal':  # full initialization scheme
                 logging.warning("Initializing {} with orthogonal scheme".format(

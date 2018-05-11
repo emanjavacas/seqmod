@@ -1,4 +1,5 @@
 
+import os
 import logging
 import warnings
 import numpy as np
@@ -75,6 +76,8 @@ class StdLogger(Logger):
         sh.setFormatter(formatter)
         self.logger.addHandler(sh)
         if outputfile is not None:
+            if os.path.isdir(outputfile):
+                outputfile = os.path.join(outputfile, 'train.log')
             fh = logging.FileHandler(outputfile)
             fh.setFormatter(formatter)
             self.logger.addHandler(fh)

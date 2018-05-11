@@ -146,7 +146,7 @@ class EmbeddingLoader(object):
         return vectors, outwords
 
 
-def load_lines(path, max_len=None, processor=text_processor()):
+def load_lines(path, processor=text_processor()):
     """Auxiliary function for sentence-per-line data"""
     if os.path.isdir(path):
         input_files = [os.path.join(path, f) for f in os.listdir(path)]
@@ -161,7 +161,7 @@ def load_lines(path, max_len=None, processor=text_processor()):
                 line = line.strip()
                 if processor is not None:
                     line = processor(line)
-                if not line or (max_len is not None and len(line) > max_len):
+                if not line:
                     continue
                 yield line
 
