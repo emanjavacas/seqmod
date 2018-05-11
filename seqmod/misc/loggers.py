@@ -41,7 +41,7 @@ class Logger(object):
                    valid_loss (optional) : None or dict)
     - on_validation_begin(epoch : int)
     - on_validation_end(epoch : int, loss : dict)
-    - on_test_begin(epoch : int)
+    - on_test_begin()
     - on_test_end(loss : dict)
     """
     def log(self, event, payload, verbose=True):

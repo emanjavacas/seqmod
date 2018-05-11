@@ -390,8 +390,8 @@ class Trainer(object):
         if self.checkpoint is not None:
             self.checkpoint.save(self.model, loss.reduce())
 
-    def on_test_begin(self, epoch):
-        self.log("test_begin", {"epoch": epoch})
+    def on_test_begin(self):
+        self.log("test_begin", {})
 
     def on_test_end(self, loss):
         self.log("test_end", {"loss": loss.pack()})
@@ -609,7 +609,7 @@ class Trainer(object):
 
         if run_test and 'test' in self.datasets:
             best_model.eval()
-            self.on_test_begin(e)
+            self.on_test_begin()
             best_model = best_model.to(device=self.datasets['test'].device)
             with torch.no_grad():
                 test_loss = self.validate_model(test=True, model=best_model, **kwargs)
