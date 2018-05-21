@@ -8,8 +8,9 @@ import numpy as np
 import torch
 
 from seqmod.misc import Dict, BlockDataset, PairedDataset, CompressionTable
+from seqmod.misc import DataIter, SDAEIter, SkipthoughtIter, text_processor
 from seqmod.misc.dataset import argsort
-from seqmod import utils as u
+from seqmod import utils
 
 
 def fake_tags(w):
@@ -20,7 +21,7 @@ class TestDict(unittest.TestCase):
     def setUp(self):
         self.corpus = [lorem.sentence().split() for _ in range(100)]
         self.seq_vocab = Counter(w for s in self.corpus for w in s)
-        self.seq_d = Dict(eos_token=u.EOS, bos_token=u.BOS,
+        self.seq_d = Dict(eos_token=utils.EOS, bos_token=utils.BOS,
                           force_unk=True, sequential=True)
         self.seq_d.fit(self.corpus)
         self.seq_transformed = list(self.seq_d.transform(self.corpus))
@@ -31,7 +32,7 @@ class TestDict(unittest.TestCase):
             "Vocabulary matches for a Dict with padding and bos/eos tokens")
         diff = set(self.seq_d.vocab) - set(self.seq_vocab.keys())
         self.assertEqual(
-            diff, set([u.EOS, u.BOS, u.UNK]),
+            diff, set([utils.EOS, utils.BOS, utils.UNK]),
             "Entries in the vocabulary matches")
 
     def test_transform(self):
@@ -50,13 +51,13 @@ class TestBlockDataset(unittest.TestCase):
         self.tag1_corpus = [[tup[1] for tup in s] for s in self.tagged_corpus]
         self.tag2_corpus = [[tup[2] for tup in s] for s in self.tagged_corpus]
         # dicts
-        self.seq_d = Dict(eos_token=u.EOS, bos_token=u.BOS,
+        self.seq_d = Dict(eos_token=utils.EOS, bos_token=utils.BOS,
                           force_unk=True, sequential=True)
         self.seq_d.fit(self.corpus)
-        self.tag1_d = Dict(eos_token=u.EOS, bos_token=u.BOS,
+        self.tag1_d = Dict(eos_token=utils.EOS, bos_token=utils.BOS,
                            force_unk=True, sequential=True)
         self.tag1_d.fit(self.tag1_corpus)
-        self.tag2_d = Dict(eos_token=u.EOS, bos_token=u.BOS,
+        self.tag2_d = Dict(eos_token=utils.EOS, bos_token=utils.BOS,
                            force_unk=True, sequential=True)
         self.tag2_d.fit(self.tag2_corpus)
         # props
@@ -84,11 +85,11 @@ class TestBlockDataset(unittest.TestCase):
         "Remove <bos><eos> markup and split into sequences"
         corpus, sent = [], []
         for word in words:
-            if word == u.UNK:
+            if word == utils.UNK:
                 raise ValueError("Got UNK")
-            if word == u.BOS:
+            if word == utils.BOS:
                 continue
-            elif word == u.EOS:
+            elif word == utils.EOS:
                 corpus.append(sent)
                 sent = []
             else:
@@ -147,7 +148,7 @@ class TestBlockDataset(unittest.TestCase):
         # concatenate batches
         words = [[w for batch in dim for w in batch] for dim in dimmed]
         # remove reserved <bos><eos> tokens
-        reserved = (u.EOS, u.BOS, u.UNK)
+        reserved = (utils.EOS, utils.BOS, utils.UNK)
         words = [[w for w in dim if w not in reserved] for dim in words]
         # merge by tuples [(word, tag1, tag2, ...), ...]
         words = list(zip(*words))
@@ -213,13 +214,13 @@ class TestPairedDataset(unittest.TestCase):
         self.tagged_corpus = [[fake_tags(w) for w in s] for s in self.corpus]
         self.tag1_corpus = [[tup[1] for tup in s] for s in self.tagged_corpus]
         self.tag2_corpus = [[tup[1] for tup in s] for s in self.tagged_corpus]
-        self.seq_d = Dict(eos_token=u.EOS, bos_token=u.BOS,
+        self.seq_d = Dict(eos_token=utils.EOS, bos_token=utils.BOS,
                           force_unk=True, sequential=True)
         self.seq_d.fit(self.corpus)
-        self.tag1_d = Dict(eos_token=u.EOS, bos_token=u.BOS,
+        self.tag1_d = Dict(eos_token=utils.EOS, bos_token=utils.BOS,
                            force_unk=True, sequential=True)
         self.tag1_d.fit(self.tag1_corpus)
-        self.tag2_d = Dict(eos_token=u.EOS, bos_token=u.BOS,
+        self.tag2_d = Dict(eos_token=utils.EOS, bos_token=utils.BOS,
                            force_unk=True, sequential=True)
         self.tag2_d.fit(self.tag2_corpus)
 
@@ -287,3 +288,39 @@ class TestStratify(unittest.TestCase):
         for key in mean_stddev:
             # ignore stddev
             self.assertAlmostEqual(mean_stddev[key][0], props[key], delta=0.05)
+
+
+class DataIterTest(unittest.TestCase):
+    def setUp(self):
+        self.corpus = [lorem.sentence().split() for _ in range(1000)]
+        self.path = '/tmp/lorem.test.txt'
+        with open(self.path, 'w') as f:
+            for s in self.corpus:
+                f.write(' '.join(s) + '\n')
+        self.d = Dict(force_unk=True, sequential=True).fit(self.corpus)
+
+    def test_dataiter(self):
+        data = DataIter(self.d, self.path, shuffle=False, sort=False)
+        for (sent, _), true in zip(data.batch_generator(1)(), self.corpus):
+            rec = [self.d.vocab[i] for i in sent.squeeze(1)]
+            self.assertEqual(true, rec)
+
+    def test_skipiter(self):
+        data = SkipthoughtIter(self.d, self.path, includes=(True, False, True),
+                               shuffle=False, sort=False)
+        gen = data.batch_generator(1)()
+        true = list(utils.window(self.corpus))[1:-1]  # avoid padding
+        for (_, ((prev, _), _, (post, _))), (tprev, _, tpost) in zip(gen, true):
+            recprev = [self.d.vocab[i] for i in prev.squeeze(1)]
+            recpost = [self.d.vocab[i] for i in post.squeeze(1)][::-1]
+            self.assertEqual(recprev, tprev)
+            self.assertEqual(recpost, tpost)
+
+    def test_max(self):
+        data = DataIter(self.d, self.path, max_items=150).batch_generator(1)
+        total = 0
+        for _, lengths in data():
+            total += len(lengths)
+
+        self.assertEqual(total, 150)
+        

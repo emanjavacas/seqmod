@@ -17,14 +17,20 @@ def segmenter(sent, level='char'):
         raise ValueError
 
 
-def text_processor(language='en', num=False, lower=False, level='token', normalize=True):
-    # normalization
-    normalizer = None
+def text_processor(language='en',
+                   num=False,
+                   lower=False,
+                   level='token',
+                   normalize=True,
+                   max_len=None,
+                   min_len=0,
+):
     normalizations = [
         ('replace_emails', {'replacement': '<email>'}),
         ('replace_emojis', {'replacement': '<emoji>'}),
         ('replace_urls', {'replacement': '<url>'})]
 
+    normalizer = None
     try:
         from normalizr import Normalizr
         normalizer = Normalizr().normalize
@@ -45,7 +51,15 @@ def text_processor(language='en', num=False, lower=False, level='token', normali
         if lower:
             sent = sent.lower()  # downcase
 
-        return segmenter(sent, level=level)
+        sent = segmenter(sent, level=level)
+
+        if len(sent) <= min_len:
+            return None
+
+        if max_len is not None and len(sent) > max_len:
+            return sent[:max_len]
+        else:
+            return sent
 
     return processor
 

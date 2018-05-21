@@ -13,7 +13,6 @@ from datetime import datetime
 
 import torch
 from torch.optim import lr_scheduler
-from torch.nn.utils import clip_grad_norm_
 
 from seqmod import utils as u
 from seqmod.misc.early_stopping import EarlyStoppingException
@@ -21,15 +20,29 @@ from .git import GitInfo
 
 
 def ppl(loss):
-    return math.exp(min(100, loss))
+    try:
+        return math.exp(min(100, loss))
+    except ValueError:
+        return math.nan
 
 
 def bpc(loss):
-    return math.log2(math.e) * loss
-
+    try:
+        return math.log2(math.e) * loss
+    except ValueError:
+        return math.nan
 
 def identity(loss):
     return loss
+
+
+def get_formatter(loss):
+    if loss.lower() == 'ppl':
+        return ppl
+    elif loss.lower() == 'bpc':
+        return bpc
+    else:
+        return identity
 
 
 class LossStatistics(object):
@@ -54,13 +67,14 @@ class LossStatistics(object):
 
         for loss in losses:
             if isinstance(loss, str):
-                if loss == 'ppl':
-                    self.losses.append({'loss': loss, 'format': ppl})
-                elif loss == 'bpc':
-                    self.losses.append({'loss': loss, 'format': bpc})
-                else:           # default to ppl
-                    self.losses.append({'loss': loss, 'format': identity})
+                self.losses.append({'loss': loss, 'format': get_formatter(loss)})
             else:
+                if 'loss' not in loss:
+                    raise ValueError("Wrong input loss. Needs `loss`")
+                if 'format' not in loss:
+                    loss['format'] = loss['loss']
+                if type(loss['format']) is str:
+                    loss['format'] = get_formatter(loss['format'])
                 self.losses.append(loss)
 
         loss_labels = [loss['loss'] for loss in self.losses]
@@ -94,8 +108,8 @@ class LossStatistics(object):
             loss = [loss]
 
         if len(loss) != len(self.losses):
-            raise ValueError(
-                "Got {} losses but needs {}".format(len(loss), len(self.losses)))
+            raise ValueError("Got {} losses but needs {}"
+                             .format(len(loss), len(self.losses)))
 
         self.history.append(tuple(loss))
         self.examples += num_examples
@@ -391,8 +405,8 @@ class Trainer(object):
         if self.checkpoint is not None:
             self.checkpoint.save(self.model, loss.reduce())
 
-    def on_test_begin(self, epoch):
-        self.log("test_begin", {"epoch": epoch})
+    def on_test_begin(self):
+        self.log("test_begin", {})
 
     def on_test_end(self, loss):
         self.log("test_end", {"loss": loss.pack()})
@@ -401,7 +415,7 @@ class Trainer(object):
     def optimizer_step(self):
         "Runs an optimizing step"
         if self.max_norm is not None:
-            clip_grad_norm_(self.model.parameters(), self.max_norm)
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.max_norm)
         self.optimizer.step()
 
     def scheduler_step(self, epoch, valid_loss):
@@ -487,7 +501,7 @@ class Trainer(object):
     def run_checkpoint(self, epoch, b, checkpoint, duration, total_batches, loss):
         "Run checkpoint when needed"
         if checkpoint and b > 0 and b % checkpoint == 0:
-            self.model.eval()
+            # log
             self.log('checkpoint', {
                 'epoch': epoch,
                 'batch': b,
@@ -495,6 +509,8 @@ class Trainer(object):
                 'examples': loss.examples,
                 'duration': duration,
                 'loss': loss.pack()})
+            # run hooks
+            self.model.eval()
             with torch.no_grad():
                 self.run_hooks(epoch, b, checkpoint)
             self.model.train()
@@ -507,19 +523,15 @@ class Trainer(object):
         start, total_batches = time(), len(batch_order)
 
         for b, batch in enumerate(batch_order):
-
+            # optimize
             self.optimizer.zero_grad()
             batch_data = self.datasets['train'][batch]
             batch_loss, batch_examples = self.model.loss(batch_data, **kwargs)
-
             if batch_loss is None:  # to skip a batch loss might return None
                 continue
-
             self.optimizer_step()
-
             run_loss.add(batch_loss, batch_examples)
             check_loss.add(batch_loss, batch_examples)
-
             self.on_batch_end(epoch, b, run_loss)
 
             # checkpoint
@@ -539,26 +551,22 @@ class Trainer(object):
         start, total_batches = time(), '~'
 
         for b, batch in enumerate(generator):
-
+            # optimize
             self.optimizer.zero_grad()
             batch_loss, batch_examples = self.model.loss(batch, **kwargs)
-
             if batch_loss is None:
                 continue
-
             self.optimizer_step()
-
             run_loss.add(batch_loss, batch_examples)
             check_loss.add(batch_loss, batch_examples)
-
             self.on_batch_end(epoch, b, run_loss)
 
             # checkpoint
             self.run_checkpoint(
                 epoch, b, checkpoint, time()-start, total_batches, check_loss)
 
-            start = time()
             check_loss.reset()
+            start = time()
 
         return run_loss
 
@@ -580,7 +588,7 @@ class Trainer(object):
 
                 if generator is not None:
                     run_loss = self.run_inner_generator_loop(
-                        e, checkpoint, generator, **kwargs)
+                        e, checkpoint, generator(), **kwargs)
                 else:
                     batch_order = self.get_batch_order(shuffle, num_batches=num_batches)
                     run_loss = self.run_inner_loop(e, checkpoint, batch_order, **kwargs)
@@ -618,7 +626,7 @@ class Trainer(object):
 
         if run_test and 'test' in self.datasets:
             best_model.eval()
-            self.on_test_begin(e)
+            self.on_test_begin()
             best_model = best_model.to(device=self.datasets['test'].device)
             with torch.no_grad():
                 test_loss = self.validate_model(test=True, model=best_model, **kwargs)

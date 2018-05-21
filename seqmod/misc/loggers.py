@@ -1,4 +1,5 @@
 
+import os
 import logging
 import warnings
 import numpy as np
@@ -41,7 +42,7 @@ class Logger(object):
                    valid_loss (optional) : None or dict)
     - on_validation_begin(epoch : int)
     - on_validation_end(epoch : int, loss : dict)
-    - on_test_begin(epoch : int)
+    - on_test_begin()
     - on_test_end(loss : dict)
     """
     def log(self, event, payload, verbose=True):
@@ -75,6 +76,8 @@ class StdLogger(Logger):
         sh.setFormatter(formatter)
         self.logger.addHandler(sh)
         if outputfile is not None:
+            if os.path.isdir(outputfile):
+                outputfile = os.path.join(outputfile, 'train.log')
             fh = logging.FileHandler(outputfile)
             fh.setFormatter(formatter)
             self.logger.addHandler(fh)

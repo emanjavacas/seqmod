@@ -112,6 +112,8 @@ def prepare_tensors(t, device):
     if isinstance(t, tuple):
         return tuple(prepare_tensors(t_, device) for t_ in t)
 
+    if isinstance(t, torch.Tensor):
+        return t.to(device=device)
     return torch.tensor(t, device=device)
 
 
@@ -211,6 +213,7 @@ def make_initializer(
 
     def initializer(m):
 
+        logging.warning(" *** Initializing module: {}".format(type(m).__name__))
         if isinstance(m, (rnns)):  # RNNs
             if rnn['type'] == 'rnn_orthogonal':  # full initialization scheme
                 logging.warning("Initializing {} with orthogonal scheme".format(

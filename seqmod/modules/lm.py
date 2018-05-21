@@ -393,7 +393,7 @@ class BaseLM(nn.Module):
         if self.training:
             logging.warn("Generating in training mode!")
 
-        inp = inp.to(device=self.device)
+        inp = inp.to(device=self.device())
 
         # compute output
         outs, *_ = self(inp, **kwargs)
