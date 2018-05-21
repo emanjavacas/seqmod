@@ -80,8 +80,8 @@ if __name__ == '__main__':
     parser.add_argument('--path', type=str)
     parser.add_argument('--train_len', default=10000, type=int)
     parser.add_argument('--vocab', default=list(string.ascii_letters) + [' '])
-    parser.add_argument('--min_len', default=1, type=int)
-    parser.add_argument('--max_len', default=15, type=int)
+    parser.add_argument('--min_len', default=5, type=int)
+    parser.add_argument('--max_len', default=25, type=int)
     parser.add_argument('--sample_fn', default='reverse', type=str)
     parser.add_argument('--dev', default=0.1, type=float)
     # model
