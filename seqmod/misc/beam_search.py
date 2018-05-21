@@ -26,12 +26,6 @@ class Beam(object):
         # backpointer to previous beam
         self.source_beams = []
 
-    def _get_beam_at(self, step=-1):
-        """
-        Get beam at step `step`, defaulting to current step (= -1).
-        """
-        return self.beam_values[step]
-
     def __len__(self):
         """
         number of steps already decoded
@@ -68,16 +62,15 @@ class Beam(object):
         Get entries in previous beam leading to a given step.
         """
         if step >= len(self.source_beams):
-            raise ValueError(
-                "Only {} decoded steps".format(len(self.source_beams)))
+            raise ValueError("Only {} decoded steps".format(len(self.source_beams)))
 
         return self.source_beams[step]
 
     def get_current_state(self):
         """
-        See _get_beam_at
+        Get current step
         """
-        return self._get_beam_at(step=-1)
+        return self.beam_values[-1]
 
     def finished(self, beam):
         """
@@ -108,7 +101,7 @@ class Beam(object):
 
         hypothesis = []
         for step in range(len(self) - 1, -1, -1):
-            hypothesis.append(self._get_beam_at(step=step+1)[idx])
+            hypothesis.append(self.beam_values[step+1][idx])
             idx = self.get_source_beam(step=step)[idx]
         return hypothesis[::-1]
 

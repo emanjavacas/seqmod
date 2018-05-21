@@ -184,8 +184,10 @@ if __name__ == '__main__':
            deepout_act=args.deepout_act, maxouts=args.maxouts,
            sampled_softmax=args.sampled_softmax, word_dropout=args.word_dropout)
 
-    u.initialize_model(m, rnn={'type': 'orthogonal_', 'args': {'gain': 1.0}})
-    m.embeddings.weight.data.uniform_(-0.1, 0.1)
+    u.initialize_model(
+        m,
+        rnn={'type': 'orthogonal_', 'args': {'gain': 1.0}},
+        emb={'type': 'uniform_', 'args': {'a': -0.05, 'b': 0.05}})
 
     m.to(device=args.device)
 
