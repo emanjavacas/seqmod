@@ -72,9 +72,7 @@ class EncoderDecoder(nn.Module):
         dec_trg, loss_trg = trg[:-1], trg[1:]
 
         # should we run fast_forward?
-        if hasattr(self.decoder, 'is_fast_forward') and \
-           self.decoder.is_fast_forward and \
-           not use_schedule:
+        if self.decoder.ffw and not use_schedule:
             dec_outs, _ = self.decoder.fast_forward(dec_trg, dec_state)
 
         else:

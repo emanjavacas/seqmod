@@ -66,10 +66,17 @@ class RNNWrapper(nn.Module):
             self.rnn = stacked(num_layers, in_dim, hid_dim, dropout=dropout)
 
     def forward(self, inp, hidden, dropout_mask=None):
-        if inp.dim() == 2 and self.ffw:
+        if self.ffw:
             # rnn module expects 3D input and doesn't take dropout_mask
-            out, hidden = self.rnn(inp.unsqueeze(0), hidden)
-            out = out.squeeze(0)
+            reshape = False
+            if inp.dim() == 2:
+                reshape = True
+                inp = inp.unsqueeze(0)
+
+            out, hidden = self.rnn(inp, hidden)
+
+            if reshape:
+                out = out.squeeze(0)
         else:
             out, hidden = self.rnn(inp, hidden, dropout_mask=dropout_mask)
 
@@ -119,9 +126,9 @@ class RNNDecoder(BaseDecoder):
         if self.att_type is not None and self.att_type.lower() != 'none':
             self.has_attention = True
 
-        ffw = False
+        self.ffw = False
         if not (variational or input_feed):
-            ffw = True
+            self.ffw = True
 
         in_dim = self.embeddings.embedding_dim
         if input_feed:
@@ -140,7 +147,7 @@ class RNNDecoder(BaseDecoder):
 
         # rnn layer
         self.rnn = RNNWrapper(num_layers, in_dim, hid_dim, cell,
-                              dropout=dropout, ffw=ffw)
+                              dropout=dropout, ffw=self.ffw)
 
         # train init
         self.h_0 = None
