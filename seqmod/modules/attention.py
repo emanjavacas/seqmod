@@ -56,6 +56,7 @@ class BahdanauScorer(nn.Module):
     `score(a_i_j) = a_v \dot tanh(W_s @ h_s_j + W_t @ h_t_i)`
     """
     def __init__(self, hid_dim1, att_dim, hid_dim2=None):
+        self.att_dim = att_dim
         super(BahdanauScorer, self).__init__()
         # params
         hid_dim2 = hid_dim2 or hid_dim1
@@ -75,47 +76,54 @@ class BahdanauScorer(nn.Module):
             Projection of encoder output onto attention space
         """
         seq_len, batch, hid_dim = enc_outs.size()
+
         return self.W_s(enc_outs.view(-1, hid_dim)).view(seq_len, batch, -1)
 
     def forward(self, dec_out, enc_outs, enc_att=None):
+        # get projected encoder sequence
         if enc_att is None:
             # (seq_len x batch x att dim)
             enc_att = self.project_enc_outs(enc_outs)
-        # ((trg_seq_len x) batch x att_dim)
+
+        # get projected decoder step (or sequence in ffw mode)
+        # ((trg_len x) batch x att_dim)
         dec_att = self.W_t(dec_out)
 
+        # => step-wise mode
         if dec_att.dim() == 2:
             # (batch x seq_len x att_dim)
-            dec_enc_att = F.tanh(enc_att + dec_att[None, :, :])
-            # (batch x seq_len x att_dim) * (1 x att_dim x 1) -> (batch x seq_len)
-            return (dec_enc_att.transpose(0, 1) @ self.v_a[None, :, :]).squeeze(2)
+            dec_enc_att = F.tanh(enc_att + dec_att.unsqueeze(0))
+            # (batch x seq_len x att_dim) * (1 x att_dim x 1) -> (batch x seq_len x 1)
+            scores = dec_enc_att.transpose(0, 1) @ self.v_a.unsqueeze(0)
+            # (batch x seq_len x 1) -> (batch x seq_len)
+            scores = scores.squeeze(2)
+            return scores
 
+        # => ffw mode
         elif dec_att.dim() == 3:
-            src_seq_len, batch, dim = enc_att.size()
-            trg_seq_len = dec_att.size(0)
+            (src_len, batch, dim), (trg_len, *_) = enc_att.size(), dec_att.size()
 
             # see seqmod/test/modules/attention.py
-            dec_enc_att = F.tanh(
-                # (src_seq_len x trg_seq_len x batch x att_dim) +
-                # (1           x trg_seq_len x batch x att_dim)
-                # => (src_seq_len x trg_seq_len x batch x att_dim)
-                enc_att.unsqueeze(0)
-                       .repeat(trg_seq_len, 1, 1, 1)
-                       .transpose(0, 1) + dec_att.unsqueeze(0))
+            enc_att = enc_att.view(src_len, 1, batch, -1)
+            # (src_len x trg_len x batch x att_dim) +
+            # (1           x trg_len x batch x att_dim)
+            # => (src_len x trg_len x batch x att_dim)
+            dec_enc_att = F.tanh(enc_att + dec_att.unsqueeze(0))
 
-            # (batch x src_seq_len x trg_seq_len x dim)
-            dec_enc_att = dec_enc_att.transpose(0, 2)
-            # (batch x src_seq_len * trg_seq_len x dim)
-            dec_enc_att = dec_att.view(batch, src_seq_len * trg_seq_len, dim)
+            # (src_len * trg_len x batch x dim)
+            dec_enc_att = dec_enc_att.view(src_len * trg_len, batch, dim)
+            # (batch x src_len * trg_len x dim)
+            dec_enc_att = dec_enc_att.transpose(0, 1).contiguous()
             # (batch x seq_len x dim) * (1 x dim x 1) -> (batch x seq_len)
-            dec_enc_att = dec_enc_att @ self.v_a[None, :, :].unsqueeze(2)
-            # (batch x src_seq_len x trg_seq_len)
-            dec_enc_att = dec_enc_att.view(batch, src_seq_len, trg_seq_len)
-            # (trg_seq_len x batch x src_seq_len)
-            return dec_enc_att.transpose(0, 2).transpose(1, 2)
+            scores = dec_enc_att @ self.v_a.unsqueeze(0)
+            # (batch x src_len x trg_len)
+            scores = scores.view(batch, src_len, trg_len)
+            # (trg_len x batch x src_len)
+            return scores.transpose(0, 2).transpose(1, 2)
 
         else:
-            raise ValueError("Wrong dec output dims [{}]".format(dec_out.dim()))
+            raise ValueError("Expected 2 or 3 (ffw) decoder dims but got {}"
+                             .format(dec_att.dim()))
 
 
 class Attention(nn.Module):
