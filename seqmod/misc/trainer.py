@@ -500,20 +500,19 @@ class Trainer(object):
 
     def run_checkpoint(self, epoch, b, checkpoint, duration, total_batches, loss):
         "Run checkpoint when needed"
-        if checkpoint and b > 0 and b % checkpoint == 0:
-            # log
-            self.log('checkpoint', {
-                'epoch': epoch,
-                'batch': b,
-                'total_batches': total_batches,
-                'examples': loss.examples,
-                'duration': duration,
-                'loss': loss.pack()})
-            # run hooks
-            self.model.eval()
-            with torch.no_grad():
-                self.run_hooks(epoch, b, checkpoint)
-            self.model.train()
+        # log
+        self.log('checkpoint', {
+            'epoch': epoch,
+            'batch': b,
+            'total_batches': total_batches,
+            'examples': loss.examples,
+            'duration': duration,
+            'loss': loss.pack()})
+        # run hooks
+        self.model.eval()
+        with torch.no_grad():
+            self.run_hooks(epoch, b, checkpoint)
+        self.model.train()
 
     def run_inner_loop(self, epoch, checkpoint, batch_order, **kwargs):
         """
@@ -535,11 +534,12 @@ class Trainer(object):
             self.on_batch_end(epoch, b, run_loss)
 
             # checkpoint
-            self.run_checkpoint(
-                epoch, b, checkpoint, time()-start, total_batches, check_loss)
+            if checkpoint and b > 0 and b % checkpoint == 0:
+                self.run_checkpoint(
+                    epoch, b, checkpoint, time()-start, total_batches, check_loss)
 
-            check_loss.reset()
-            start = time()
+                check_loss.reset()
+                start = time()
 
         return run_loss
 
@@ -562,11 +562,12 @@ class Trainer(object):
             self.on_batch_end(epoch, b, run_loss)
 
             # checkpoint
-            self.run_checkpoint(
-                epoch, b, checkpoint, time()-start, total_batches, check_loss)
+            if checkpoint and b > 0 and b % checkpoint == 0:
+                self.run_checkpoint(
+                    epoch, b, checkpoint, time()-start, total_batches, check_loss)
 
-            check_loss.reset()
-            start = time()
+                check_loss.reset()
+                start = time()
 
         return run_loss
 

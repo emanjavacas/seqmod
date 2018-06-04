@@ -170,7 +170,7 @@ class Attention(nn.Module):
 
         if mask is not None:
             # weights = weights * mask.float()
-            weights.data.masked_fill_(1 - mask.data, -float('inf'))
+            weights.masked_fill_(1 - mask, -float('inf'))
 
         weights = F.softmax(weights, dim=1)
 
@@ -204,7 +204,7 @@ class Attention(nn.Module):
             # (batch x src_seq_len) => (trg_seq_len x batch x src_seq_len)
             mask = mask.unsqueeze(0).expand_as(weights)
             # weights = weights * mask.float()
-            weights.data.masked_fill_(1 - mask.data, -float('inf'))
+            weights.masked_fill_(1 - mask, -float('inf'))
 
         weights = F.softmax(weights, dim=2)
 
