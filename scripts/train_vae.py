@@ -20,47 +20,32 @@ def kl_weight_hook(trainer, epoch, batch, checkpoints):
     trainer.log("info", "KL weight: [{:.3f}]".format(weight))
 
 
-def make_generate_hook(level, n=2, samples=2, beam_width=5):
+def make_generate_hook(level, dataset, n=2, samples=2, beam_width=5):
 
     def hook(trainer, epoch, batch, checkpoints):
-        # grab random batch from valid
-        src, _ = valid[random.randint(0, len(valid)-1)]
-        if trainer.model.encoder.conditional:
-            (src, *_) = src
-        (src, lengths) = src
-        # grab random examples from batch
-        idxs = torch.randperm(n)
-        src = src[:, idxs.cuda() if src.data.is_cuda else idxs]
-        # dict
+        # prepare
         d = trainer.model.decoder.embeddings.d
-        sep = ' ' if level == 'word' or level == 'token' else ''
+        items = min(n, dataset.batch_size)
+        # sample random batch
+        batch = dataset[random.randint(0, len(dataset) - 1)]
+        (inp, inp_lengths), (trg, _) = batch
+        inp, inp_lengths, source = inp[:, :items], inp_lengths[:items], trg[:, :items]
+        # translate
+        source, report = source.transpose(0, 1).tolist(), ''
+        for sample in range(samples):
+            scores, hyps, _ = trainer.model.translate_beam(
+                inp, inp_lengths, beam_width=beam_width)
 
-        for idx, src in enumerate(src.chunk(src.size(1), 1)):
-            report = '{}\nSource: '.format(idx + 1)
-            report += sep.join(d.vocab[char.data[0]] for char in src)
-            report += '\n'
+            for num, (score, hyp, trg) in enumerate(zip(scores, hyps, source)):
+                report += u.format_hyp(score, hyp, num+1, d, level=level, trg=trg)
 
-            for sample in range(samples):
-                scores, hyps, _ = trainer.model.translate_beam(
-                    src, lengths=lengths, beam_width=beam_width)
-                # select only best
-                scores, hyps = [scores[0]], [hyps[0]]
-
-                # report
-                report += 'Sample {}:'.format(sample + 1)
-                # report best n hypotheses
-                report += "".join(
-                    u.format_hyp(scores[i], hyps[i], i, d, level)
-                    for i in range(len(hyps))
-                ) + '\n'
-
-            trainer.log("info", report)
+        trainer.log("info", '\n***' + report + '\n***')
 
     return hook
 
 
 def load_twisty_dataset(src, trg, batch_size, max_size=100000, min_freq=5,
-                        gpu=False, shuffle=True, **kwargs):
+                        device='cpu', shuffle=True, **kwargs):
     """
     Wrapper function for twisty with sensible, overwritable defaults
     """
@@ -70,7 +55,7 @@ def load_twisty_dataset(src, trg, batch_size, max_size=100000, min_freq=5,
     tweets_dict.fit(src)
     labels_dict.fit(trg)
     d = {'src': tweets_dict, 'trg': labels_dict}
-    splits = PairedDataset(src, trg, d, batch_size, gpu=gpu).splits(
+    splits = PairedDataset(src, trg, d, batch_size, device=device).splits(
         shuffle=shuffle, **kwargs)
     return splits
 
@@ -104,7 +89,7 @@ if __name__ == '__main__':
                         help='inflection for kl schedule in epochs')
     parser.add_argument('--epochs', default=15, type=int)
     parser.add_argument('--batch_size', type=int, default=100)
-    parser.add_argument('--gpu', action='store_true')
+    parser.add_argument('--device', default='cpu')
     parser.add_argument('--outputfile', default=None)
     parser.add_argument('--use_schedule', action='store_true')
     parser.add_argument('--checkpoints', default=50, type=int)
@@ -139,12 +124,12 @@ if __name__ == '__main__':
             train, test, valid = load_twisty_dataset(
                 src, trg, args.batch_size,
                 min_freq=args.min_freq, max_size=args.max_size,
-                gpu=args.gpu, dev=args.dev, test=args.test,
+                device=args.device, dev=args.dev, test=args.test,
                 max_tweets=None if args.max_tweets == 0 else args.max_tweets)
         else:
             train, test, valid = load_split_data(
                 os.path.join('/home/manjavacas/corpora', args.source), args.batch_size,
-                args.max_size, args.min_freq, args.max_len, args.gpu, processor)
+                args.max_size, args.min_freq, args.max_len, args.device, processor)
         # save
         if args.cache_data:
             train.to_disk('data/{}_train.pt'.format(prefix))
@@ -156,9 +141,9 @@ if __name__ == '__main__':
         train = PairedDataset.from_disk('data/{}_train.pt'.format(prefix))
         test = PairedDataset.from_disk('data/{}_test.pt'.format(prefix))
         valid = PairedDataset.from_disk('data/{}_valid.pt'.format(prefix))
-        train.set_gpu(args.gpu)
-        test.set_gpu(args.gpu)
-        valid.set_gpu(args.gpu)
+        train.set_device(args.device)
+        test.set_device(args.device)
+        valid.set_device(args.device)
         train.set_batch_size(args.batch_size)
         test.set_batch_size(args.batch_size)
         valid.set_batch_size(args.batch_size)
@@ -184,8 +169,7 @@ if __name__ == '__main__':
         model.encoder.embeddings.init_embeddings_from_file(
             args.embeddings_path, verbose=True)
 
-    if args.gpu:
-        model.cuda()
+    model.to(device=args.device)
 
     optimizer = getattr(optim, args.optim)(model.parameters(), lr=args.lr)
     # reduce rate by gamma every n epochs
@@ -210,7 +194,7 @@ if __name__ == '__main__':
         max_norm=args.max_norm, scheduler=scheduler)
 
     # hooks
-    trainer.add_hook(make_generate_hook(args.level),
+    trainer.add_hook(make_generate_hook(args.level, valid),
                      hooks_per_epoch=args.hooks_per_epoch)
     trainer.add_hook(kl_weight_hook, hooks_per_epoch=100)
     if args.use_schedule:

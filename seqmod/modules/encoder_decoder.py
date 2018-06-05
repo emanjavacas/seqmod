@@ -2,7 +2,6 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.autograd import Variable
 
 from seqmod.misc.beam_search import Beam
 from seqmod.modules.rnn_encoder import RNNEncoder, GRLRNNEncoder
@@ -40,9 +39,9 @@ class EncoderDecoder(nn.Module):
             nll_weight[pad] = 0
         self.register_buffer('nll_weight', nll_weight)
 
-    def is_cuda(self):
-        "Whether the model is on a gpu. We assume no device sharing."
-        return next(self.parameters()).is_cuda
+    def device(self):
+        "Model device"
+        return next(self.parameters()).device
 
     def parameters(self, only_trainable=True):
         """
@@ -73,9 +72,7 @@ class EncoderDecoder(nn.Module):
         dec_trg, loss_trg = trg[:-1], trg[1:]
 
         # should we run fast_forward?
-        if hasattr(self.decoder, 'is_fast_forward') and \
-           self.decoder.is_fast_forward and \
-           not use_schedule:
+        if self.decoder.ffw and not use_schedule:
             dec_outs, _ = self.decoder.fast_forward(dec_trg, dec_state)
 
         else:
@@ -83,10 +80,7 @@ class EncoderDecoder(nn.Module):
             for step, t in enumerate(dec_trg):
                 if use_schedule and step > 0 and self.exposure_rate < 1.0:
                     t = scheduled_sampling(
-                        t, dec_outs[-1],
-                        self.decoder.project,
-                        self.exposure_rate)
-                    t = Variable(t, volatile=not self.training)
+                        t, dec_outs[-1], self.decoder.project, self.exposure_rate)
                 out, _ = self.decoder(t, dec_state)
                 dec_outs.append(out)
             dec_outs = torch.stack(dec_outs)
@@ -107,7 +101,7 @@ class EncoderDecoder(nn.Module):
                     weight=self.nll_weight)
 
             shard_loss /= num_examples
-            loss += shard_loss.data[0]
+            loss += shard_loss.item()
 
             if not test:
                 shard_loss.backward(retain_graph=True)
@@ -135,7 +129,7 @@ class EncoderDecoder(nn.Module):
             (trg, *trg_conds) = trg
         (trg, trg_lengths) = trg
 
-        num_examples = trg_lengths.data.sum()
+        num_examples = trg_lengths.sum().item()
 
         # - compute encoder output
         enc_outs, enc_hidden = self.encoder(src, lengths=src_lengths)
@@ -188,8 +182,8 @@ class EncoderDecoder(nn.Module):
             on_init_state(self, dec_state)
 
         scores, hyps, weights = 0, [], []
-        mask = torch.ones(batch_size).long()
-        prev = Variable(src.data.new([bos]).expand(batch_size), volatile=True)
+        mask = torch.ones(batch_size, dtype=torch.int64)
+        prev = src.new([bos] * batch_size)
 
         for _ in range(len(src) * max_decode_len):
             if on_step is not None:
@@ -205,24 +199,22 @@ class EncoderDecoder(nn.Module):
                 logprobs, prev = logprobs.max(1)
 
             # accumulate
-            hyps.append(prev.data)
+            hyps.append(prev.tolist())
             if self.decoder.has_attention:
-                weights.append(weight.data.cpu())
+                weights.append(weight.tolist())
 
             # update mask
-            mask = mask * (prev.data.cpu() != eos).long()
+            mask = mask * (prev.cpu() != eos).long()
             if mask.sum() == 0:
                 break
 
             # update and accumulate scores
             logprobs = logprobs.cpu()
-            logprobs.data[mask == 0] = 0
-            scores += logprobs.data
+            logprobs[mask == 0] = 0
+            scores += logprobs
 
-        hyps = torch.stack(hyps).transpose(0, 1).tolist()  # batch first
+        hyps = torch.tensor(hyps).transpose(0, 1).tolist()  # batch first
         scores = scores.tolist()
-        if self.decoder.has_attention:
-            weights = torch.stack(weights).tolist()
 
         if hasattr(self, 'reverse') and self.reverse:
             hyps = [hyp[::-1] for hyp in hyps]
@@ -258,11 +250,10 @@ class EncoderDecoder(nn.Module):
         bos = self.decoder.embeddings.d.get_bos()
         if hasattr(self, 'reverse') and self.reverse:
             bos, eos = eos, bos
-        gpu = src.is_cuda
 
         scores, hyps, weights = [], [], []
 
-        enc_outs, enc_hidden = self.encoder(src, lengths)
+        enc_outs, enc_hidden = self.encoder(src, lengths=lengths)
         dec_state = self.decoder.init_state(
             enc_outs, enc_hidden, lengths, conds=conds)
 
@@ -273,7 +264,7 @@ class EncoderDecoder(nn.Module):
         for state in dec_state.split_batches():
             # create beam
             state.expand_along_beam(beam_width)
-            beam = Beam(beam_width, bos, eos=eos, gpu=gpu)
+            beam = Beam(beam_width, bos, eos=eos, device=src.device)
 
             while beam.active and len(beam) < len(src) * max_decode_len:
                 # run callback
@@ -281,10 +272,10 @@ class EncoderDecoder(nn.Module):
                     on_step(self, state)
 
                 # advance
-                prev = Variable(beam.get_current_state(), volatile=True)
+                prev = beam.get_current_state()
                 dec_out, weight = self.decoder(prev, state)
                 logprobs = self.decoder.project(dec_out)  # (width x vocab_size)
-                beam.advance(logprobs.data)
+                beam.advance(logprobs)
                 state.reorder_beam(beam.get_source_beam())
                 # TODO: add attention weight for decoded steps
 

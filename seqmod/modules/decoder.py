@@ -3,7 +3,6 @@ import logging
 
 import torch
 import torch.nn as nn
-from torch.autograd import Variable
 
 from seqmod.modules.rnn import StackedGRU, StackedLSTM
 from seqmod.modules.softmax import FullSoftmax, SampledSoftmax
@@ -67,10 +66,17 @@ class RNNWrapper(nn.Module):
             self.rnn = stacked(num_layers, in_dim, hid_dim, dropout=dropout)
 
     def forward(self, inp, hidden, dropout_mask=None):
-        if inp.dim() == 2 and self.ffw:
+        if self.ffw:
             # rnn module expects 3D input and doesn't take dropout_mask
-            out, hidden = self.rnn(inp.unsqueeze(0), hidden)
-            out = out.squeeze(0)
+            reshape = False
+            if inp.dim() == 2:
+                reshape = True
+                inp = inp.unsqueeze(0)
+
+            out, hidden = self.rnn(inp, hidden)
+
+            if reshape:
+                out = out.squeeze(0)
         else:
             out, hidden = self.rnn(inp, hidden, dropout_mask=dropout_mask)
 
@@ -120,9 +126,9 @@ class RNNDecoder(BaseDecoder):
         if self.att_type is not None and self.att_type.lower() != 'none':
             self.has_attention = True
 
-        ffw = False
+        self.ffw = False
         if not (variational or input_feed):
-            ffw = True
+            self.ffw = True
 
         in_dim = self.embeddings.embedding_dim
         if input_feed:
@@ -141,7 +147,7 @@ class RNNDecoder(BaseDecoder):
 
         # rnn layer
         self.rnn = RNNWrapper(num_layers, in_dim, hid_dim, cell,
-                              dropout=dropout, ffw=ffw)
+                              dropout=dropout, ffw=self.ffw)
 
         # train init
         self.h_0 = None
@@ -175,7 +181,7 @@ class RNNDecoder(BaseDecoder):
 
     def init_hidden_for(self, enc_hidden):
         """
-        Creates a variable to be fed as init hidden step.
+        Creates a tensor to be fed as init hidden step.
 
         Returns:
         --------
@@ -186,6 +192,7 @@ class RNNDecoder(BaseDecoder):
             h_0, _ = enc_hidden
         else:
             h_0 = enc_hidden
+
         batch = h_0.size(1)
 
         # compute h_0
@@ -193,7 +200,9 @@ class RNNDecoder(BaseDecoder):
             h_0 = self.h_0.repeat(1, batch, 1)
         else:
             if not self.reuse_hidden:
-                h_0 = Variable(h_0.data.new(self.num_layers, batch, self.hid_dim))
+                h_0 = torch.zeros(
+                    self.num_layers, batch, self.hid_dim,
+                    device=h_0.device)
 
         if self.add_init_jitter:
             h_0 = h_0 + torch.normal(torch.zeros_like(h_0), 0.3)
@@ -206,7 +215,7 @@ class RNNDecoder(BaseDecoder):
 
     def init_output_for(self, hidden):
         """
-        Creates a variable to be concatenated with previous target
+        Creates a tensor to be concatenated with previous target
         embedding as input for the first rnn step. This is used
         for the first decoding step when using the input_feed flag.
 
@@ -219,9 +228,7 @@ class RNNDecoder(BaseDecoder):
 
         _, batch, hid_dim = hidden.size()
 
-        output = torch.normal(hidden.data.new(batch, hid_dim).zero_(), 0.3)
-
-        return Variable(output, volatile=not self.training)
+        return torch.normal(hidden.new_zeros(batch, hid_dim), 0.3)
 
     def init_state(self, context, hidden, lengths, conds=None):
         """
@@ -432,7 +439,6 @@ class RNNDecoderState(State):
             conds = self.conds.chunk(batch_size, 0)
 
         for b in range(batch_size):
-
             yield RNNDecoderState(
                 hidden[b], context[b],
                 input_feed=input_feed[b] if input_feed is not None else None,

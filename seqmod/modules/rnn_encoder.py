@@ -16,7 +16,9 @@ class RNNEncoder(BaseEncoder):
     """
     Encoder that computes a dense representation of a sentence with a RNN.
     """
-    SUMMARIES = ('mean', 'mean-concat', 'mean-max', 'full', 'inner-attention', 'last')
+    SUMMARIES = (
+        'mean', 'mean-concat', 'max',
+        'mean-max', 'full', 'inner-attention', 'last')
 
     def __init__(self, embeddings, hid_dim, num_layers, cell, bidi=True,
                  dropout=0.0, summary='full', train_init=False, add_init_jitter=False):
@@ -108,8 +110,7 @@ class RNNEncoder(BaseEncoder):
     def init_hidden_for(self, inp):
         return init_hidden_for(
             inp, self.num_dirs, self.num_layers, self.hid_dim, self.cell,
-            h_0=self.h_0, add_init_jitter=self.add_init_jitter,
-            training=self.training)
+            h_0=self.h_0, add_init_jitter=self.add_init_jitter)
 
     def forward(self, inp, lengths=None):
         """
@@ -125,6 +126,7 @@ class RNNEncoder(BaseEncoder):
             shapes.
             - full: (seq_len x batch x hid_dim * num_dirs)
             - mean: (batch x hid_dim * num_dirs)
+            - max: (batch x hid_dim * num_dirs)
             - mean-concat: (batch x hid_dim * num_dirs * 2)
             - mean-max: (batch x hid_dim * num_dirs * 2)
             - inner-attention: (batch x hid_dim * num_dirs)
@@ -170,6 +172,9 @@ class RNNEncoder(BaseEncoder):
         elif self.summary == 'mean':
             outs = outs.mean(0)
 
+        elif self.summary == 'max':
+            outs = outs.max(0)[0]
+
         elif self.summary == 'mean-concat':
             outs = torch.cat([outs.mean(0), get_last_token(outs, lengths)], 1)
 
@@ -202,21 +207,10 @@ class RNNEncoder(BaseEncoder):
         """
         if self.summary == 'full':
             return 3, self.hid_dim * self.num_dirs
-
-        elif self.summary == 'last':
-            return 2, self.hid_dim * self.num_dirs
-
-        elif self.summary == 'mean':
-            return 2, self.hid_dim * self.num_dirs
-
-        elif self.summary == 'mean-concat':
+        elif self.summary in ('mean-concat', 'mean-max'):
             return 2, self.hid_dim * self.num_dirs * 2
-
-        elif self.summary == 'inner-attention':
+        else:
             return 2, self.hid_dim * self.num_dirs
-
-        elif self.summary == 'mean-max':
-            return 2, self.hid_dim * self.num_dirs * 2
 
 
 class GRLRNNEncoder(RNNEncoder):
@@ -245,7 +239,7 @@ class GRLRNNEncoder(RNNEncoder):
         if not test:
             (sum(grl_loss) / len(self.grls)).backward(retain_graph=True)
 
-        return [l.data[0] for l in grl_loss], cond.size(0)
+        return [l.item() for l in grl_loss], cond.size(0)
 
     @property
     def conditional(self):

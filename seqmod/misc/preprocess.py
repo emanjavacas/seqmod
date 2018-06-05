@@ -1,4 +1,5 @@
 
+import re
 import os
 import time
 import warnings
@@ -16,33 +17,49 @@ def segmenter(sent, level='char'):
         raise ValueError
 
 
-def text_processor(language='en', num=False, lower=False, level='token', normalize=True):
-    try:
-        from normalizr import Normalizr
-    except ImportError:
-        try:
-            from cucco import Cucco as Normalizr
-        except ImportError:
-            warnings.warn("Try installing normalizr or cucco")
-            return lambda sent: sent
-
+def text_processor(language='en',
+                   num=False,
+                   lower=False,
+                   level='token',
+                   normalize=True,
+                   max_len=None,
+                   min_len=0,
+):
     normalizations = [
         ('replace_emails', {'replacement': '<email>'}),
         ('replace_emojis', {'replacement': '<emoji>'}),
         ('replace_urls', {'replacement': '<url>'})]
-    normalizr = Normalizr()
 
-    import re
+    normalizer = None
+    try:
+        from normalizr import Normalizr
+        normalizer = Normalizr().normalize
+    except ImportError:
+        try:
+            from cucco import Cucco
+            normalizer = Cucco().normalize
+        except ImportError:
+            warnings.warn("Try installing normalizr or cucco for better normalization")
+
     NUM = re.compile('[0-9]+')
 
     def processor(sent):
-        if normalize:
-            sent = normalizr.normalize(sent, normalizations)
+        if normalize and normalizer is not None:
+            sent = normalizer(sent, normalizations)
         if num:
             sent = NUM.sub('<num>', sent)  # number substitution
         if lower:
             sent = sent.lower()  # downcase
-        return segmenter(sent, level=level)
+
+        sent = segmenter(sent, level=level)
+
+        if len(sent) <= min_len:
+            return None
+
+        if max_len is not None and len(sent) > max_len:
+            return sent[:max_len]
+        else:
+            return sent
 
     return processor
 

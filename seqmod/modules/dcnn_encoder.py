@@ -113,14 +113,14 @@ class DCNNEncoder(BaseEncoder):
 
 
 # seqlen, batch, emb = 10, 5, 25
-# inp = torch.autograd.Variable(torch.rand(seqlen, batch, emb))
+# inp = torch.rand(seqlen, batch, emb)
 # inp = inp.transpose(0, 1).transpose(1, 2).unsqueeze(1)  # batch, 1, emb, seqlen
 
 # # conv2d input is (batch, C_in, H, W)
 # nn.Conv2d(1, 6, (1, 3))(inp).size()   # batch, 6, 25, 8
 # nn.Conv2d(1, 6, (emb, 3))(inp).size()  # batch, 6, 1, 8
 
-# inp = torch.autograd.Variable(torch.rand(seqlen, batch, emb))
+# inp = torch.rand(seqlen, batch, emb)
 # inp = inp.transpose(0, 1).transpose(1, 2).unsqueeze(2)
 # # conv2d input is (batch, H, C_in, W)
 # nn.Conv2d(emb, 6, (1, 3), groups=emb)().size()  # batch, 6, 1, 8

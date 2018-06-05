@@ -1,7 +1,7 @@
 
 from .dataset import *
 from .beam_search import Beam
-from .dataset import Dict, MultiDict, PairedDataset, BlockDataset, CyclicBlockDataset
+from .dataset import Dict, MultiDict, PairedDataset, BlockDataset
 from .early_stopping import EarlyStopping, EarlyStoppingException
 from .loggers import StdLogger, VisdomLogger, TensorboardLogger
 from .preprocess import text_processor

@@ -4,15 +4,13 @@ import logging
 import math
 import os
 import yaml
+import itertools
 from datetime import datetime
-import random; random.seed(1001)
 
 import numpy as np
 
 import torch
 import torch.nn.init as init
-import torch.optim as optim
-from torch.autograd import Variable
 
 BOS = '<bos>'
 EOS = '<eos>'
@@ -45,13 +43,11 @@ def save_model(model, prefix, d=None, mode='torch'):
     If target directory path doesn't exist, it will fail.
     """
     if mode == 'torch':
-        import torch
         save_fn, ext = torch.save, 'pt'
     elif mode == 'pickle':
         import pickle as p
         save_fn, ext = p.dump, 'pkl'
     elif mode == 'npy':
-        import numpy as np
         save_fn, ext = lambda model, f: np.save(f, model), 'npy'
     else:
         raise ValueError("Unknown mode [{}]".format(mode))
@@ -110,36 +106,45 @@ def prompt(message):
         return prompt("Please answer yes or no:")
 
 
-
-def _wrap_variable(t, volatile, gpu):
-    if len(t) == 0:             # don't wrap empty vectors
+def prepare_tensors(t, device):
+    if len(t) == 0:
         return t
-    if isinstance(t, np.ndarray):
-        if t.dtype == np.int64 or t.dtype == np.int32:
-            t = torch.LongTensor(t)
-        else:
-            t = torch.Tensor(t)
-    elif isinstance(t, list):
-        if isinstance(t[0], int):
-            t = torch.LongTensor(t)
-        else:
-            t = torch.Tensor(t)
-    t = Variable(t, volatile=volatile)
-    if gpu:
-        return t.cuda()
-    return t
+    if isinstance(t, tuple):
+        return tuple(prepare_tensors(t_, device) for t_ in t)
+
+    if isinstance(t, torch.Tensor):
+        return t.to(device=device)
+    return torch.tensor(t, device=device)
 
 
-def wrap_variables(tensor, volatile=False, gpu=False):
-    "Transform tensors into variables"
-    if isinstance(tensor, tuple):
-        return tuple(wrap_variables(t, volatile, gpu) for t in tensor)
-    return _wrap_variable(tensor, volatile, gpu)
+def chunks(it, size):
+    """
+    Chunk a generator into a given size (last chunk might be smaller)
+    """
+    buf = []
+    for s in it:
+        buf.append(s)
+        if len(buf) == size:
+            yield buf
+            buf = []
+    if len(buf) > 0:
+        yield buf
 
 
-def unwrap_variables(variables):
-    "Transform variables into tensors"
-    return [v.data[0] if isinstance(v, Variable) else v for v in variables]
+def window(it):
+    """
+    >>> list(window(range(5)))
+    [(None, 0, 1), (0, 1, 2), (1, 2, 3), (2, 3, 4), (3, 4, None)]
+    """
+    it = itertools.chain([None], it, [None])  # pad for completeness
+    result = tuple(itertools.islice(it, 3))
+
+    if len(result) == 3:
+        yield result
+
+    for elem in it:
+        result = result[1:] + (elem,)
+        yield result
 
 
 # Initializers
@@ -162,35 +167,35 @@ def rnn_orthogonal(cell, gain=1, forget_bias=False):
                 else:
                     logging.warning("Skipping forget bias for cell of type '{}'"
                                     .format(type(cell).__name__))
-                    init.constant(p, 0.)
+                    init.constant_(p, 0.)
             else:
-                init.constant(p, 0.)
+                init.constant_(p, 0.)
         elif '_hh' in p_name:         # recurrent layer
             for i in range(0, p.size(0), cell.hidden_size):
-                init.orthogonal(p[i:i + cell.hidden_size], gain=gain)
+                init.orthogonal_(p[i:i + cell.hidden_size], gain=gain)
         else:                         # input to hidden
             stdev = 1.0 / math.sqrt(cell.hidden_size)
-            init.uniform(p, -stdev, stdev)
+            init.uniform_(p, -stdev, stdev)
 
 
 def positive_forget_bias(p):
     """
     Bias forget gate setting bias gate to 1.
     """
-    init.constant(p, 0.)
+    init.constant_(p, 0.)
     hidden_size = len(p) // 4
-    init.constant(p[hidden_size:hidden_size * 2], 1.0)  # forget gate is second
+    init.constant_(p[hidden_size:hidden_size * 2], 1.0)  # forget gate is second
 
 
 def make_initializer(
-        linear={'type': 'uniform', 'args': {'a': -0.05, 'b': 0.05}},
-        linear_bias={'type': 'constant', 'args': {'val': 0.}},
-        rnn={'type': 'xavier_uniform', 'args': {'gain': 1.}},
-        rnn_bias={'type': 'constant', 'args': {'val': 0.}},
-        cnn={'type': 'xavier_normal', 'args': {'gain': 1.}},
-        cnn_bias={'type': 'constant', 'args': {'val': 0.}},
-        emb={'type': 'normal', 'args': {'mean': 0, 'std': 1}},
-        default={'type': 'uniform', 'args': {'a': -0.05, 'b': 0.05}}):
+        linear={'type': 'uniform_', 'args': {'a': -0.05, 'b': 0.05}},
+        linear_bias={'type': 'constant_', 'args': {'val': 0.}},
+        rnn={'type': 'xavier_uniform_', 'args': {'gain': 1.}},
+        rnn_bias={'type': 'constant_', 'args': {'val': 0.}},
+        cnn={'type': 'xavier_normal_', 'args': {'gain': 1.}},
+        cnn_bias={'type': 'constant_', 'args': {'val': 0.}},
+        emb={'type': 'normal_', 'args': {'mean': 0, 'std': 1}},
+        default={'type': 'uniform_', 'args': {'a': -0.05, 'b': 0.05}}):
 
     """
     Initialize a module with default initializers per layer type.
@@ -208,6 +213,7 @@ def make_initializer(
 
     def initializer(m):
 
+        logging.warning(" *** Initializing module: {}".format(type(m).__name__))
         if isinstance(m, (rnns)):  # RNNs
             if rnn['type'] == 'rnn_orthogonal':  # full initialization scheme
                 logging.warning("Initializing {} with orthogonal scheme".format(
@@ -241,7 +247,7 @@ def make_initializer(
                 logging.warning("Initializing {} with {} scheme".format(
                     '{}.{}'.format(type(m).__name__, p_name), emb['type']))
             if m.padding_idx is not None:
-                m.weight.data[m.padding_idx].fill_(0)
+                init.constant_(m.weight[m.padding_idx], 0)
 
         elif isinstance(m, convs):  # CNN
             for p_name, p in m.named_parameters():
@@ -256,7 +262,7 @@ def make_initializer(
                     # Karpathy: http://cs231n.github.io/neural-networks-2/#init
                     # -> scale weight vector by square root of its fan-in...
                     # fan_in, _ = init._calculate_fan_in_and_fan_out(p)
-                    # init.normal(p, mean=0, std=math.sqrt(fan_in))
+                    # init.normal_(p, mean=0, std=math.sqrt(fan_in))
 
     return initializer
 
@@ -306,11 +312,11 @@ def log_grad(module, grad_input, grad_output):
 
     def grad_norm_str(var):
         if isinstance(var, tuple) and len(var) > 1:
-            return ", ".join("{:6.4f}".format(g.data.norm()) for g in var)
+            return ", ".join("{:6.4f}".format(g.norm()) for g in var)
         else:
             if isinstance(var, tuple):
-                return "{:6.4f}".format(var[0].data.norm())
-            return "{:6.4f}".format(var.data.norm())
+                return "{:6.4f}".format(var[0].norm())
+            return "{:6.4f}".format(var.norm())
 
     log = "{module}: grad input [{grad_input}], grad output [{grad_output}]"
     print(log.format(
@@ -359,7 +365,7 @@ def format_hyp(score, hyp, hyp_num, d, level='word',
         output=sep.join([d.vocab[c] for c in hyp]))
 
 
-def make_lm_hook(d, seed_texts=None, max_seq_len=25, gpu=False,
+def make_lm_hook(d, seed_texts=None, max_seq_len=25, device='cpu',
                  temperature=1, level='token', checkpoint=None,
                  early_stopping=None, validate=True):
     """
@@ -382,7 +388,7 @@ def make_lm_hook(d, seed_texts=None, max_seq_len=25, gpu=False,
 
         trainer.log("info", "Generating text...")
         scores, hyps = trainer.model.generate(
-            d, seed_texts=seed_texts, max_seq_len=max_seq_len, gpu=gpu,
+            d, seed_texts=seed_texts, max_seq_len=max_seq_len, device=device,
             method='sample', temperature=temperature)
         hyps = [format_hyp(score, hyp, hyp_num + 1, d, level=level)
                 for hyp_num, (score, hyp) in enumerate(zip(scores, hyps))]
@@ -396,36 +402,7 @@ def make_lm_hook(d, seed_texts=None, max_seq_len=25, gpu=False,
     return hook
 
 
-def make_mlm_hook(d, seed_texts=None, max_seq_len=25, gpu=False,
-                  temperature=1, level='token', early_stopping=None,
-                  validate=True):
-    """
-    Make a generator hook for a normal language model
-    """
-
-    def hook(trainer, epoch, batch_num, checkpoint):
-        trainer.log("info", "Checking training...")
-        if validate:
-            loss = trainer.validate_model()
-            trainer.log("validation_end", {'epoch': epoch, 'loss': loss.pack()})
-            if early_stopping is not None:
-                trainer.log("info", "Registering early stopping loss...")
-                early_stopping.add_checkpoint(
-                    loss.reduce(), copy.deepcopy(trainer.model).cpu())
-        trainer.log("info", "Generating text...")
-        for head in trainer.model.project:
-            trainer.log("info", "Head: {}".format(head))
-            scores, hyps = trainer.model.generate(
-                d, head=head, seed_texts=seed_texts, max_seq_len=max_seq_len,
-                gpu=gpu, method='sample', temperature=temperature)
-            hyps = [format_hyp(score, hyp, hyp_num + 1, d, level=level)
-                    for hyp_num, (score, hyp) in enumerate(zip(scores, hyps))]
-            trainer.log("info", '\n***' + ''.join(hyps) + "\n***")
-
-    return hook
-
-
-def make_clm_hook(d, sampled_conds=None, max_seq_len=200, gpu=False,
+def make_clm_hook(d, sampled_conds=None, max_seq_len=200, device='cpu',
                   temperature=1, batch_size=10, level='token'):
     """
     Make a generator hook for a CLM.
@@ -442,6 +419,7 @@ def make_clm_hook(d, sampled_conds=None, max_seq_len=200, gpu=False,
         random values for the conditions.
         if None, 5 samples will be taken (resulting in 5 combinations of conds)
     """
+    import random
     lang_d, *conds_d = d
 
     # sample conditions if needed
@@ -459,7 +437,7 @@ def make_clm_hook(d, sampled_conds=None, max_seq_len=200, gpu=False,
                 conds_str += (str(cond_d.vocab[sampled_c]) + '; ')
             trainer.log("info", "\n***\nConditions: " + conds_str)
             scores, hyps = trainer.model.generate(
-                lang_d, max_seq_len=max_seq_len, gpu=gpu,
+                lang_d, max_seq_len=max_seq_len, device=device,
                 method='sample', temperature=temperature,
                 batch_size=batch_size, conds=conds)
             hyps = [format_hyp(score, hyp, hyp_num + 1, lang_d, level=level)

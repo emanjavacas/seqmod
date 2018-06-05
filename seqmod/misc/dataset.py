@@ -1,4 +1,5 @@
 
+import time
 import math
 import logging
 import random
@@ -7,7 +8,8 @@ from collections import Counter, Sequence, OrderedDict, defaultdict
 import torch
 import torch.utils.data
 
-from seqmod.utils import UNK, wrap_variables
+from seqmod import utils
+from seqmod.misc.preprocess import segmenter
 
 
 def bucketing(*args):
@@ -109,10 +111,10 @@ def pad_sequential_batch(examples, pad, return_lengths, align_right):
 
     # create batch
     maxlen = max(lengths)
-    out = torch.LongTensor(len(examples), maxlen).fill_(pad or 0)
+    out = torch.zeros(len(examples), maxlen, dtype=torch.int64).fill_(pad or 0)
     for i, example in enumerate(examples):
         left = 0 if not align_right else maxlen - len(example)
-        out[i].narrow(0, left, len(example)).copy_(torch.Tensor(example))
+        out[i].narrow(0, left, len(example)).copy_(torch.tensor(example))
 
     # turn to batch second
     out = out.t().contiguous()
@@ -134,7 +136,7 @@ def block_batchify(vector, batch_size):
         return tuple(block_batchify(v, batch_size) for v in vector)
 
     if isinstance(vector, list):
-        vector = torch.LongTensor(vector)
+        vector = torch.tensor(vector)
 
     length = (len(vector) // batch_size) * batch_size
 
@@ -168,8 +170,8 @@ class Dict(object):
         they are None).
     """
     def __init__(self, pad_token=None, eos_token=None, bos_token=None,
-                 unk_token=UNK, force_unk=False, max_size=None, min_freq=1,
-                 sequential=True, max_len=None, use_vocab=True, dtype=int,
+                 unk_token=utils.UNK, force_unk=False, max_size=None, min_freq=1,
+                 sequential=True, max_len=None, use_vocab=True, dtype='int64',
                  preprocessing=None, align_right=False):
 
         self.counter = Counter()
@@ -352,10 +354,7 @@ class Dict(object):
             return pad_sequential_batch(
                 batch_data, self.get_pad(), return_lengths, align_right)
         else:
-            if self.dtype is int:
-                return torch.LongTensor(batch_data)
-            else:
-                return torch.FloatTensor(batch_data)
+            return torch.tensor(batch_data, dtype=getattr(torch, self.dtype))
 
 
 class MultiDict(object):
@@ -455,7 +454,7 @@ class CompressionTable(object):
         """
         seq_len, batch_size = t.size()
         vals1d = (c for i in t.view(-1) for c in self.get_vals(i))
-        t = torch.LongTensor(list(vals1d))
+        t = torch.tensor(list(vals1d), dtype=torch.int64)
         return tuple(t.view(seq_len, batch_size, self.nvals)
                       .transpose(2, 0)  # (nvals, batch_size, seq_len)
                       .transpose(1, 2)  # (nvals, seq_len, batch_size)
@@ -507,8 +506,7 @@ class PairedDataset(Dataset):
         trg_dict: same as src_dict but for the target data
     """
     def __init__(self, src, trg, d, batch_size=1,
-                 fitted=False, gpu=False, evaluation=False,
-                 return_lengths=True):
+                 fitted=False, device='cpu', return_lengths=True):
         self.autoregressive, self.data, self.d = False, {}, d
 
         # prepare src data
@@ -531,8 +529,7 @@ class PairedDataset(Dataset):
                                  "src {} and trg {}".format(src_len, trg_len))
 
         self.batch_size = batch_size
-        self.gpu = gpu
-        self.evaluation = evaluation
+        self.device = device
         self.return_lengths = return_lengths
         self.num_batches = src_len // batch_size
 
@@ -569,7 +566,7 @@ class PairedDataset(Dataset):
         else:
             out = dicts.pack(batch, return_lengths=self.return_lengths)
 
-        return wrap_variables(out, volatile=self.evaluation, gpu=self.gpu)
+        return utils.prepare_tensors(out, device=self.device)
 
     def __len__(self):
         return self.num_batches
@@ -589,8 +586,8 @@ class PairedDataset(Dataset):
         self.batch_size = new_batch_size
         self.num_batches = len(self.data['src']) // new_batch_size
 
-    def set_gpu(self, new_gpu):
-        self.gpu = new_gpu
+    def set_device(self, device):
+        self.device = device
 
     def sort_(self, key=lambda x: len(x), reverse=True, sort_by='src'):
         """
@@ -694,7 +691,6 @@ class PairedDataset(Dataset):
         splits, sets = get_splits(len(self.data['src']), test, dev=dev), []
 
         for idx, (start, stop) in enumerate(zip(splits, splits[1:])):
-            evaluation = self.evaluation if idx == 0 else True
             # get dataset splits
             if self.autoregressive:
                 src, trg = self.data['src'][start:stop], None
@@ -703,8 +699,8 @@ class PairedDataset(Dataset):
                 trg = self.data['trg'][start:stop]
 
             subset = type(self)(
-                src, trg, self.d, self.batch_size, fitted=True, gpu=self.gpu,
-                return_lengths=self.return_lengths, evaluation=evaluation)
+                src, trg, self.d, self.batch_size, fitted=True, device=self.device,
+                return_lengths=self.return_lengths)
 
             if sort:
                 subset.sort_(**kwargs)
@@ -735,8 +731,7 @@ class BlockDataset(Dataset):
         Backprop through time (max context the RNN conditions predictions on)
     """
     def __init__(self, examples, d, batch_size, bptt,
-                 fitted=False, gpu=False, evaluation=False,
-                 table=None, table_idx=1):
+                 fitted=False, device='cpu', table=None, table_idx=1):
         if not fitted:
             examples = self._fit(examples, d, batch_size)
         self.data = block_batchify(examples, batch_size)
@@ -744,8 +739,7 @@ class BlockDataset(Dataset):
         self.batch_size = batch_size
         self.bptt = bptt
         self.fitted = fitted
-        self.gpu = gpu
-        self.evaluation = evaluation
+        self.device = device
         self.table = table
         self.table_idx = table_idx
 
@@ -788,8 +782,8 @@ class BlockDataset(Dataset):
         idx *= self.bptt
         seq_len = min(self.bptt, len(data) - 1 - idx)
         src_data, trg_data = data[idx:idx+seq_len], data[idx+1:idx+seq_len+1]
-        src = wrap_variables(src_data, self.evaluation, self.gpu)
-        trg = wrap_variables(trg_data, self.evaluation, self.gpu)
+        src = utils.prepare_tensors(src_data, self.device)
+        trg = utils.prepare_tensors(trg_data, self.device)
         return src, trg
 
     def __len__(self):
@@ -821,12 +815,12 @@ class BlockDataset(Dataset):
             if self.table is not None:
                 # source
                 src_pre, src_target, src_post = destruct(src, self.table_idx)
-                src_target = tuple(wrap_variables(t, self.evaluation, self.gpu)
+                src_target = tuple(utils.prepare_tensors(t, self.device)
                                    for t in self.table.expand(src_target.data))
                 src = tuple(src_pre + src_target + src_post)
                 # target
                 trg_pre, trg_target, trg_post = destruct(trg, self.table_idx)
-                trg_target = tuple(wrap_variables(t, self.evaluation, self.gpu)
+                trg_target = tuple(utils.prepare_tensors(t, self.device)
                                    for t in self.table.expand(trg_target.data))
                 trg = tuple(trg_pre + trg_target + trg_post)
         # single-input
@@ -834,8 +828,8 @@ class BlockDataset(Dataset):
             src, trg = self._get_batch(self.data, idx)
         return src, trg
 
-    def set_gpu(self, new_gpu):
-        self.gpu = new_gpu
+    def set_device(self, new_device):
+        self.device = new_device
 
     def set_batch_size(self, new_batch_size):
         if self.batch_size == new_batch_size:
@@ -872,10 +866,10 @@ class BlockDataset(Dataset):
         table_idx = self.table_idx if hasattr(self, 'table_idx') else None
 
         for idx, (start, stop) in enumerate(zip(splits, splits[1:])):
-            evaluation = self.evaluation if idx == 0 else True
+
             subsets.append(type(self)(
                 self.split_data(start, stop), self.d, self.batch_size,
-                self.bptt, fitted=True, gpu=self.gpu, evaluation=evaluation,
+                self.bptt, fitted=True, device=self.device,
                 table=table, table_idx=table_idx))
         return tuple(subsets)
 
@@ -891,57 +885,235 @@ class BlockDataset(Dataset):
         subsets, splits = [], get_splits(size, test, dev=dev)
 
         for idx, (start, stop) in enumerate(zip(splits, splits[1:])):
-            evaluation = False if idx == 0 else True
+
             if isinstance(data, tuple):
                 split = tuple(d[start:stop] for d in data)
             else:
                 split = data[start:stop]
-            dataset = cls(split, d, batch_size, bptt,
-                          fitted=True, evaluation=evaluation, **kwargs)
+            dataset = cls(split, d, batch_size, bptt, fitted=True, **kwargs)
             subsets.append(dataset)
         return tuple(subsets)
 
 
-class CyclicBlockDataset(BlockDataset):
-    def __init__(self, examples, d, batch_size, bptt,
-                 fitted=False, gpu=False, evaluation=False, **kwargs):
-        self.data = {}
-        for name, data in examples.items():
-            if not fitted:      # subdata is already an integer vector
-                data = [c for l in d.transform(data) for c in l]
-            self.data[name] = block_batchify(data, batch_size)
-
-        self.names = list(self.data.keys())
+class DataIter(object):
+    """
+    Iterator over lines from files in autoregressive fashion
+    """
+    def __init__(self, d, *paths, processor=None, shuffle=True, sort=True,
+                 device='cpu', verbose=False, max_items=None):
         self.d = d
-        self.batch_size = batch_size
-        self.bptt = bptt
-        self.fitted = fitted
-        self.gpu = gpu
-        self.evaluation = evaluation
+        self.paths = list(paths)
+        self.processor = processor or self.default_segmenter
+        self.device = device
+        self.shuffle = shuffle
+        self.sort = sort
+        self.max_items = max_items
+        self.verbose = verbose
 
-    def __len__(self):
-        batches = min(len(d) for d in self.data.values()) * len(self.data)
-        return batches // self.bptt
+    def default_segmenter(self, line):
+        return segmenter(line, level='token')
 
-    def __getitem__(self, idx):
+    def get_lines(self):
+        for path in self.paths:
+            with open(path, 'r') as f:
+                for line in f:
+                    yield self.processor(line)  # might yield None
+            yield None                          # break dependencies
+
+    def to_tensor(self, data, reverse=False):
+        "Put text data (list of lists of strings) into tensors"
+        data = list(self.d.transform(data))
+        data, lengths = self.d.pack(
+            data, return_lengths=True, align_right=reverse)
+
+        if reverse:
+            from seqmod.modules import torch_utils
+            data = torch_utils.flip(data, dim=0)  # [<eos> ... <bos> <pad> <pad>]
+
+        data = data.to(device=self.device)
+        lengths = torch.tensor(lengths, device=self.device)
+
+        return data, lengths
+
+    def batchify(self, buf, batch_size):
+        "Transform a buffer into batches"
+        if self.sort:
+            buf = self.sort_buffer(buf)
+        batches = list(utils.chunks(buf, batch_size))
+
+        if self.shuffle:
+            random.shuffle(batches)
+
+        return batches
+
+    def batch_generator(self, batch_size, buffer_size=10000):
         """
-        Computes the subset for each batch in a cyclical way.
+        Get a thunk-generator over batches. The output is therefore a function
+        that returns a generator (this way you can run the generator multiple times).
 
-        Returns
-        -------
-
-        In addition to the standard BlockDataset, this subclass also returns
-        the name of the dataset in the current cycle in third position.
+        Parameters
+        ==========
+        batch_size : int
+        buffer_size : int, maximum number of lines in memory at any given point
         """
-        idx, dataset = divmod(idx, len(self.data))
-        name = self.names[dataset]
-        data = self.data[name]
-        src, trg = self._get_batch(data, idx)
-        return src, trg, name
+        def generator():
+            if self.shuffle:
+                random.shuffle(self.paths)
 
-    def split_data(self, start, stop):
-        start, stop = start // len(self.data), stop // len(self.data)
-        split = {}
-        for name, data in self.data.items():
-            split[name] = data.t().contiguous().view(-1)[start:stop]
-        return split
+            total = 0
+
+            chunks = utils.chunks(self.get_lines(), buffer_size)
+            while True:
+                try:
+                    if self.verbose:
+                        print("Filling buffer...")
+                        start = time.time()
+
+                    buf = self.fill_buffer(next(chunks))
+                    if self.max_items and total + len(buf) >= self.max_items:
+                        buf = buf[:self.max_items - total]
+                    total += len(buf)
+
+                    if self.verbose:
+                        print("Done in {:g}".format(time.time() - start))
+
+                    for batch in self.batchify(buf, batch_size):
+                        yield self.pack_batch(batch)
+
+                    if self.max_items and total >= self.max_items:
+                        raise StopIteration
+    
+                except StopIteration:
+                    if self.verbose:
+                        print("Done processing dataset")
+                    break
+
+        return generator
+
+    def fill_buffer(self, buf):
+        """
+        Transform the buffer into proper instance before creating the output batches.
+        This method can be overwritten to generate pairs, triplets, skipthought data...
+        """
+        return [sent for sent in buf if sent is not None]
+
+    def sort_buffer(self, buf):
+        """
+        Sort the buffer after creating instances but before splitting into batches.
+        This is useful to minimize the amount of padding in the batch (necessary in
+        case of large softmaxes)
+        """
+        return sorted(buf, key=lambda sent: len(sent), reverse=True)
+
+    def pack_batch(self, batch):
+        """
+        Transform batch into proper tensors. Expected input is a batch of output of
+        the `fill_buffer` method (eventually sorted)
+        """
+        return self.to_tensor(batch)
+
+
+class SkipthoughtIter(DataIter):
+    """
+    Iterator for Skipthought-like models yield neighboring sentences
+    """
+    def __init__(self, *args, always_reverse=False, includes=(True, False, True),
+                 **kwargs):
+        super().__init__(*args, **kwargs)
+
+        self.prev, self.same, self.post = includes
+
+        if sum(includes) < 1:
+            raise ValueError("Needs to include at least one target sentence")
+        if self.same and (not self.prev and not self.post):
+            raise ValueError("Autoregressive format. Use DataIter instead")
+
+        self.always_reverse = always_reverse
+
+    def fill_buffer(self, buf):
+        output = []
+        for (prev, same, post) in utils.window(buf):
+            if same is None:
+                continue
+
+            if self.prev and self.post:
+                if prev is not None and post is not None:
+                    output.append((same, (prev, post)))
+
+            elif self.prev and prev is not None:
+                output.append((same, prev))
+
+            elif self.post and post is not None:
+                output.append((same, post))
+
+        return output
+
+    def sort_buffer(self, buf):
+        def key(tup):
+            if sum([self.prev, self.same, self.post]) > 1:
+                return len(tup[1][0])
+            return len(tup[1])
+
+        return sorted(buf, key=key, reverse=True)
+
+    def pack_batch(self, batch):
+        src, trg = zip(*batch)
+        same = self.to_tensor(src) if self.same else None
+        src = self.to_tensor(src)
+
+        prev, post = None, None
+        if self.prev and self.post:
+            prev, post = zip(*trg)
+        elif self.prev:
+            prev = trg
+        elif self.post:
+            post = trg
+
+        prev = self.to_tensor(prev, reverse=self.always_reverse) if prev else None
+        post = self.to_tensor(post, reverse=True) if post else None
+
+        return src, (prev, same, post)
+
+
+class SDAEIter(DataIter):
+    """
+    Iterator for a sequential denoising autoencoder architectures
+    """
+    def __init__(self, *args, dropword=0.1, scramble=0.1, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.dropword = dropword
+        self.scramble = scramble
+
+    def fill_buffer(self, buf):
+        output = []
+        for trg in buf:
+            src = list(trg)
+
+            # dropword
+            i = 0
+            while i < len(src):
+                if random.random() < self.dropword:
+                    src.pop(i)
+                    i -= 1
+                i += 1
+
+            # scramble
+            i = 0
+            while i < len(src):
+                if random.random() < self.scramble:
+                    tmp = src[i]
+                    src[i] = src[i-1]
+                    src[i-1] = tmp
+                    i += 1
+                i += 1
+
+            output.append((src, trg))
+
+        return output
+
+    def sort_buffer(self, buf):
+        return sorted(buf, key=lambda tup: len(tup[1]))
+
+    def pack_batch(self, batch):
+        src, trg = zip(*batch)
+        return self.to_tensor(src), self.to_tensor(trg)

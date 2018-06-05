@@ -5,7 +5,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.autograd import Variable
 
 from seqmod.modules.torch_utils import init_hidden_for, repackage_hidden
 from seqmod.modules.torch_utils import swap, select_cols
@@ -33,7 +32,7 @@ def strip_post_eos(sents, eos):
     return out
 
 
-def read_batch(m, seed_texts, gpu=False, **kwargs):
+def read_batch(m, seed_texts, device='cpu', **kwargs):
     """
     Computes the hidden states for a bunch of seeds in iterative fashion.
     This is currently being done so because LM doesn't use padding and
@@ -58,8 +57,8 @@ def read_batch(m, seed_texts, gpu=False, **kwargs):
         # accumulate first input to generation
         prev.append(prev_i)
         # run the RNN
-        inp = Variable(torch.LongTensor(seed_text).unsqueeze(1), volatile=True)
-        _, hidden, _ = m(inp.cuda() if gpu else inp, **kwargs)
+        inp = torch.tensor(seed_text).unsqueeze(1).to(device)
+        _, hidden, _ = m(inp, **kwargs)
         # accumulate hidden states
         if m.cell.startswith('LSTM'):
             h, c = hidden
@@ -67,7 +66,7 @@ def read_batch(m, seed_texts, gpu=False, **kwargs):
         else:
             hs.append(hidden)
     # pack output
-    prev = torch.LongTensor(prev).unsqueeze(0)
+    prev = torch.tensor(prev).unsqueeze(0)
     if m.cell.startswith('LSTM'):
         return prev, (torch.cat(hs, 1), torch.cat(cs, 1))
     else:
@@ -83,10 +82,10 @@ class Generator(object):
 
     model: LM, fitted LM model to use for generation.
     d: Dict, dictionary fitted on the LM's input vocabulary.
-    gpu: bool, whether to run generation on the gpu.
+    device: str, where to run the generation
     """
-    def __init__(self, model, d, gpu=False):
-        self.gpu = gpu
+    def __init__(self, model, d, device='cpu'):
+        self.device = device
         self.model = model
         self.d = d
         self.bos, self.eos = self.d.get_bos(), self.d.get_eos()
@@ -139,7 +138,7 @@ class Generator(object):
 
             # read batch
             prev, hidden = read_batch(
-                self.model, seed_texts, gpu=self.gpu, **kwargs)
+                self.model, seed_texts, device=self.device, **kwargs)
 
             # extend to batch size if only single seed
             if len(seed_texts) == 1:
@@ -151,13 +150,12 @@ class Generator(object):
                     hidden = hidden.repeat(1, batch_size, 1)
 
         elif self.eos is not None:  # initialize with <eos>
-            prev = torch.LongTensor([self.eos] * batch_size).unsqueeze(0)
+            prev = torch.tensor([self.eos] * batch_size, device=self.device) \
+                        .unsqueeze(0)
 
         else:  # random uniform sample from vocab
-            prev = torch.LongTensor(1, batch_size).random_(self.model.vocab)
-
-        # wrap prev in variable
-        prev = Variable(prev.cuda() if self.gpu else prev, volatile=True)
+            prev = torch.tensor(1, batch_size, device=self.device) \
+                        .random_(self.model.vocab)
 
         return prev, hidden
 
@@ -176,16 +174,16 @@ class Generator(object):
             outs = self.model.project(outs)
             score, prev = outs.max(1)
             score, prev = score.squeeze(), prev.t()
-            hyps.append(prev.squeeze().data.tolist())
+            hyps.append(prev.squeeze().tolist())
 
             if self.eos is not None and not ignore_eos:
-                mask = mask * (prev.squeeze().data.cpu() != self.eos).long()
+                mask = mask * (prev.squeeze().cpu() != self.eos).long()
                 if mask.sum() == 0:
                     break
                 # 0-mask scores for finished batch examples
-                score.data[mask == 0] = 0
+                score[mask == 0] = 0
 
-            scores += score.data
+            scores += score
 
         return scores.tolist(), list(zip(*hyps))
 
@@ -197,14 +195,13 @@ class Generator(object):
         """
         prev, hidden = self._seed(seed_texts, 1, bos, eos)
         eos = self.eos if not ignore_eos else None
-        beam = Beam(width, prev.squeeze().data[0], eos=eos)
+        beam = Beam(width, prev.item(), eos=eos)
 
         while beam.active and len(beam) < max_seq_len:
-            prev = Variable(beam.get_current_state().unsqueeze(0),
-                            volatile=True)
+            prev = beam.get_current_state().unsqueeze(0)
             outs, hidden, _ = self.model(prev, hidden=hidden, **kwargs)
             outs = self.model.project(outs)
-            beam.advance(outs.data)
+            beam.advance(outs.detach())
 
             if self.model.cell.startswith('LSTM'):
                 hidden = (swap(hidden[0], 1, beam.get_source_beam()),
@@ -234,11 +231,11 @@ class Generator(object):
             outs, hidden, _ = self.model(prev, hidden=hidden, **kwargs)
             outs = self.model.project(outs)
             prev = outs.div_(temperature).exp().multinomial(1).t()
-            score = select_cols(outs.data.cpu(), prev.squeeze().data.cpu())
-            hyps.append(prev.squeeze().data.tolist())
+            score = select_cols(outs.cpu(), prev.squeeze().cpu())
+            hyps.append(prev.squeeze().tolist())
 
             if self.eos is not None and not ignore_eos:
-                mask = mask * (prev.squeeze().data.cpu() != self.eos).long()
+                mask = mask * (prev.squeeze().cpu() != self.eos).long()
                 if mask.sum() == 0:
                     break
                 score[mask == 0] = 0  # 0-mask scores for finished examples
@@ -287,8 +284,8 @@ class BaseLM(nn.Module):
 
         super(BaseLM, self).__init__()
 
-    def is_cuda(self):
-        return next(self.parameters()).is_cuda
+    def device(self):
+        return next(self.parameters()).device
 
     def n_params(self, trainable=True):
         cnt = 0
@@ -315,7 +312,7 @@ class BaseLM(nn.Module):
         raise NotImplementedError
 
     def generate(self, d, conds=None, seed_texts=None, max_seq_len=25,
-                 gpu=False, method='sample', temperature=1., width=5,
+                 device='cpu', method='sample', temperature=1., width=5,
                  bos=False, eos=False, ignore_eos=False, batch_size=10,
                  **kwargs):
         """
@@ -332,7 +329,7 @@ class BaseLM(nn.Module):
             might actually be less than this number if the Dict was fitted with
             a <eos> token (in which case generation will end after the first
             generated <eos>)
-        gpu: bool, whether to generate on the gpu
+        device: str, where to generate
         method: str, one of 'sample', 'argmax', 'beam' (check the corresponding
             functions in Generator for more info)
         temperature: float, temperature for multinomial sampling (only applies
@@ -358,19 +355,17 @@ class BaseLM(nn.Module):
             # expand conds to batch
             if conds is None:
                 raise ValueError("conds is required for generating with a CLM")
-            conds = [torch.LongTensor([c]).repeat(1, batch_size) for c in conds]
-            conds = [Variable(c, volatile=True) for c in conds]
-            if gpu:
-                conds = [c.cuda() for c in conds]
+            conds = [torch.tensor([c] * batch_size, device=device).unsqueeze(0)
+                     for c in conds]
 
-        generator = getattr(Generator(self, d, gpu=gpu), method)
-        scores, hyps = generator(
-            seed_texts=seed_texts, max_seq_len=max_seq_len, conds=conds,
-            batch_size=batch_size, ignore_eos=ignore_eos, bos=bos, eos=eos,
-            # sample-only
-            temperature=temperature,
-            # beam-only
-            width=width, **kwargs)
+        with torch.no_grad():
+            scores, hyps = getattr(Generator(self, d, device=device), method)(
+                seed_texts=seed_texts, max_seq_len=max_seq_len, conds=conds,
+                batch_size=batch_size, ignore_eos=ignore_eos, bos=bos, eos=eos,
+                # sample-only
+                temperature=temperature,
+                # beam-only
+                width=width, **kwargs)
 
         if not ignore_eos and d.get_eos() is not None:
             # strip content after <eos> for each batch
@@ -388,7 +383,7 @@ class BaseLM(nn.Module):
 
         Parameters:
         -----------
-        inp: Variable(seq_len x batch_size)
+        inp: torch.Tensor(seq_len x batch_size)
         kwargs: other model parameters
 
         Returns:
@@ -396,17 +391,16 @@ class BaseLM(nn.Module):
         np.array (batch) of representing the log probability of the input
         """
         if self.training:
-            logging.warn("Generating in training modus!")
+            logging.warn("Generating in training mode!")
 
-        if self.is_cuda():
-            inp = inp.cuda()
+        inp = inp.to(device=self.device())
 
         # compute output
         outs, *_ = self(inp, **kwargs)
         outs = self.project(outs, reshape=True)  # (seq_len x batch x vocab)
 
         # select
-        outs, index = outs[:-1].data.cpu().numpy(), inp[1:].data.cpu().numpy()
+        outs, index = outs[:-1].cpu().numpy(), inp[1:].cpu().numpy()
         seq_len, batch = np.ogrid[0:index.shape[0], 0:index.shape[1]]
         # (batch x seq_len)
         log_probs = outs.transpose(2, 0, 1)[index, seq_len, batch].T
@@ -492,8 +486,7 @@ class LM(BaseLM):
         # train init
         self.h_0 = None
         if self.train_init:
-            init_size = self.num_layers, 1, self.hid_dim
-            self.h_0 = nn.Parameter(torch.Tensor(*init_size).zero_())
+            self.h_0 = nn.Parameter(torch.zeros(self.num_layers, 1, self.hid_dim))
 
         try:
             cell = getattr(nn, cell)
@@ -535,8 +528,7 @@ class LM(BaseLM):
     def init_hidden_for(self, inp):
         return init_hidden_for(
             inp, 1, self.num_layers, self.hid_dim, self.cell,
-            h_0=self.h_0, add_init_jitter=self.add_init_jitter,
-            training=self.training)
+            h_0=self.h_0, add_init_jitter=self.add_init_jitter)
 
     def forward(self, inp, hidden=None, conds=None, **kwargs):
         """
@@ -598,7 +590,6 @@ class LM(BaseLM):
                 if use_schedule and step > 0:
                     t = scheduled_sampling(
                         t, outs[-1], self.project, self.exposure_rate)
-                    t = Variable(t, volatile=not self.training)
                 out, hidden, _ = self(t.unsqueeze(0), hidden=hidden, conds=conds)
                 outs.append(out.squeeze(0))
             outs = torch.stack(outs, 0)
@@ -620,4 +611,4 @@ class LM(BaseLM):
         if not test:
             loss.backward()
 
-        return (loss.data[0], ), source.nelement()
+        return (loss.item(),), source.nelement()

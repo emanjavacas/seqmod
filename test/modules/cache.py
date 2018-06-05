@@ -48,7 +48,7 @@ class CacheTest(unittest.TestCase):
         cache = Cache(dim, size, vocab)
         # insert some key-val pairs
         keys = torch.randn(15, batch, dim)
-        vals = torch.LongTensor(15, batch).random_(vocab)
+        vals = torch.Tensor(15, batch).type(torch.int64).random_(vocab)
         for k, v in zip(keys, vals):
             cache.add(k.unsqueeze(0), v.unsqueeze(0))
 
