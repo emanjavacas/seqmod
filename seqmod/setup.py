@@ -5,7 +5,7 @@ from setuptools import setup
 
 setup(
     name='seqmod',
-    version='0.3',
+    version='0.4',
     package_dir={'seqmod.modules': 'modules',
                  'seqmod.misc': 'misc',
                  'seqmod': './'},
@@ -17,11 +17,12 @@ setup(
     download_url='https://api.github.com/repos/emanjavacas/seqmod/tarball',
     license='GPL',
     install_requires=[
-        'numpy==1.13.3',
-        'tqdm==4.17.1',
+        'numpy==1.14.3',
+        'tqdm==4.23.3',
         'lorem==0.1.1',
-        'gensim==2.3.0',
-        'fasttext==0.8.3',
+        'gensim==3.4.0',
         'scikit_learn==0.19.1',
-        'torch==0.3.1',
-        'PyYAML==3.12'])
+        'torch==0.4.0',
+        'matplotlib==2.0.2',
+        'PyYAML==3.12'
+    ])
