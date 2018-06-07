@@ -333,36 +333,40 @@ def make_xent_criterion(vocab_size, mask_ids=()):
     return torch.nn.CrossEntropyLoss(weight=weight)
 
 
-def format_hyp(score, hyp, hyp_num, d, level='word',
-               src=None, trg=None, src_dict=None):
+def format_hyp(score, hyp, hyp_id, d, level='word',
+               src=None, trg=None, src_dict=None, remove_syms=True):
     """
     Transform a hypothesis into a string for visualization purposes
 
     score: float, normalized probability
     hyp: list of integers
-    hyp_num: int, index of the hypothesis
+    hyp_id: any, identifier of the hypothesis
     d: Dict, dictionary used for fitting the vocabulary
     """
     if level not in ('word', 'char', 'token'):
         raise ValueError('level must be "word/token" or "char"')
     sep = ' ' if level == 'word' or level == 'token' else ''
 
+    def stringify(inp, d, remove_syms):
+        inp = [d.vocab[c] for c in inp]
+        if remove_syms:
+            reserved = d.reserved.difference(set([d.get_unk()]))
+            inp = [c for c in inp if c not in reserved]
+        return sep.join(inp)
+
     formatter = '\n[{hyp}] [Score:{score:.3f}]:\n'
     if src is not None:
         formatter += '    [Source]=> {source}\n'
-        src_dict = src_dict or d
-        src = sep.join([src_dict.vocab[c] for c in src]),
+        src = stringify(src, src_dict or d, remove_syms)
     if trg is not None:
         formatter += '    [Target]=> {target}\n'
-        trg = sep.join([d.vocab[c] for c in trg])
+        trg = stringify(trg, d, remove_syms)
     formatter += '    [Output]=> {output}\n'
 
+    hyp = stringify(hyp, d, False)
+
     return formatter.format(
-        hyp=hyp_num,
-        score=score/len(hyp),
-        source=src,
-        target=trg,
-        output=sep.join([d.vocab[c] for c in hyp]))
+        hyp=hyp_id, score=score/len(hyp), source=src, target=trg, output=hyp)
 
 
 def make_lm_hook(d, seed_texts=None, max_seq_len=25, device='cpu',
