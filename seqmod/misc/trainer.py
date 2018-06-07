@@ -69,8 +69,10 @@ class LossStatistics(object):
             if isinstance(loss, str):
                 self.losses.append({'loss': loss, 'format': get_formatter(loss)})
             else:
+                # check loss name from loss['loss']
                 if 'loss' not in loss:
-                    raise ValueError("Wrong input loss. Needs `loss`")
+                    raise ValueError("Loss specification missing `loss` entry")
+                # check loss['format']: either function or string designating func
                 if 'format' not in loss:
                     loss['format'] = loss['loss']
                 if type(loss['format']) is str:
@@ -81,7 +83,7 @@ class LossStatistics(object):
 
         if weights is not None:
             if set(weights) != set(loss_labels):
-                raise ValueError("Weights requires same items as losses")
+                raise ValueError("Weights requires same number of items as losses")
             self.weights = weights
         else:
             self.weights = {label: 1 for label in loss_labels}
