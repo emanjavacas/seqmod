@@ -139,6 +139,7 @@ class RNNEncoder(BaseEncoder):
         else:
             inp = self.embeddings(inp)
 
+        # pack
         rnn_inp = inp
         if lengths is not None:  # pack if lengths given
             rnn_inp, unsort = pack_sort(rnn_inp, lengths)
@@ -147,7 +148,8 @@ class RNNEncoder(BaseEncoder):
 
         outs, hidden = self.rnn(rnn_inp, self.init_hidden_for(inp))
 
-        if lengths is not None:  # unpack & unsort
+        # unpack & unsort
+        if lengths is not None:
             outs, _ = unpack(outs)
             outs = outs[:, unsort]
             if self.cell.startswith('LSTM'):
@@ -179,7 +181,9 @@ class RNNEncoder(BaseEncoder):
             outs = torch.cat([outs.mean(0), get_last_token(outs, lengths)], 1)
 
         elif self.summary == 'inner-attention':
-            seq_len, batch_size, _ = inp.size()
+            seq_len, batch_size, _ = outs.size()
+            inp = inp[:seq_len]  # original input might be larger than actual inp
+
             # combine across feature dimension and project to hid_dim
             weights = self.attention(
                 torch.cat(
