@@ -427,17 +427,16 @@ def make_grl_rnn_encoder_decoder(
     if encoder_summary == 'full':
         raise ValueError("GRL encoder can't use full summaries")
 
-    if cond_dims is None or cond_vocabs is None:
-        raise ValueError("GRL needs conditions")
+    if cond_vocabs is None:
+        raise ValueError("GRL needs `cond_vocabs`")
 
     src_embeddings, trg_embeddings = make_embeddings(
         src_dict, trg_dict, emb_dim, word_dropout)
 
-    encoder = GRLRNNEncoder(cond_dims, cond_vocabs,
-                            src_embeddings, hid_dim, num_layers, cell,
+    encoder = GRLRNNEncoder(cond_vocabs, src_embeddings, hid_dim, num_layers, cell,
                             bidi=bidi, dropout=dropout,
                             summary=encoder_summary,
-                            train_init=False, add_init_jitter=True)
+                            train_init=False, add_init_jitter=add_init_jitter)
 
     _, encoding_size = encoder.encoding_size
 

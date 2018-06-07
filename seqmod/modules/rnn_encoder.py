@@ -218,11 +218,8 @@ class RNNEncoder(BaseEncoder):
 
 
 class GRLRNNEncoder(RNNEncoder):
-    def __init__(self, cond_dims, cond_vocabs, *args, **kwargs):
+    def __init__(self, cond_vocabs, *args, **kwargs):
         super(GRLRNNEncoder, self).__init__(*args, **kwargs)
-        if len(cond_dims) != len(cond_vocabs):
-            raise ValueError("cond_dims & cond_vocabs must be same length")
-
         encoding_dim, _ = self.encoding_size
         if encoding_dim > 2:
             raise ValueError("GRLRNNEncoder can't regularize 3D summaries")
@@ -230,7 +227,7 @@ class GRLRNNEncoder(RNNEncoder):
         # MLPs regularizing on input conditions
         grls = []
         _, hid_dim = self.encoding_size  # size of the encoder output
-        for cond_vocab, cond_dim in zip(cond_vocabs, cond_dims):
+        for cond_vocab in cond_vocabs:
             grls.append(MLP(hid_dim, hid_dim, cond_vocab))
         self.grls = nn.ModuleList(grls)
 
