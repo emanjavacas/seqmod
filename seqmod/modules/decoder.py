@@ -198,11 +198,12 @@ class RNNDecoder(BaseDecoder):
         # compute h_0
         if self.train_init:
             h_0 = self.h_0.repeat(1, batch, 1)
+        elif not self.reuse_hidden:
+            h_0 = torch.zeros(
+                self.num_layers, batch, self.hid_dim,
+                device=h_0.device)
         else:
-            if not self.reuse_hidden:
-                h_0 = torch.zeros(
-                    self.num_layers, batch, self.hid_dim,
-                    device=h_0.device)
+            h_0 = h_0
 
         if self.add_init_jitter:
             h_0 = h_0 + torch.normal(torch.zeros_like(h_0), 0.3)
@@ -212,23 +213,6 @@ class RNNDecoder(BaseDecoder):
             return h_0, torch.zeros_like(h_0)
         else:
             return h_0
-
-    def init_output_for(self, hidden):
-        """
-        Creates a tensor to be concatenated with previous target
-        embedding as input for the first rnn step. This is used
-        for the first decoding step when using the input_feed flag.
-
-        Returns:
-        --------
-        torch.Tensor(batch x hid_dim)
-        """
-        if self.cell.startswith('LSTM'):
-            hidden = hidden[0]
-
-        _, batch, hid_dim = hidden.size()
-
-        return torch.normal(hidden.new_zeros(batch, hid_dim), 0.3)
 
     def init_state(self, context, hidden, lengths, conds=None):
         """
@@ -241,6 +225,7 @@ class RNNDecoder(BaseDecoder):
         hidden: torch.FloatTensor, previous hidden decoder state.
         conds: (optional) tuple of (batch) with conditions
         """
+        batch = lengths.size(0)
         hidden = self.init_hidden_for(hidden)
 
         enc_att, mask = None, None
@@ -251,7 +236,8 @@ class RNNDecoder(BaseDecoder):
 
         input_feed = None
         if self.input_feed:
-            input_feed = self.init_output_for(hidden)
+            # init with gaussian
+            input_feed = context.new(batch, self.hid_dim).normal_(0, 0.05)
 
         if self.conditional:
             if conds is None:
@@ -261,8 +247,8 @@ class RNNDecoder(BaseDecoder):
 
         # sample variational mask if needed
         dropout_mask = None
-        if hasattr(self, 'variational') and self.variational:
-            size = (lengths.size(0), self.hid_dim)
+        if self.variational:
+            size = (batch, self.hid_dim)
             dropout_mask = make_dropout_mask(context, self.dropout, size)
 
         return RNNDecoderState(
@@ -314,10 +300,10 @@ class RNNDecoder(BaseDecoder):
         if not self.rnn.ffw:
             raise ValueError("Decoder is not configured for fast_forward")
 
-        inp = self.embeddings(inp)
-
         if self.input_feed:
             raise ValueError("Fast decoder can't use `input_feed`")
+
+        inp = self.embeddings(inp)
 
         # condition on encoder summary for non-attentive decoders (2D contexts)
         if self.context_feed:

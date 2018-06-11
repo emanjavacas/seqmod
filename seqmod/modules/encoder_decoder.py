@@ -65,19 +65,14 @@ class EncoderDecoder(nn.Module):
         for p in getattr(self, module).parameters():
             p.requires_grad = False
 
-    def decoder_loss(self, dec_state, trg, num_examples,
+    def decoder_loss(self, dec_state, inp, targets, num_examples,
                      test=False, split=25, use_schedule=False):
-
-        # [<bos> ... <eos> pad pad] or [<eos> ... <bos> <pad> <pad>]
-        dec_trg, loss_trg = trg[:-1], trg[1:]
-
         # should we run fast_forward?
         if self.decoder.ffw and not use_schedule:
-            dec_outs, _ = self.decoder.fast_forward(dec_trg, dec_state)
-
+            dec_outs, _ = self.decoder.fast_forward(inp, dec_state)
         else:
             dec_outs = []
-            for step, t in enumerate(dec_trg):
+            for step, t in enumerate(inp):
                 if use_schedule and step > 0 and self.exposure_rate < 1.0:
                     t = scheduled_sampling(
                         t, dec_outs[-1], self.decoder.project, self.exposure_rate)
@@ -86,7 +81,7 @@ class EncoderDecoder(nn.Module):
             dec_outs = torch.stack(dec_outs)
 
         # compute memory efficient decoder loss
-        loss, shard_data = 0, {'out': dec_outs, 'trg': loss_trg}
+        loss, shard_data = 0, {'out': dec_outs, 'trg': targets}
 
         for shard in shards(shard_data, size=split, test=test):
             out, true = shard['out'], shard['trg'].view(-1)
@@ -131,23 +126,22 @@ class EncoderDecoder(nn.Module):
 
         num_examples = trg_lengths.sum().item()
 
-        # - compute encoder output
+        # compute encoder loss
         enc_outs, enc_hidden = self.encoder(src, lengths=src_lengths)
-        # - compute encoder loss
         enc_losses, _ = self.encoder.loss(enc_outs, src_conds, test=test)
 
-        # - compute decoder loss
+        # compute decoder loss
         # remove <eos> from decoder targets, remove <bos> from loss targets
-        if hasattr(self, 'reverse') and self.reverse:
+        if self.reverse:
             # assume right aligned data:
             # [<pad> <pad> <bos> ... <eos>] => [<eos> ... <bos> <pad> <pad>]
             trg = flip(trg, 0)
-
+        # [<bos> ... <eos> pad pad] or [<eos> ... <bos> <pad> <pad>]
+        dec_inp, dec_targets = trg[:-1], trg[1:]
         dec_state = self.decoder.init_state(
             enc_outs, enc_hidden, src_lengths, conds=trg_conds)
-
         dec_loss = self.decoder_loss(
-            dec_state, trg, num_examples,
+            dec_state, dec_inp, dec_targets, num_examples,
             test=test, split=split, use_schedule=use_schedule)
 
         return (dec_loss, *enc_losses), num_examples
@@ -170,7 +164,7 @@ class EncoderDecoder(nn.Module):
         """
         eos = self.decoder.embeddings.d.get_eos()
         bos = self.decoder.embeddings.d.get_bos()
-        if hasattr(self, 'reverse') and self.reverse:
+        if self.reverse:
             bos, eos = eos, bos
         seq_len, batch_size = src.size()
 
@@ -216,7 +210,7 @@ class EncoderDecoder(nn.Module):
         hyps = torch.tensor(hyps).transpose(0, 1).tolist()  # batch first
         scores = scores.tolist()
 
-        if hasattr(self, 'reverse') and self.reverse:
+        if self.reverse:
             hyps = [hyp[::-1] for hyp in hyps]
 
         return scores, hyps, weights
@@ -248,7 +242,7 @@ class EncoderDecoder(nn.Module):
         """
         eos = self.decoder.embeddings.d.get_eos()
         bos = self.decoder.embeddings.d.get_bos()
-        if hasattr(self, 'reverse') and self.reverse:
+        if self.reverse:
             bos, eos = eos, bos
 
         scores, hyps, weights = [], [], []
@@ -281,7 +275,7 @@ class EncoderDecoder(nn.Module):
 
             bscores, bhyps = beam.decode(n=1)
             bscores, bhyps = bscores[0], bhyps[0]
-            if hasattr(self, 'reverse') and self.reverse:
+            if self.reverse:
                 bhyps = bhyps[::-1]
 
             scores.append(bscores)

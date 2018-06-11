@@ -48,6 +48,13 @@ def truncate(max_size):
 def shuffle_pairs(pair1, pair2):
     """
     Symmetrically shuffle two lists
+
+    >>> a,b=list(zip(range(10), range(10, 20))), list(range(20, 30))
+    >>> shuffle_pairs(a, b)
+    >>> [b[i] - a[i][0] for i in range(len(a))]
+    [20, 20, 20, 20, 20, 20, 20, 20, 20, 20]
+    >>> [b[i] - a[i][1] for i in range(len(a))]
+    [10, 10, 10, 10, 10, 10, 10, 10, 10, 10]
     """
     for i in reversed(range(1, len(pair1))):
         j = int(random.random() * (i + 1))
@@ -348,7 +355,7 @@ class Dict(object):
             and list with sequence lengths in the batch
         - align_right: bool, override instance align_right default
         """
-        align_right = align_right or hasattr(self, 'align_right') and self.align_right
+        align_right = align_right or (hasattr(self, 'align_right') and self.align_right)
 
         if self.sequential:
             return pad_sequential_batch(
