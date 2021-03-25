@@ -24,5 +24,5 @@ setup(
         'scikit_learn==0.19.1',
         'torch==0.4.0',
         'matplotlib==2.0.2',
-        'PyYAML==3.12'
+        'PyYAML==5.4'
     ])
