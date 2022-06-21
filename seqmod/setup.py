@@ -17,7 +17,7 @@ setup(
     download_url='https://api.github.com/repos/emanjavacas/seqmod/tarball',
     license='GPL',
     install_requires=[
-        'numpy==1.14.3',
+        'numpy==1.22.0',
         'tqdm==4.23.3',
         'lorem==0.1.1',
         'gensim==3.4.0',
